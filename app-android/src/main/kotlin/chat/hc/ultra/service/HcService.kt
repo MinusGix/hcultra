@@ -7,6 +7,7 @@ import android.os.IBinder
 import android.util.Log
 import chat.hc.core.net.ManagedTransport
 import chat.hc.core.session.Credentials
+import chat.hc.core.session.ModAction
 import chat.hc.core.session.SessionManager
 import chat.hc.ultra.data.KeystoreTokenStore
 import chat.hc.ultra.ui.ServerPrefs
@@ -91,6 +92,18 @@ class HcService : Service() {
                 scope.launch { sessions.sendChat(channel, text) }
             }
 
+            ACTION_MODERATE -> {
+                val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
+                val action = intent.getStringExtra(EXTRA_MOD_ACTION) ?: return START_STICKY
+                val userid = intent.getLongExtra(EXTRA_USERID, 0L)
+                scope.launch {
+                    val target = sessions.channels.value[channel]?.roster
+                        ?.firstOrNull { it.userid == userid } ?: return@launch
+                    val parsed = runCatching { ModAction.valueOf(action) }.getOrNull() ?: return@launch
+                    sessions.moderate(channel, parsed, target)
+                }
+            }
+
             ACTION_SET_SERVER -> {
                 val url = intent.getStringExtra(EXTRA_URL) ?: return START_STICKY
                 // Changing server disconnects every channel: the channels, the
@@ -129,11 +142,14 @@ class HcService : Service() {
         const val ACTION_SEND = "chat.hc.ultra.SEND"
         const val ACTION_STOP = "chat.hc.ultra.STOP"
         const val ACTION_SET_SERVER = "chat.hc.ultra.SET_SERVER"
+        const val ACTION_MODERATE = "chat.hc.ultra.MODERATE"
 
         const val EXTRA_CHANNEL = "channel"
         const val EXTRA_NICK = "nick"
         const val EXTRA_PASS = "pass"
         const val EXTRA_TEXT = "text"
         const val EXTRA_URL = "url"
+        const val EXTRA_MOD_ACTION = "modAction"
+        const val EXTRA_USERID = "userid"
     }
 }

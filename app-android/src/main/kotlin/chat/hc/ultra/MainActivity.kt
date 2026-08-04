@@ -43,7 +43,10 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import chat.hc.core.render.Scheme
+import chat.hc.core.protocol.User
 import chat.hc.core.session.ChannelUi
+import chat.hc.core.session.ModAction
+import chat.hc.core.session.Moderation
 import chat.hc.core.session.SessionState
 import chat.hc.ultra.service.HcService
 import chat.hc.ultra.ui.ChannelTabs
@@ -156,6 +159,9 @@ class MainActivity : ComponentActivity() {
                         onJoin = { channel, nick, pass -> startJoin(channel, nick, pass) },
                         onSend = { channel, text -> startSend(channel, text) },
                         onLeave = { channel -> startLeave(channel) },
+                        onModerate = { channel, action, target ->
+                            startModerate(channel, action, target)
+                        },
                         onActiveChanged = { activeChannel = it },
                         rendererCallbacks = RendererCallbacks(
                             onLinkTap = { url -> openExternal(url) },
@@ -221,6 +227,18 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private fun startModerate(channel: String, action: ModAction, target: User) {
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, HcService::class.java).apply {
+                this.action = HcService.ACTION_MODERATE
+                putExtra(HcService.EXTRA_CHANNEL, channel)
+                putExtra(HcService.EXTRA_MOD_ACTION, action.name)
+                putExtra(HcService.EXTRA_USERID, target.userid)
+            },
+        )
+    }
+
     private fun startLeave(channel: String) {
         ContextCompat.startForegroundService(
             this,
@@ -259,6 +277,7 @@ private fun AppScreen(
     onJoin: (String, String, String?) -> Unit,
     onSend: (String, String) -> Unit,
     onLeave: (String) -> Unit,
+    onModerate: (String, ModAction, User) -> Unit,
     onActiveChanged: (String?) -> Unit,
     rendererCallbacks: RendererCallbacks,
     scheme: Scheme,
@@ -366,6 +385,12 @@ private fun AppScreen(
                 if (showUsers) {
                     UserList(
                         users = active.roster,
+                        modActionsFor = { target ->
+                            Moderation.available(active.roster.firstOrNull { it.isme }, target)
+                        },
+                        onModerate = { action, target ->
+                            onModerate(active.channel, action, target)
+                        },
                         onWhisper = { nick ->
                             // The server's /w strips a leading @, so this works
                             // whether or not the nick was mentioned first.

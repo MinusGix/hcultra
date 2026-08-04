@@ -339,6 +339,42 @@ From the emulator the host is `10.0.2.2`, so the address is
 Verified on-device: switching to it, joining, observing `unconfirmed`, then
 resetting to hack.chat and rejoining a channel that still reported `resumed`.
 
+## Moderation
+
+Mod commands are **API-only**: unlike `/me` or `/w`, most register no text
+hook, so `/ban someone` just returns "Unknown command". On the website they are
+reached from the browser console. Native UI is therefore a genuine capability
+gain rather than a convenience.
+
+Two things make the permission model worth modelling rather than eyeballing:
+
+- **The gates differ per command.** `kick` (and `lockroom`, `unlockroom`, `hack`)
+  need only `isChannelModerator` — level 9 999 — while `ban`, `dumb`, `speak`,
+  `unban`, `forcecolor`, `forceflair` and the captcha commands need
+  `isModerator`, level 999 999. Assuming one "mod" threshold would be wrong in
+  both directions.
+- **Failing a gate is expensive.** A rejected command costs `frisk(socket, 10)`
+  of a 25 threshold and the server replies *nothing*, so an over-permissive UI
+  would rate-limit the user after two taps with no explanation. `SessionManager`
+  re-checks the level before sending, so a stale button cannot spend the budget.
+
+Wire shapes (v2): `kick`/`ban`/`dumb` take a numeric `userid` plus an explicit
+`channel`; `speak` and `unban` key on the target's **hash** instead, because a
+ban outlives their presence in the channel. `unban` is not offered from the
+roster for that reason — by the time you want it, they are gone and their hash
+with them.
+
+The roster offers Kick / Ban / Muzzle / Unmuzzle, filtered by level, never
+against yourself. Destructive ones confirm first and spell out what they do
+("their messages are silently dropped — they are not told"), since the
+distinction between kick, ban and muzzle is not obvious from the verb alone.
+
+Verified on-device against `probe/fakeserver.mjs --level N`: an ordinary user
+sees no actions, a channel moderator sees only Kick, a global moderator sees
+all four, and the emitted frames were
+`{"cmd":"kick","channel":"…","userid":4242}` and
+`{"cmd":"speak","hash":"victimhash"}` — hash-keyed with no userid, as required.
+
 ## Known gap
 
 The composer is disabled whenever the session is not `Live`, so you cannot type
@@ -350,5 +386,7 @@ of context.
 ## Still unverified
 
 - direct-reply from the notification (`ReplyReceiver`) — hard to trigger from adb
+- moderation against the *real* server: the level gating and wire shapes were
+  exercised against the fake server, since we hold no moderator rights on live
 - doze / screen-off survival over a long period
 - OEM battery-killer behaviour — only observable on a real phone

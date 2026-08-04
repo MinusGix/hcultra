@@ -304,4 +304,52 @@ sealed class Outbound {
     data object Ping : Outbound() {
         override val cmd: String get() = "ping"
     }
+
+    // --- moderation -------------------------------------------------------
+    //
+    // These are API-only: unlike /me or /w, most have no text hook, so they
+    // cannot be typed into the composer at all. On the website they are
+    // reached from the browser console.
+    //
+    // v2 targets by numeric `userid` and requires an explicit `channel`,
+    // except `speak`, which keys on the target's `hash`.
+
+    /** Requires channel-moderator. Optional `to` re-homes them to another channel. */
+    @Serializable
+    @SerialName("kick")
+    data class Kick(
+        val channel: String,
+        val userid: Long,
+        val to: String? = null,
+    ) : Outbound() {
+        override val cmd: String get() = "kick"
+    }
+
+    /** Requires global moderator. */
+    @Serializable
+    @SerialName("ban")
+    data class Ban(
+        val channel: String,
+        val userid: Long,
+    ) : Outbound() {
+        override val cmd: String get() = "ban"
+    }
+
+    /** Muzzle: their messages are silently dropped. Requires global moderator. */
+    @Serializable
+    @SerialName("dumb")
+    data class Muzzle(
+        val channel: String,
+        val userid: Long,
+        val allies: List<String>? = null,
+    ) : Outbound() {
+        override val cmd: String get() = "dumb"
+    }
+
+    /** Un-muzzle. Keyed by hash, not userid. Requires global moderator. */
+    @Serializable
+    @SerialName("speak")
+    data class Unmuzzle(val hash: String) : Outbound() {
+        override val cmd: String get() = "speak"
+    }
 }

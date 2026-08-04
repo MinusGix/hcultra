@@ -10,6 +10,11 @@
  *   silent  — accept chat and never echo it (exercises Unconfirmed)
  *   drop    — accept the handshake, then close the socket after N seconds
  *
+ * `--level N` sets the level this server claims you have, so client-side
+ * permission gating can be exercised without needing real moderator rights
+ * (999999 = moderator, 9999 = channel moderator). A second user is always
+ * present in the roster to act as a target.
+ *
  * Point the app at it via Settings → Server, e.g. `10.0.2.2:6060` from the
  * Android emulator (10.0.2.2 is the emulator's route to the host).
  *
@@ -25,12 +30,13 @@ const arg = (name, fallback) => {
 
 const port = Number(arg('port', 6060));
 const mode = arg('mode', 'silent');
+const level = Number(arg('level', 100));
 const dropAfter = Number(arg('drop-after', 15)) * 1000;
 
 const wss = new WebSocketServer({ port });
 let nextUserid = 1000;
 
-console.log(`fake hack.chat on ws://0.0.0.0:${port}  mode=${mode}`);
+console.log(`fake hack.chat on ws://0.0.0.0:${port}  mode=${mode}  level=${level}`);
 console.log(`  emulator: use 10.0.2.2:${port}`);
 
 wss.on('connection', (ws) => {
@@ -54,8 +60,12 @@ wss.on('connection', (ws) => {
       state.channel = p.channel;
       send({
         cmd: 'onlineSet',
-        nicks: [p.nick],
-        users: [{ isme: true, nick: p.nick, userid: state.userid, trip: '', uType: 'user', level: 100, color: '5e89ed', channel: p.channel }],
+        nicks: [p.nick, 'victim'],
+        users: [
+          { isme: true, nick: p.nick, userid: state.userid, trip: '', uType: 'user', level, hash: 'selfhash', color: '5e89ed', channel: p.channel },
+          // A target to moderate; the real server would have sent one too.
+          { isme: false, nick: 'victim', userid: 4242, trip: '', uType: 'user', level: 100, hash: 'victimhash', color: 'ed5e5e', channel: p.channel },
+        ],
         channel: p.channel,
       });
       send({ cmd: 'info', text: `fake server, mode=${mode}`, id: 1304, channel: p.channel });
@@ -66,6 +76,12 @@ wss.on('connection', (ws) => {
       if (mode === 'drop') {
         setTimeout(() => { log('closing socket'); ws.close(); }, dropAfter);
       }
+      return;
+    }
+
+    if (['kick', 'ban', 'dumb', 'speak'].includes(p.cmd)) {
+      log(`MOD COMMAND ${p.cmd}: ${JSON.stringify(p)}`);
+      send({ cmd: 'info', text: `${p.cmd} accepted`, id: 1, channel: state.channel });
       return;
     }
 

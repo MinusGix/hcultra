@@ -180,6 +180,23 @@ class SessionManager(
 
     fun buffer(channel: String): ChannelBuffer? = buffers[channel]
 
+    /** Our own roster entry, which carries the level the server assigned us. */
+    fun me(channel: String): chat.hc.core.protocol.User? =
+        sessions[channel]?.roster?.firstOrNull { it.isme }
+
+    /**
+     * Performs a moderation action, re-checking the level rather than trusting
+     * the UI: a rejected command costs 10 rate-limit points of 25 and the
+     * server replies nothing, so a stale button must not be able to spend them.
+     */
+    suspend fun moderate(channel: String, action: ModAction, target: chat.hc.core.protocol.User): Boolean {
+        val session = sessions[channel] ?: return false
+        val me = me(channel) ?: return false
+        if (!action.permitted(me.level)) return false
+        val frame = Moderation.frameFor(action, channel, target) ?: return false
+        return runCatching { session.send(frame) }.isSuccess
+    }
+
     private suspend fun onEvent(session: ChannelSession, event: SessionEvent) {
         val channel = event.channel
         val buffer = buffers[channel] ?: return

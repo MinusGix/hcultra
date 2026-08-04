@@ -74,8 +74,9 @@ Details and reproductions in `probe/FINDINGS.md`:
 Working: protocol core (unit tested + verified against live), Android
 foreground service surviving backgrounding, send/receive, reconnect with token
 restore, multi-channel tabs, whispers, the site's markdown/KaTeX/highlight
-rendering with all 44 of its colour schemes, and a configurable server endpoint.
+rendering with all 44 of its colour schemes, a configurable server endpoint, and
+moderation actions gated on the server's own per-command level thresholds.
 Verified on an emulator against live hack.chat.
 
-Next: mod commands gated on level, and a send-on-reconnect outbox (the composer
-is currently disabled while reconnecting).
+Next: a send-on-reconnect outbox (the composer is currently disabled while
+reconnecting), and iOS, which needs a Mac in the loop.
