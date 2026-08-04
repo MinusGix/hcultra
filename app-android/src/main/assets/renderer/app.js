@@ -168,7 +168,14 @@
     } else if (m.kind === 'Emote') {
       head = '<span class="nick">*</span> ';
     } else if (m.kind === 'Whisper') {
-      head = '<span class="nick">' + esc(m.nick || 'whisper') + '</span> ';
+      // Incoming: who it came from.
+      head = '<span class="wtag">whisper from</span> <span class="nick">' +
+        esc(m.nick) + '</span> ';
+    } else if (m.kind === 'WhisperSent') {
+      // Outgoing: the server echoes our own whisper back to us with the same
+      // shape, so it needs distinguishing or it reads as if they sent it.
+      head = '<span class="wtag">whisper to</span> <span class="nick">' +
+        esc(m.nick) + '</span> ';
     }
 
     var flag = '';

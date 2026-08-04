@@ -1,7 +1,8 @@
 package chat.hc.ultra.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,14 +27,15 @@ import chat.hc.core.protocol.User
 /**
  * Channel roster.
  *
- * Tapping a user inserts an `@nick` mention rather than opening a menu: the
- * common reason to reach for the list on a phone is to address someone whose
- * nick you cannot be bothered to type exactly.
+ * Tapping a user inserts an `@nick` mention; long-pressing starts a `/w`.
+ * Those are the two reasons to reach for a roster on a phone, and neither is
+ * worth a menu.
  */
 @Composable
 fun UserList(
     users: List<User>,
     onMention: (String) -> Unit,
+    onWhisper: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // Moderators and admins first, then alphabetically — the same ordering the
@@ -61,14 +63,19 @@ fun UserList(
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             items(sorted, key = { it.userid }) { user ->
-                UserRow(user) { onMention(user.nick) }
+                UserRow(
+                    user = user,
+                    onClick = { onMention(user.nick) },
+                    onLongClick = { onWhisper(user.nick) },
+                )
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun UserRow(user: User, onClick: () -> Unit) {
+private fun UserRow(user: User, onClick: () -> Unit, onLongClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     // The server sends an explicit per-user colour; fall back to the theme.
     val nickColor = user.color
@@ -79,7 +86,9 @@ private fun UserRow(user: User, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
+            // Tap mentions, long-press starts a whisper — the two things you
+            // actually want a roster for on a phone.
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 6.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),

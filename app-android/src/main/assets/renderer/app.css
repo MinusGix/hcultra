@@ -27,6 +27,22 @@ html, body {
 .trip { margin-right: 3px; }
 .kind-emote .text { font-style: italic; }
 
+/* Whispers are private; mark them clearly in both directions. Schemes do not
+   style whispers (the site renders them as plain info text), so this uses
+   currentColor and stays readable on all 44. */
+.kind-whisper, .kind-whispersent {
+  border-left: 2px solid currentColor;
+  padding-left: 6px;
+  opacity: 0.92;
+}
+.kind-whisper .text, .kind-whispersent .text { font-style: italic; }
+.wtag {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+
 .kind-info .text, .kind-join .text, .kind-leave .text { font-size: 14px; }
 .kind-join .text::before { content: "→ "; }
 .kind-leave .text::before { content: "← "; }

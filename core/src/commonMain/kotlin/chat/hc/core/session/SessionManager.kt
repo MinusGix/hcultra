@@ -152,10 +152,34 @@ class SessionManager(
                 ChatMessage(0, MessageKind.Emote, event.frame.nick, event.frame.userid, text = event.frame.text, at = event.frame.time ?: now())
             )
 
-            is SessionEvent.Whisper -> buffer.add(
-                ChatMessage(0, MessageKind.Whisper, userid = event.frame.from, text = event.frame.text, at = event.frame.time ?: now())
-            ).also {
-                if (channel != activeChannel) mutate(channel) { ui -> ui.copy(unread = ui.unread + 1) }
+            // The server sends the *same* frame to both parties, so direction
+            // is only knowable by comparing `from` against our own userid.
+            // Both ids are userids: resolve to a nick now, while the roster
+            // still holds them — the sender may leave before we render again.
+            is SessionEvent.Whisper -> {
+                val who = WhisperResolver.resolve(
+                    from = event.frame.from,
+                    to = event.frame.to,
+                    myUserid = session.userid,
+                    lookupNick = { id -> session.roster.firstOrNull { it.userid == id }?.nick },
+                )
+
+                buffer.add(
+                    ChatMessage(
+                        localId = 0,
+                        kind = if (who.outgoing) MessageKind.WhisperSent else MessageKind.Whisper,
+                        nick = who.nick,
+                        userid = who.otherId,
+                        text = event.frame.text,
+                        trip = event.frame.trip,
+                        at = event.frame.time ?: now(),
+                        isMine = who.outgoing,
+                    )
+                )
+                // Our own outgoing whisper must not mark the channel unread.
+                if (!who.outgoing && channel != activeChannel) {
+                    mutate(channel) { ui -> ui.copy(unread = ui.unread + 1) }
+                }
             }
 
             is SessionEvent.Notice -> buffer.add(

@@ -249,6 +249,26 @@ Verified on-device: `/me waves at everyone` renders as an emote with no stuck
 "sending…" bubble, an unknown command surfaces its warn, and ordinary messages
 still reconcile optimistically.
 
+## Whispers
+
+The server sends the **same** frame to both parties —
+`{cmd:'whisper', channel, from, to, text}` — so the only way to know which
+direction a whisper went is to compare `from` against our own userid. Both ends
+are userids, never nicks, so they are resolved against the roster **on receipt**:
+the other party may leave before the view redraws, and a stale id renders as
+`user <id>` rather than a blank nick.
+
+`WhisperResolver` isolates that logic and is unit-tested, including the case
+where our own userid is not yet known — guessing "outgoing" there would label
+someone else's private message as ours.
+
+Verified on live with two sockets: `/w`, `/reply`, and the API form all produce
+the same shape; an unknown target gives `warn id 12`. Verified on-device in both
+directions, with the peer confirming receipt.
+
+In the UI, tapping a roster entry inserts an `@mention` and long-pressing starts
+a `/w` — the server's `/w` strips a leading `@`, so the two compose cleanly.
+
 ## Known gap
 
 A message sent but disconnected before its echo arrives stays at "sending…"

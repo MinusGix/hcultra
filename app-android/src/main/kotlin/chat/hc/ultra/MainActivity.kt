@@ -337,6 +337,12 @@ private fun AppScreen(
                 if (showUsers) {
                     UserList(
                         users = active.roster,
+                        onWhisper = { nick ->
+                            // The server's /w strips a leading @, so this works
+                            // whether or not the nick was mentioned first.
+                            drafts[active.channel] = "/w $nick "
+                            showUsers = false
+                        },
                         onMention = { nick ->
                             // Append rather than replace: mentioning someone
                             // mid-sentence is normal.

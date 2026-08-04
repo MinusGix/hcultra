@@ -42,3 +42,37 @@ object Composer {
     fun isSlashCommand(text: String): Boolean =
         text.startsWith("/") && !text.startsWith("//")
 }
+
+/**
+ * Works out who a whisper involves and which way it went.
+ *
+ * The server sends the **same** frame to both parties —
+ * `{cmd:'whisper', channel, from, to, text}` — so direction is only knowable by
+ * comparing `from` against our own userid. Both ends are userids, never nicks,
+ * so they must be resolved against the roster; do it on receipt, while the
+ * sender is still present, because they may leave before the view redraws.
+ */
+object WhisperResolver {
+
+    data class Resolved(
+        /** True when we sent it: the frame is the echo of our own whisper. */
+        val outgoing: Boolean,
+        /** The other party — recipient if outgoing, sender if incoming. */
+        val otherId: Long,
+        val nick: String,
+    )
+
+    fun resolve(
+        from: Long,
+        to: Long,
+        myUserid: Long?,
+        lookupNick: (Long) -> String?,
+    ): Resolved {
+        val outgoing = myUserid != null && from == myUserid
+        val otherId = if (outgoing) to else from
+        // A userid is a poor label, but it beats an empty nick and makes the
+        // "they already left" case visible rather than mysterious.
+        val nick = lookupNick(otherId) ?: "user $otherId"
+        return Resolved(outgoing, otherId, nick)
+    }
+}
