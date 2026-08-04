@@ -129,7 +129,45 @@ the grace-period ask in `upstream-asks.md` exists to remove.
 3. **"Disconnected" repeated once per retry**, filling the transcript during an
    outage. Now collapsed to one notice per outage.
 
+## Message renderer
+
+`app-android/src/main/assets/renderer/` hosts the site's own pipeline —
+Remarkable + remarkable-katex + highlight.js 9.12 + KaTeX — vendored from
+`hc/client/vendor/`, with `app.js` reproducing hack.chat's markdown options
+exactly (`html:false`, `breaks`, `linkify`, `typographer`, the image whitelist,
+the `?channel` linkifier). Parity with the site is the entire reason this is a
+WebView; if the site changes its options, change `app.js` to match.
+
+Only woff2 KaTeX fonts are shipped (360K of the original 1.5M — Android WebView
+is Chrome-based, so woff2 always resolves first), and only the `hybrid` hljs
+theme. Total assets 836K; debug APK 13.7MB.
+
+Verified rendering on-device against live: bold/italic/strike, inline code,
+inline **and** display KaTeX with fonts, Kotlin syntax highlighting, links,
+`?channel` refs, blockquotes and lists.
+
+Hardening, because every message is untrusted input from a public channel:
+
+- `html:false` plus the escaping `text` rule means message text is never
+  interpreted as markup.
+- The payload crosses via `RendererBridge.renderCall()` in core as a JSON
+  *string literal* parsed inside the page — never interpolated as JavaScript.
+- The WebView has file access, content access, DOM storage and **all network
+  loads** disabled. It only ever loads bundled assets.
+- Links never navigate the WebView; taps are handed to native, which opens
+  http/https only.
+
+`RendererBridge` lives in `core/` rather than the app module so iOS can reuse
+the same payload and the same asset bundle, with only the WKWebView host
+differing.
+
 ## Still unverified
+
+- **Dark mode.** `app.css` has a `prefers-color-scheme: dark` block, but the app
+  theme is fixed to `android:Theme.Material.Light.NoActionBar` and the Compose
+  `MaterialTheme()` uses the default light scheme, so night mode never reaches
+  the WebView. Needs a Compose dark colour scheme plus a theme-aware host before
+  that CSS does anything.
 
 - direct-reply from the notification (`ReplyReceiver`) — hard to trigger from adb
 - `KeystoreTokenStore` round-trip (the emulator runs got fresh installs, so the

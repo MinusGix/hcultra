@@ -12,6 +12,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -75,7 +76,7 @@ class SessionManager(
             )
             sessions[channel] = session
             buffers[channel] = ChannelBuffer(bufferCapacity)
-            _channels.value = _channels.value + (channel to ChannelUi(channel))
+            _channels.update { it + (channel to ChannelUi(channel)) }
 
             jobs[channel] = scope.launch {
                 session.events.collect { onEvent(session, it) }
@@ -92,7 +93,7 @@ class SessionManager(
             sessions.remove(channel)?.stop()
             jobs.remove(channel)?.cancel()
             buffers.remove(channel)
-            _channels.value = _channels.value - channel
+            _channels.update { it - channel }
         }
     }
 
@@ -101,7 +102,7 @@ class SessionManager(
             sessions.values.forEach { it.stop() }
             jobs.values.forEach { it.cancel() }
             sessions.clear(); jobs.clear(); buffers.clear()
-            _channels.value = emptyMap()
+            _channels.update { emptyMap() }
         }
     }
 
@@ -201,9 +202,18 @@ class SessionManager(
         mutate(channel) { it.copy(messages = buffer.snapshot()) }
     }
 
+    /**
+     * Must be atomic: connection state and message arrival are collected by
+     * separate coroutines on a multi-threaded dispatcher. A plain
+     * read-modify-write loses updates — in practice the `Live` transition was
+     * being clobbered by a concurrent message publish holding a stale map, so
+     * the UI sat on "connecting…" while messages streamed in.
+     */
     private fun mutate(channel: String, block: (ChannelUi) -> ChannelUi) {
-        val current = _channels.value[channel] ?: return
-        _channels.value = _channels.value + (channel to block(current))
+        _channels.update { current ->
+            val existing = current[channel] ?: return@update current
+            current + (channel to block(existing))
+        }
     }
 
     val totalUnread: Int get() = _channels.value.values.sumOf { it.unread }

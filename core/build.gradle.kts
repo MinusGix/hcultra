@@ -23,7 +23,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(libs.coroutines.core)
-            implementation(libs.serialization.json)
+            api(libs.serialization.json)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.websockets)
         }

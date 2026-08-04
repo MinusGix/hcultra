@@ -47,6 +47,8 @@ import chat.hc.core.session.SessionState
 import chat.hc.core.store.Delivery
 import chat.hc.core.store.MessageKind
 import chat.hc.ultra.service.HcService
+import chat.hc.ultra.ui.MessageWebView
+import chat.hc.ultra.ui.RendererCallbacks
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -105,6 +107,10 @@ class MainActivity : ComponentActivity() {
                         channelsFlow = channels,
                         onJoin = { channel, nick, pass -> startJoin(channel, nick, pass) },
                         onSend = { channel, text -> startSend(channel, text) },
+                        rendererCallbacks = RendererCallbacks(
+                            onLinkTap = { url -> openExternal(url) },
+                            onChannelTap = { channel -> /* TODO: join in a new tab */ },
+                        ),
                     )
                 }
             }
@@ -137,6 +143,15 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    /** Links open outside the app; the renderer WebView never navigates. */
+    private fun openExternal(url: String) {
+        val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return
+        if (uri.scheme !in setOf("http", "https")) return
+        runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
     private fun startSend(channel: String, text: String) {
         ContextCompat.startForegroundService(
             this,
@@ -155,6 +170,7 @@ private fun AppScreen(
     channelsFlow: StateFlow<Map<String, ChannelUi>>,
     onJoin: (String, String, String?) -> Unit,
     onSend: (String, String) -> Unit,
+    rendererCallbacks: RendererCallbacks,
 ) {
     val channels by channelsFlow.collectAsStateWithLifecycle()
     var channelInput by remember { mutableStateOf("") }
@@ -203,33 +219,11 @@ private fun AppScreen(
                     fontWeight = FontWeight.Bold,
                 )
 
-                val listState = rememberLazyListState()
-                LaunchedEffect(active.messages.size) {
-                    if (active.messages.isNotEmpty()) listState.animateScrollToItem(active.messages.lastIndex)
-                }
-
-                LazyColumn(
-                    state = listState,
+                MessageWebView(
+                    messages = active.messages,
                     modifier = Modifier.fillMaxWidth().weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    items(active.messages, key = { it.localId }) { msg ->
-                        val prefix = when (msg.kind) {
-                            MessageKind.Chat -> "<${msg.nick}> "
-                            MessageKind.Emote -> "* "
-                            MessageKind.Whisper -> "(whisper) "
-                            MessageKind.Join -> "→ "
-                            MessageKind.Leave -> "← "
-                            else -> ""
-                        }
-                        val suffix = if (msg.delivery == Delivery.Sending) " …"
-                        else if (msg.delivery == Delivery.Failed) " (failed)" else ""
-                        Text(
-                            text = prefix + msg.text + suffix,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
+                    callbacks = rendererCallbacks,
+                )
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
