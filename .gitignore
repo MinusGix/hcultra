@@ -1,0 +1,23 @@
+# Gradle / Kotlin
+.gradle/
+build/
+.kotlin/
+local.properties
+
+# Android
+*.apk
+*.aab
+.cxx/
+
+# Upstream hack.chat server source — its own clone of
+# https://github.com/hack-chat/main, kept here as a protocol reference.
+# See README.md for how to obtain it.
+/hc/
+
+# Probe state: mirrors the server's per-address rate score between runs.
+probe/.governor.json
+
+# Editors / OS
+.idea/
+*.iml
+.DS_Store

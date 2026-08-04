@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+      Lets us offer the battery-optimisation exemption prompt. Without it, OEM
+      battery managers (Xiaomi, Samsung, Oppo) kill the service regardless of
+      its foreground status, and every kill is a peer-visible leave/join.
+      Note: Play restricts this permission; a Play release may need to drop it
+      and rely on the exemption settings screen instead.
+    -->
+    <uses-permission
+        android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:ignore="BatteryLife" />
+
+    <application
+        android:name=".HcApp"
+        android:label="hcultra"
+        android:icon="@mipmap/ic_launcher"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.HcUltra">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          foregroundServiceType=specialUse, deliberately:
+
+          `dataSync` is capped at ~6 hours per day from Android 15, which would
+          silently kill a chat connection mid-conversation. `remoteMessaging` is
+          scoped to handing messages between a user's own devices, which is not
+          what this does. specialUse is the honest declaration for "hold a
+          WebSocket so the user stays in the conversation", at the cost of
+          needing a written justification for a Play release.
+        -->
+        <service
+            android:name=".service.HcService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintains the user's live chat connections. hack.chat is a
+                    WebSocket service that keeps no server-side history, so a dropped
+                    connection loses the conversation and is visible to everyone in the
+                    channel as a leave/join. The connection must persist while the user
+                    is in a conversation." />
+        </service>
+
+        <receiver
+            android:name=".service.ReplyReceiver"
+            android:exported="false" />
+
+    </application>
+</manifest>
