@@ -138,7 +138,7 @@ class ChannelSession(
         // Bring the replacement fully up *before* retiring the old socket:
         // disconnect.js suppresses onlineRemove only while a duplicate userid
         // is still present in the channel.
-        val fresh = connectAndHandshake(scope, tokenStore.load(channel))
+        val fresh = connectAndHandshake(scope, tokenStore.load(url, channel))
         current = fresh.connection
         old.close()
         emit(SessionEvent.Resumed(channel, fresh.restored, silent = true))
@@ -150,7 +150,7 @@ class ChannelSession(
         while (scope.isActive && !stopped) {
             try {
                 _state.value = SessionState.Connecting
-                val live = connectAndHandshake(scope, tokenStore.load(channel))
+                val live = connectAndHandshake(scope, tokenStore.load(url, channel))
                 current = live.connection
                 attempt = 0
                 _state.value = SessionState.Live(live.restored)
@@ -194,7 +194,7 @@ class ChannelSession(
         conn.send(FrameCodec.encode(Outbound.Session(token)))
 
         val session = awaitFrame(frames, "session reply") { it is Inbound.Session } as Inbound.Session
-        if (session.token.isNotEmpty()) tokenStore.save(channel, session.token)
+        if (session.token.isNotEmpty()) tokenStore.save(url, channel, session.token)
 
         if (session.restored) {
             // restoreJoin replies with a fresh onlineSet for the restored channel.
@@ -222,7 +222,7 @@ class ChannelSession(
                 val tok = awaitFrame(frames, "post-join token") {
                     it is Inbound.Session && it.token.isNotEmpty()
                 } as Inbound.Session
-                tokenStore.save(channel, tok.token)
+                tokenStore.save(url, channel, tok.token)
             }
         } catch (_: TimeoutCancellationException) {
             // Leave the old token in place; a later frame may still carry one.
@@ -292,7 +292,7 @@ class ChannelSession(
                 emit(SessionEvent.Warning(channel, frame))
             }
 
-            is Inbound.Session -> if (frame.token.isNotEmpty()) tokenStore.save(channel, frame.token)
+            is Inbound.Session -> if (frame.token.isNotEmpty()) tokenStore.save(url, channel, frame.token)
             is Inbound.Unknown -> emit(SessionEvent.UnknownFrame(channel, frame))
         }
     }

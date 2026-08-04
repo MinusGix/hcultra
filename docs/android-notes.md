@@ -292,18 +292,52 @@ A late echo still reconciles an `Unconfirmed` message rather than appending a
 duplicate — a slow round trip can outlive the timeout, and resolving beats
 double-posting what the user just typed.
 
-### Test coverage, honestly
+### Test coverage
 
 The transitions are covered deterministically by `ChannelBufferTest` (including
 "already echoed must not be downgraded" and "late echo must not duplicate").
 
-The timeout was **not** reproduced on-device. Doing so needs a server that
-accepts a message and never echoes it, and neither trick worked: killing the
-network first disables the composer (see below), and emulator shaping
-(`adb emu network delay/speed`) does not affect an already-established socket,
-so the echo still returned instantly. Pointing the app at a local test server
-would close this — which is another argument for making the server URL
-configurable, alongside running the local hack.chat server.
+The timeout is also **verified on-device**, using `probe/fakeserver.mjs` in
+`silent` mode — a server that completes the handshake and then swallows chat
+without echoing. The message went `sending…` → `unconfirmed` exactly as
+designed. This was previously unreachable: killing the network disables the
+composer, and emulator shaping does not affect an established socket.
+
+## Server setting
+
+The endpoint is configurable (Settings → Server), defaulting to
+`wss://hack.chat/chat-ws`. Only one server at a time — the UI has no notion of
+several — but **tokens are keyed by server**, which is the part that would be
+painful to retrofit. Trying a local server therefore costs nothing: the
+hack.chat tokens survive untouched, and a cold rejoin there would be visible to
+the whole channel as a leave/join pair.
+
+`Servers.normalize` accepts what a person would actually type (`localhost:6060`,
+`hack.chat`, `https://…`) and appends `/chat-ws` when no path is given. A bare
+host is assumed **secure**: it never silently downgrades to plaintext, so a
+local plaintext server needs an explicit `ws://`. The UI warns when the
+resulting endpoint is unencrypted.
+
+Changing server tears down every channel — the channels, nicks and tokens all
+belong to the old endpoint.
+
+### Local test server
+
+`probe/fakeserver.mjs` implements just enough protocol to join (v2 handshake,
+onlineSet, MOTD, and the token that trails them, in that order — so a client
+that mis-orders the handshake fails against it too).
+
+```sh
+node probe/fakeserver.mjs --port 6060 --mode silent   # accept chat, never echo
+node probe/fakeserver.mjs --mode drop --drop-after 15 # close the socket after 15s
+node probe/fakeserver.mjs --mode normal               # echo like the real server
+```
+
+From the emulator the host is `10.0.2.2`, so the address is
+`ws://10.0.2.2:6060` — note the explicit `ws://`.
+
+Verified on-device: switching to it, joining, observing `unconfirmed`, then
+resetting to hack.chat and rejoining a channel that still reported `resumed`.
 
 ## Known gap
 

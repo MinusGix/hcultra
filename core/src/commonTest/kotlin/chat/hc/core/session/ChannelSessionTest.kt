@@ -17,6 +17,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+internal const val TEST_URL = "wss://example/chat-ws"
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChannelSessionTest {
 
@@ -29,7 +31,7 @@ class ChannelSessionTest {
     ) = ChannelSession(
         channel = "testroom",
         credentials = Credentials(nick = "tester"),
-        url = "wss://example/chat-ws",
+        url = TEST_URL,
         transport = transport,
         governor = RateGovernor(),
         tokenStore = store,
@@ -96,7 +98,7 @@ class ChannelSessionTest {
         s.start(this)
         advanceUntilIdle()
 
-        assertEquals("tok-trailing", store.load("testroom"))
+        assertEquals("tok-trailing", store.load(TEST_URL, "testroom"))
         s.stop()
     }
 
@@ -110,14 +112,14 @@ class ChannelSessionTest {
         advanceUntilIdle()
 
         assertTrue(s.state.value is SessionState.Live)
-        assertNull(store.load("testroom"))
+        assertNull(store.load(TEST_URL, "testroom"))
         s.stop()
     }
 
     /** With a valid token the server restores us and no join is sent at all. */
     @Test
     fun restorePathSkipsJoin() = runTest {
-        val store = InMemoryTokenStore().apply { save("testroom", "tok-existing") }
+        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", "tok-existing") }
         val transport = FakeTransport()
         transport.onSend = { raw ->
             if (cmdOf(raw) == "session") {
@@ -134,14 +136,14 @@ class ChannelSessionTest {
         assertEquals("session", cmdOf(sent[0]))
         assertEquals(SessionState.Live(restored = true), s.state.value)
         // The renewed token must replace the old one, rolling the 7-day window.
-        assertEquals("tok-renewed", store.load("testroom"))
+        assertEquals("tok-renewed", store.load(TEST_URL, "testroom"))
         s.stop()
     }
 
     /** The token we hold must actually be presented on reconnect. */
     @Test
     fun presentsStoredTokenOnConnect() = runTest {
-        val store = InMemoryTokenStore().apply { save("testroom", "tok-abc") }
+        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", "tok-abc") }
         val transport = FakeTransport().apply { scriptColdJoin() }
         val s = session(transport, store)
         s.start(this)

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +50,7 @@ import chat.hc.ultra.ui.ChannelTabs
 import chat.hc.ultra.ui.MessageWebView
 import chat.hc.ultra.ui.RendererCallbacks
 import chat.hc.ultra.ui.SchemeAssets
+import chat.hc.ultra.ui.ServerPrefs
 import chat.hc.ultra.ui.ThemePrefs
 import chat.hc.ultra.ui.ThemeSheet
 import chat.hc.ultra.ui.UserList
@@ -109,6 +111,7 @@ class MainActivity : ComponentActivity() {
         }
 
         val themePrefs = ThemePrefs(this)
+        val serverPrefs = ServerPrefs(this)
         val allSchemes = SchemeAssets.load(this)
 
         setContent {
@@ -116,6 +119,7 @@ class MainActivity : ComponentActivity() {
             var highlightOverride by remember { mutableStateOf(themePrefs.highlightOverride) }
             var showThemes by remember { mutableStateOf(false) }
             var pendingChannel by remember { mutableStateOf<String?>(null) }
+            var serverUrl by remember { mutableStateOf(serverPrefs.url) }
 
             val scheme = remember(schemeName) {
                 allSchemes.firstOrNull { it.name == schemeName } ?: allSchemes.first()
@@ -129,6 +133,13 @@ class MainActivity : ComponentActivity() {
                     if (showThemes) {
                         ThemeSheet(
                             schemes = allSchemes,
+                            currentServer = serverUrl,
+                            onServerChanged = { url ->
+                                serverUrl = url
+                                serverPrefs.url = url
+                                switchServer(url)
+                                showThemes = false
+                            },
                             currentScheme = schemeName,
                             highlightOverride = highlightOverride,
                             autoHighlight = scheme.highlight,
@@ -193,6 +204,21 @@ class MainActivity : ComponentActivity() {
             },
         )
         activeChannel = channel
+    }
+
+    /**
+     * Applies a new endpoint. The service drops every channel and stops, so the
+     * next join starts cleanly on the new server; tokens are keyed by server, so
+     * the old ones survive for when the user switches back.
+     */
+    private fun switchServer(url: String) {
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, HcService::class.java).apply {
+                action = HcService.ACTION_SET_SERVER
+                putExtra(HcService.EXTRA_URL, url)
+            },
+        )
     }
 
     private fun startLeave(channel: String) {
@@ -282,6 +308,9 @@ private fun AppScreen(
     if (showJoin || ordered.isEmpty()) {
         JoinSheet(
             canCancel = ordered.isNotEmpty(),
+            // Reachable before any channel exists: changing server is exactly
+            // what you want to do *before* connecting, not after.
+            onOpenSettings = onOpenThemes,
             initialChannel = pendingChannel.orEmpty(),
             // Reuse the nick we are already known by; joining a second channel
             // under a different name is possible but almost never intended.
@@ -389,6 +418,7 @@ private fun AppScreen(
 @Composable
 private fun JoinSheet(
     canCancel: Boolean,
+    onOpenSettings: () -> Unit,
     initialChannel: String = "",
     initialNick: String = "",
     onJoin: (String, String, String?) -> Unit,
@@ -419,10 +449,24 @@ private fun JoinSheet(
         )
     } else {
         Column(
-            modifier = Modifier.fillMaxSize().imePadding().padding(12.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                // This branch does not go through Scaffold, so it has to inset
+                // for the status and navigation bars itself — without it the
+                // header sits underneath the status bar and is untappable.
+                .safeDrawingPadding()
+                .imePadding()
+                .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("Join a channel", style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Join a channel",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onOpenSettings) { Text("Settings") }
+            }
             JoinFields(channelInput, nickInput, { channelInput = it }, { nickInput = it })
             Button(
                 onClick = submit,

@@ -40,7 +40,7 @@ data class ChannelUi(
 class SessionManager(
     /** Owns every session and the pending-echo timers; supplied by the service. */
     private val scope: CoroutineScope,
-    private val url: String,
+    initialUrl: String = Servers.DEFAULT_URL,
     private val transport: Transport,
     private val tokenStore: TokenStore = InMemoryTokenStore(),
     private val bufferCapacity: Int = 500,
@@ -54,6 +54,14 @@ class SessionManager(
     /** Random enough to correlate our echo; not security-sensitive. */
     private val customIdFactory: () -> String,
 ) {
+    /**
+     * Endpoint new sessions connect to. Changing it tears down every channel:
+     * the channels, the nicks and the tokens all belong to the old server, and
+     * carrying any of them across would be meaningless.
+     */
+    var serverUrl: String = initialUrl
+        private set
+
     /** Shared deliberately: the server scores rate limit per address, not per socket. */
     private val governor = RateGovernor()
 
@@ -78,7 +86,7 @@ class SessionManager(
             val session = ChannelSession(
                 channel = channel,
                 credentials = credentials,
-                url = url,
+                url = serverUrl,
                 transport = transport,
                 governor = governor,
                 tokenStore = tokenStore,
@@ -95,6 +103,19 @@ class SessionManager(
             }
             session.start(scope)
         }
+    }
+
+    /**
+     * Points the client at a different server, disconnecting everything first.
+     *
+     * Tokens are keyed by server, so the ones for the previous endpoint survive
+     * untouched — switching to a local test server and back does not cost you a
+     * silent resume on the server you normally use.
+     */
+    suspend fun setServer(url: String) {
+        if (url == serverUrl) return
+        stopAll()
+        serverUrl = url
     }
 
     suspend fun leave(channel: String) {

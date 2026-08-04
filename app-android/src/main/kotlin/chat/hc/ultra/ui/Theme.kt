@@ -7,6 +7,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
+import chat.hc.core.session.Servers
 
 /** Reads the build-time scheme metadata shipped alongside the renderer. */
 object SchemeAssets {
@@ -70,6 +71,19 @@ private fun Color.darken(amount: Float) = Color(
 
 private fun Color.isLight(): Boolean =
     (0.2126f * red + 0.7152f * green + 0.0722f * blue) > 0.5f
+
+/** Persisted server endpoint. Plain prefs: an address is not a secret. */
+class ServerPrefs(context: Context) {
+    private val prefs = context.getSharedPreferences("hc_server", Context.MODE_PRIVATE)
+
+    var url: String
+        get() = prefs.getString(KEY_URL, Servers.DEFAULT_URL) ?: Servers.DEFAULT_URL
+        set(value) = prefs.edit().putString(KEY_URL, value).apply()
+
+    private companion object {
+        const val KEY_URL = "url"
+    }
+}
 
 /** Persisted theme choice. Plain prefs: nothing here is sensitive. */
 class ThemePrefs(context: Context) {

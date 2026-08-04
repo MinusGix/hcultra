@@ -9,6 +9,7 @@ import chat.hc.core.net.ManagedTransport
 import chat.hc.core.session.Credentials
 import chat.hc.core.session.SessionManager
 import chat.hc.ultra.data.KeystoreTokenStore
+import chat.hc.ultra.ui.ServerPrefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -45,7 +46,7 @@ class HcService : Service() {
         net = ManagedTransport.create()
         sessions = SessionManager(
             scope = scope,
-            url = DEFAULT_URL,
+            initialUrl = ServerPrefs(this).url,
             transport = net.transport,
             tokenStore = KeystoreTokenStore(this),
             now = { System.currentTimeMillis() },
@@ -90,6 +91,16 @@ class HcService : Service() {
                 scope.launch { sessions.sendChat(channel, text) }
             }
 
+            ACTION_SET_SERVER -> {
+                val url = intent.getStringExtra(EXTRA_URL) ?: return START_STICKY
+                // Changing server disconnects every channel: the channels, the
+                // nicks and the tokens all belong to the old endpoint.
+                scope.launch {
+                    sessions.setServer(url)
+                    stopSelf()
+                }
+            }
+
             ACTION_STOP -> {
                 scope.launch {
                     sessions.stopAll()
@@ -112,16 +123,17 @@ class HcService : Service() {
 
     companion object {
         private const val TAG = "HcService"
-        const val DEFAULT_URL = "wss://hack.chat/chat-ws"
 
         const val ACTION_JOIN = "chat.hc.ultra.JOIN"
         const val ACTION_LEAVE = "chat.hc.ultra.LEAVE"
         const val ACTION_SEND = "chat.hc.ultra.SEND"
         const val ACTION_STOP = "chat.hc.ultra.STOP"
+        const val ACTION_SET_SERVER = "chat.hc.ultra.SET_SERVER"
 
         const val EXTRA_CHANNEL = "channel"
         const val EXTRA_NICK = "nick"
         const val EXTRA_PASS = "pass"
         const val EXTRA_TEXT = "text"
+        const val EXTRA_URL = "url"
     }
 }

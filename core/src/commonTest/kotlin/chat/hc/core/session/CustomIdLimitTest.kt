@@ -40,7 +40,7 @@ class CustomIdLimitTest {
         return ChannelSession(
             channel = "c",
             credentials = Credentials("t"),
-            url = "wss://example/chat-ws",
+            url = TEST_URL,
             transport = transport,
             governor = RateGovernor(),
         )

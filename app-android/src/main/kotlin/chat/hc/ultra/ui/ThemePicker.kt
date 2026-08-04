@@ -15,13 +15,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,9 +38,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
+import chat.hc.core.session.Servers
 
 /**
- * Theme picker over hack.chat's own schemes and highlight.js themes.
+ * Settings: server endpoint, then theming.
+ *
+ * Server sits at the top because it is the setting that changes what you are
+ * looking at rather than how it looks.
  *
  * Each row previews with the scheme's real colours rather than a name alone —
  * with 44 schemes, names like "atelier-heath" carry no information otherwise.
@@ -41,6 +53,8 @@ import chat.hc.core.render.Schemes
 @Composable
 fun ThemeSheet(
     schemes: List<Scheme>,
+    currentServer: String,
+    onServerChanged: (String) -> Unit,
     currentScheme: String,
     /** null means "follow the scheme's paired default". */
     highlightOverride: String?,
@@ -50,8 +64,19 @@ fun ThemeSheet(
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
-            Text("Syntax highlighting", style = MaterialTheme.typography.titleSmall)
+        Column(
+            Modifier
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            ServerSetting(currentServer, onServerChanged)
+
+            Text(
+                "Syntax highlighting",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(top = 16.dp),
+            )
             LazyRow(
                 Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -106,6 +131,44 @@ fun ThemeSheet(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ServerSetting(current: String, onChanged: (String) -> Unit) {
+    var input by remember(current) { mutableStateOf(current) }
+    val result = remember(input) { Servers.normalize(input) }
+    val valid = result as? Servers.Result.Valid
+    val changed = valid != null && valid.url != current
+
+    Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Server", style = MaterialTheme.typography.titleSmall)
+        OutlinedTextField(
+            value = input,
+            onValueChange = { input = it },
+            singleLine = true,
+            isError = result is Servers.Result.Invalid,
+            supportingText = {
+                when {
+                    result is Servers.Result.Invalid -> Text(result.reason)
+                    valid != null && Servers.isPlaintext(valid.url) ->
+                        Text("Unencrypted — fine for a local server, not over the internet")
+                    changed -> Text("Reconnects: joined channels will be left")
+                    else -> Text(valid?.url ?: "")
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(
+                onClick = { valid?.let { onChanged(it.url) } },
+                enabled = changed,
+            ) { Text("Connect") }
+            TextButton(
+                onClick = { input = Servers.DEFAULT_URL },
+                enabled = current != Servers.DEFAULT_URL || input != Servers.DEFAULT_URL,
+            ) { Text("Reset to hack.chat") }
         }
     }
 }

@@ -17,6 +17,9 @@ local.properties
 # Probe state: mirrors the server's per-address rate score between runs.
 probe/.governor.json
 
+# `ws` for probe/fakeserver.mjs; installed with --no-save, see probe/README.
+node_modules/
+
 # Editors / OS
 .idea/
 *.iml

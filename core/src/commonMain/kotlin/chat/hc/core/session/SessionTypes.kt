@@ -10,8 +10,13 @@ data class Credentials(
 )
 
 /**
- * Persisted session tokens, one per channel (the server permits only one
- * channel per socket, so tokens are per-channel too).
+ * Persisted session tokens, keyed by **server and channel**.
+ *
+ * A token is only meaningful to the server that issued it, so the server is
+ * part of the key rather than a global namespace. That also means trying a
+ * different server does not cost you silent resume on the one you normally use
+ * — and losing it would be worse than an inconvenience, since a cold rejoin is
+ * visible to the whole channel as a leave/join pair.
  *
  * Tokens are JWTs valid 7 days, reissued on both join and restore — so a client
  * that connects at least weekly keeps a rolling window indefinitely. They grant
@@ -19,17 +24,19 @@ data class Credentials(
  * Keystore, not plain preferences.
  */
 interface TokenStore {
-    suspend fun load(channel: String): String?
-    suspend fun save(channel: String, token: String)
-    suspend fun clear(channel: String)
+    suspend fun load(server: String, channel: String): String?
+    suspend fun save(server: String, channel: String, token: String)
+    suspend fun clear(server: String, channel: String)
 }
 
 /** In-memory store; the default for tests and for ephemeral-by-default mode. */
 class InMemoryTokenStore : TokenStore {
-    private val tokens = mutableMapOf<String, String>()
-    override suspend fun load(channel: String): String? = tokens[channel]
-    override suspend fun save(channel: String, token: String) { tokens[channel] = token }
-    override suspend fun clear(channel: String) { tokens.remove(channel) }
+    private val tokens = mutableMapOf<Pair<String, String>, String>()
+    override suspend fun load(server: String, channel: String): String? = tokens[server to channel]
+    override suspend fun save(server: String, channel: String, token: String) {
+        tokens[server to channel] = token
+    }
+    override suspend fun clear(server: String, channel: String) { tokens.remove(server to channel) }
 }
 
 sealed interface SessionState {

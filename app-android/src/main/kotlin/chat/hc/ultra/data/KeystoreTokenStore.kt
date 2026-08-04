@@ -28,25 +28,31 @@ class KeystoreTokenStore(context: Context) : TokenStore {
 
     private val prefs = context.getSharedPreferences("hc_tokens", Context.MODE_PRIVATE)
 
-    override suspend fun load(channel: String): String? = withContext(Dispatchers.IO) {
-        val stored = prefs.getString(key(channel), null) ?: return@withContext null
+    override suspend fun load(server: String, channel: String): String? = withContext(Dispatchers.IO) {
+        val stored = prefs.getString(key(server, channel), null) ?: return@withContext null
         runCatching { decrypt(stored) }.getOrElse {
             // Key invalidated (e.g. device credentials removed). Drop it and
             // fall back to a fresh join rather than failing to connect.
-            prefs.edit().remove(key(channel)).apply()
+            prefs.edit().remove(key(server, channel)).apply()
             null
         }
     }
 
-    override suspend fun save(channel: String, token: String) = withContext(Dispatchers.IO) {
-        prefs.edit().putString(key(channel), encrypt(token)).apply()
+    override suspend fun save(server: String, channel: String, token: String) = withContext(Dispatchers.IO) {
+        prefs.edit().putString(key(server, channel), encrypt(token)).apply()
     }
 
-    override suspend fun clear(channel: String) = withContext(Dispatchers.IO) {
-        prefs.edit().remove(key(channel)).apply()
+    override suspend fun clear(server: String, channel: String) = withContext(Dispatchers.IO) {
+        prefs.edit().remove(key(server, channel)).apply()
     }
 
-    private fun key(channel: String) = "token_$channel"
+    /**
+     * Namespaced by server: a token only means anything to the server that
+     * issued it, and keeping them apart means trying a local server does not
+     * cost the silent resume on the one you normally use.
+     */
+    private fun key(server: String, channel: String) =
+        "token_${server.replace(Regex("[^A-Za-z0-9]"), "_")}_$channel"
 
     private fun secretKey(): SecretKey {
         val ks = KeyStore.getInstance(KEYSTORE).apply { load(null) }

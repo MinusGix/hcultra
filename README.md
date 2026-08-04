@@ -17,7 +17,7 @@ background socket at all (see `docs/`).
 |---|---|
 | `core/` | Kotlin Multiplatform protocol core — frames, session state machine, rate governor, ephemeral buffers. JVM + Android targets. |
 | `app-android/` | Android app: foreground service, notification with direct reply, Compose UI. |
-| `probe/` | Node harness that explores the live protocol. How the findings below were established. |
+| `probe/` | Node harness that explores the live protocol, plus `fakeserver.mjs` — a deliberately misbehaving server for client paths the real one will not produce on demand. |
 | `docs/` | Design notes and the upstream asks for hack.chat. |
 | `hc/` | *(gitignored)* upstream server source, kept as a protocol reference. |
 
@@ -66,12 +66,16 @@ Details and reproductions in `probe/FINDINGS.md`:
 - **One channel per socket.** A second `join` is refused with `warn id 33`.
 - Rate limiting is scored **per address**, shared across every socket on the
   device, so one governor is shared by all sessions.
+- Session tokens are only meaningful to the server that issued them, so they are
+  stored keyed by server as well as channel.
 
 ## Status
 
 Working: protocol core (unit tested + verified against live), Android
 foreground service surviving backgrounding, send/receive, reconnect with token
-restore. Verified on an emulator against live hack.chat.
+restore, multi-channel tabs, whispers, the site's markdown/KaTeX/highlight
+rendering with all 44 of its colour schemes, and a configurable server endpoint.
+Verified on an emulator against live hack.chat.
 
-Next: WebView message renderer reusing the site's own markdown + KaTeX +
-highlight.js pipeline, for exact rendering parity.
+Next: mod commands gated on level, and a send-on-reconnect outbox (the composer
+is currently disabled while reconnecting).
