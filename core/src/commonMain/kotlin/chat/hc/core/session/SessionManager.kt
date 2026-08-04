@@ -8,6 +8,7 @@ import chat.hc.core.store.ChatMessage
 import chat.hc.core.store.Delivery
 import chat.hc.core.store.MessageKind
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,10 +38,18 @@ data class ChannelUi(
  * One socket per channel — the server rejects a second `join` per socket.
  */
 class SessionManager(
+    /** Owns every session and the pending-echo timers; supplied by the service. */
+    private val scope: CoroutineScope,
     private val url: String,
     private val transport: Transport,
     private val tokenStore: TokenStore = InMemoryTokenStore(),
     private val bufferCapacity: Int = 500,
+    /**
+     * How long to wait for the server to echo our own message before marking it
+     * unconfirmed. A normal echo returns in well under a second; this only has
+     * to be longer than a bad connection's round trip.
+     */
+    private val echoTimeoutMillis: Long = 10_000,
     private val now: () -> Long,
     /** Random enough to correlate our echo; not security-sensitive. */
     private val customIdFactory: () -> String,
@@ -63,7 +72,7 @@ class SessionManager(
             value?.let { ch -> mutate(ch) { it.copy(unread = 0) } }
         }
 
-    suspend fun join(scope: CoroutineScope, channel: String, credentials: Credentials) {
+    suspend fun join(channel: String, credentials: Credentials) {
         lock.withLock {
             if (sessions.containsKey(channel)) return
             val session = ChannelSession(
@@ -126,10 +135,26 @@ class SessionManager(
         buffer.addPending(text, customId, session.roster.firstOrNull { it.isme }?.nick ?: "", session.userid ?: 0L, now())
         publish(channel)
         runCatching { session.send(Outbound.Chat(text, customId)) }
+            .onSuccess { scheduleEchoTimeout(channel, customId) }
             .onFailure {
                 buffer.markFailed(customId)
                 publish(channel)
             }
+    }
+
+    /**
+     * A message can be written to the socket and still never come back: the
+     * connection may drop, or the server may discard it without replying (an
+     * oversized customId or a rate-limit penalty both do exactly that). Since
+     * hack.chat keeps no history the echo can never arrive late, so a pending
+     * message that ages out is downgraded rather than left spinning forever.
+     */
+    private fun scheduleEchoTimeout(channel: String, customId: String) {
+        scope.launch {
+            delay(echoTimeoutMillis)
+            val buffer = buffers[channel] ?: return@launch
+            if (buffer.markUnconfirmed(customId)) publish(channel)
+        }
     }
 
     fun buffer(channel: String): ChannelBuffer? = buffers[channel]
@@ -210,6 +235,8 @@ class SessionManager(
             // Disconnected event on every backoff attempt, which otherwise fills
             // the transcript with identical lines.
             is SessionEvent.Disconnected -> {
+                // Anything still waiting for an echo will never get one.
+                buffer.markAllPendingUnconfirmed()
                 val last = buffer.snapshot().lastOrNull()
                 val alreadyReported = last?.kind == MessageKind.Info &&
                     last.text.startsWith("Disconnected")

@@ -44,6 +44,7 @@ class HcService : Service() {
         super.onCreate()
         net = ManagedTransport.create()
         sessions = SessionManager(
+            scope = scope,
             url = DEFAULT_URL,
             transport = net.transport,
             tokenStore = KeystoreTokenStore(this),
@@ -72,7 +73,7 @@ class HcService : Service() {
                 val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
                 val nick = intent.getStringExtra(EXTRA_NICK) ?: return START_STICKY
                 val pass = intent.getStringExtra(EXTRA_PASS)
-                scope.launch { sessions.join(scope, channel, Credentials(nick, pass)) }
+                scope.launch { sessions.join(channel, Credentials(nick, pass)) }
             }
 
             ACTION_LEAVE -> {

@@ -5,7 +5,25 @@ import chat.hc.core.protocol.UpdateMode
 
 enum class MessageKind { Chat, Emote, Whisper, WhisperSent, Info, Warning, Join, Leave }
 
-enum class Delivery { Sending, Sent, Failed }
+enum class Delivery {
+    /** Written to the socket; waiting for the server to echo it back. */
+    Sending,
+
+    /** Echoed back by the server, so it definitely reached the channel. */
+    Sent,
+
+    /** The socket rejected it outright — it definitely did not send. */
+    Failed,
+
+    /**
+     * Sent, but never echoed: the connection dropped, or the server discarded
+     * it without replying. Distinct from [Failed] on purpose — hack.chat keeps
+     * no history, so a missed echo can never arrive late and we genuinely
+     * cannot tell whether it was delivered. Calling that "failed" would invite
+     * a duplicate resend of a message that did in fact go out.
+     */
+    Unconfirmed,
+}
 
 data class ChatMessage(
     val localId: Long,
@@ -81,7 +99,12 @@ class ChannelBuffer(private val capacity: Int = 500) {
         val pendingId = frame.customId?.let { byCustomId[it] }
         if (pendingId != null) {
             val idx = messages.indexOfFirst { it.localId == pendingId }
-            if (idx >= 0 && messages[idx].delivery == Delivery.Sending) {
+            // Accept the echo for an already-downgraded message too: a slow
+            // round trip can outlive the timeout, and resolving it is far
+            // better than appending a duplicate of what the user just sent.
+            val pending = idx >= 0 &&
+                (messages[idx].delivery == Delivery.Sending || messages[idx].delivery == Delivery.Unconfirmed)
+            if (pending) {
                 val reconciled = messages[idx].copy(
                     text = frame.text,
                     serverId = frame.id,
@@ -139,6 +162,35 @@ class ChannelBuffer(private val capacity: Int = 500) {
         val localId = byCustomId[customId] ?: return
         val idx = messages.indexOfFirst { it.localId == localId }
         if (idx >= 0) messages[idx] = messages[idx].copy(delivery = Delivery.Failed)
+    }
+
+    /**
+     * Downgrades one still-pending message to [Delivery.Unconfirmed].
+     * No-op if it was already reconciled, so a late echo always wins.
+     *
+     * @return true if anything changed, so callers can skip a redundant publish.
+     */
+    fun markUnconfirmed(customId: String): Boolean {
+        val localId = byCustomId[customId] ?: return false
+        val idx = messages.indexOfFirst { it.localId == localId }
+        if (idx < 0 || messages[idx].delivery != Delivery.Sending) return false
+        messages[idx] = messages[idx].copy(delivery = Delivery.Unconfirmed)
+        return true
+    }
+
+    /**
+     * Downgrades every still-pending message. Used when the connection drops:
+     * the echoes those messages were waiting for can never arrive.
+     */
+    fun markAllPendingUnconfirmed(): Boolean {
+        var changed = false
+        for (i in messages.indices) {
+            if (messages[i].delivery == Delivery.Sending) {
+                messages[i] = messages[i].copy(delivery = Delivery.Unconfirmed)
+                changed = true
+            }
+        }
+        return changed
     }
 
     fun clear() {

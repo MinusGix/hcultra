@@ -269,12 +269,49 @@ directions, with the peer confirming receipt.
 In the UI, tapping a roster entry inserts an `@mention` and long-pressing starts
 a `/w` — the server's `/w` strips a leading `@`, so the two compose cleanly.
 
+## Delivery states
+
+A sent message is only *known* delivered once the server echoes it back with our
+customId. Four states, and the fourth exists because three were not enough:
+
+- `Sending` — written to the socket, awaiting the echo.
+- `Sent` — echoed; it definitely reached the channel.
+- `Failed` — the socket rejected it; it definitely did not send.
+- `Unconfirmed` — sent, never echoed. **Deliberately not "failed":** we cannot
+  tell whether it was delivered, and calling it failed would invite a duplicate
+  resend of a message that did go out.
+
+A message reaches `Unconfirmed` two ways: the connection drops with it still
+pending (`markAllPendingUnconfirmed`), or it ages past `echoTimeoutMillis`
+(10s — a normal echo returns in well under a second). The timeout is the
+general safety net: the socket can stay open while the server discards a
+message without replying, which is exactly what an oversized customId or a
+rate-limit penalty does.
+
+A late echo still reconciles an `Unconfirmed` message rather than appending a
+duplicate — a slow round trip can outlive the timeout, and resolving beats
+double-posting what the user just typed.
+
+### Test coverage, honestly
+
+The transitions are covered deterministically by `ChannelBufferTest` (including
+"already echoed must not be downgraded" and "late echo must not duplicate").
+
+The timeout was **not** reproduced on-device. Doing so needs a server that
+accepts a message and never echoes it, and neither trick worked: killing the
+network first disables the composer (see below), and emulator shaping
+(`adb emu network delay/speed`) does not affect an already-established socket,
+so the echo still returned instantly. Pointing the app at a local test server
+would close this — which is another argument for making the server URL
+configurable, alongside running the local hack.chat server.
+
 ## Known gap
 
-A message sent but disconnected before its echo arrives stays at "sending…"
-forever — the server keeps no history, so the echo can never arrive late. It
-needs either a timeout or a distinct "unconfirmed" state; "failed" would be a
-lie, since it may well have been delivered.
+The composer is disabled whenever the session is not `Live`, so you cannot type
+a message while reconnecting — it has to be retyped after the connection comes
+back. A send-on-reconnect outbox would fix it, but that needs care: the server
+keeps no history, so a queued message replayed after a long gap can land far out
+of context.
 
 ## Still unverified
 

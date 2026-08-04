@@ -181,6 +181,9 @@
     var flag = '';
     if (m.delivery === 'Sending') flag = '<span class="flag pending">sending\u2026</span>';
     else if (m.delivery === 'Failed') flag = '<span class="flag failed">failed</span>';
+    // Deliberately not "failed": it may well have been delivered, and we cannot
+    // tell, so the label must not push the user into a duplicate resend.
+    else if (m.delivery === 'Unconfirmed') flag = '<span class="flag unconfirmed">unconfirmed</span>';
     if (m.streamComplete === false) flag += '<span class="flag streaming">\u2026</span>';
 
     row.innerHTML = head + '<span class="text">' + renderBody(m.text) + '</span>' + flag;
