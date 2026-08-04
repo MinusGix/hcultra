@@ -1,30 +1,15 @@
-/* Renderer styling. Follows the system theme so the WebView matches the
-   surrounding native UI rather than looking like an embedded web page. */
-
-:root {
-  --fg: #1b1e23;
-  --dim: #6a7280;
-  --bg: transparent;
-  --accent: #5e89ed;
-  --warn: #b3261e;
-  --code-bg: rgba(127, 127, 127, 0.12);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --fg: #e6e6e6;
-    --dim: #9aa3ad;
-    --accent: #8fd6ff;
-    --warn: #f2b8b5;
-    --code-bg: rgba(255, 255, 255, 0.08);
-  }
-}
+/*
+ * Layout only.
+ *
+ * Colours belong to the scheme stylesheet, which loads after this file and
+ * therefore wins. Anything colour-related here must be a fallback for the
+ * handful of things the site's schemes do not style (code blocks, KaTeX
+ * overflow, delivery flags) — never a rule that would fight a scheme.
+ */
 
 html, body {
   margin: 0;
   padding: 0;
-  background: var(--bg);
-  color: var(--fg);
   font: 15px/1.45 -apple-system, Roboto, "Segoe UI", sans-serif;
   overflow-wrap: break-word;
   word-break: break-word;
@@ -32,51 +17,50 @@ html, body {
 
 #log { padding: 8px 10px 16px; }
 
-.msg { margin: 0 0 6px; }
-
-.nick { font-weight: 600; margin-right: 6px; }
-.nick::after { content: ""; }
-.kind-chat .nick::before { content: "<"; color: var(--dim); font-weight: 400; }
-.kind-chat .nick::after { content: ">"; color: var(--dim); font-weight: 400; }
-.trip { color: var(--dim); font-weight: 400; margin-right: 3px; }
-.nick.emote, .kind-emote .body { font-style: italic; color: var(--dim); }
-.nick.whisper { color: var(--accent); }
-
-.kind-info .body, .kind-join .body, .kind-leave .body { color: var(--dim); font-size: 14px; }
-.kind-warning .body { color: var(--warn); }
-.kind-join .body::before { content: "→ "; }
-.kind-leave .body::before { content: "← "; }
-
-.body { display: inline; }
-/* Remarkable wraps everything in <p>; keep single-line messages inline so the
-   transcript reads like chat rather than a document. */
-.body > p { display: inline; margin: 0; }
-.body > p + p { display: block; margin: 4px 0 0; }
-.body ul, .body ol { margin: 4px 0; padding-left: 22px; }
-.body blockquote {
-  margin: 4px 0;
-  padding-left: 8px;
-  border-left: 3px solid var(--dim);
-  color: var(--dim);
+/* Schemes style .message with a left border, as on the site. */
+.message {
+  margin: 0 0 5px;
+  padding-left: 6px;
 }
 
-a { color: var(--accent); text-decoration: none; }
+.nick { font-weight: 600; }
+.trip { margin-right: 3px; }
+.kind-emote .text { font-style: italic; }
 
+.kind-info .text, .kind-join .text, .kind-leave .text { font-size: 14px; }
+.kind-join .text::before { content: "→ "; }
+.kind-leave .text::before { content: "← "; }
+
+.text { display: inline; }
+/* Remarkable wraps everything in <p>; keep a one-line message inline so the
+   transcript reads like chat rather than a stack of documents. */
+.text > p { display: inline; margin: 0; }
+.text > p + p { display: block; margin: 4px 0 0; }
+.text ul, .text ol { margin: 4px 0; padding-left: 22px; }
+.text blockquote {
+  margin: 4px 0;
+  padding-left: 8px;
+  border-left: 3px solid currentColor;
+  opacity: 0.75;
+}
+
+a { text-decoration: none; }
+
+/* currentColor keeps these legible on any scheme without picking a colour. */
 code {
-  background: var(--code-bg);
+  background: rgba(127, 127, 127, 0.16);
   padding: 1px 4px;
   border-radius: 3px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 13px;
 }
 
-/* Wide content scrolls inside its own box; the page itself must never
-   scroll sideways. */
+/* Wide content scrolls inside its own box; the page must never scroll
+   sideways. The hljs theme owns pre/code colours. */
 pre {
   display: block;
   margin: 6px 0;
   padding: 8px;
-  background: var(--code-bg);
   border-radius: 6px;
   overflow-x: auto;
 }
@@ -85,9 +69,7 @@ pre code { background: none; padding: 0; }
 .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
 
 table { border-collapse: collapse; margin: 6px 0; display: block; overflow-x: auto; }
-th, td { border: 1px solid var(--dim); padding: 3px 7px; }
+th, td { border: 1px solid rgba(127, 127, 127, 0.5); padding: 3px 7px; }
 
-.flag { font-size: 12px; color: var(--dim); margin-left: 6px; }
-.flag.failed { color: var(--warn); }
-.mine .body { opacity: 1; }
-.msg:has(.flag.pending) .body { opacity: 0.6; }
+.flag { font-size: 12px; opacity: 0.7; margin-left: 6px; }
+.message:has(.flag.pending) .text { opacity: 0.6; }

@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -49,6 +50,11 @@ import chat.hc.core.store.MessageKind
 import chat.hc.ultra.service.HcService
 import chat.hc.ultra.ui.MessageWebView
 import chat.hc.ultra.ui.RendererCallbacks
+import chat.hc.core.render.Scheme
+import chat.hc.ultra.ui.SchemeAssets
+import chat.hc.ultra.ui.ThemePrefs
+import chat.hc.ultra.ui.ThemeSheet
+import chat.hc.ultra.ui.toColorScheme
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -100,9 +106,29 @@ class MainActivity : ComponentActivity() {
             requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
+        val themePrefs = ThemePrefs(this)
+        val allSchemes = SchemeAssets.load(this)
+
         setContent {
-            MaterialTheme {
+            var schemeName by remember { mutableStateOf(themePrefs.scheme) }
+            var highlight by remember { mutableStateOf(themePrefs.highlight) }
+            var showThemes by remember { mutableStateOf(false) }
+            val scheme = remember(schemeName) {
+                allSchemes.firstOrNull { it.name == schemeName } ?: allSchemes.first()
+            }
+
+            MaterialTheme(colorScheme = scheme.toColorScheme()) {
                 Surface(modifier = Modifier.fillMaxSize()) {
+                    if (showThemes) {
+                        ThemeSheet(
+                            schemes = allSchemes,
+                            currentScheme = schemeName,
+                            currentHighlight = highlight,
+                            onSchemeSelected = { schemeName = it; themePrefs.scheme = it },
+                            onHighlightSelected = { highlight = it; themePrefs.highlight = it },
+                            onDismiss = { showThemes = false },
+                        )
+                    }
                     AppScreen(
                         channelsFlow = channels,
                         onJoin = { channel, nick, pass -> startJoin(channel, nick, pass) },
@@ -111,6 +137,9 @@ class MainActivity : ComponentActivity() {
                             onLinkTap = { url -> openExternal(url) },
                             onChannelTap = { channel -> /* TODO: join in a new tab */ },
                         ),
+                        scheme = scheme,
+                        highlight = highlight,
+                        onOpenThemes = { showThemes = true },
                     )
                 }
             }
@@ -171,6 +200,9 @@ private fun AppScreen(
     onJoin: (String, String, String?) -> Unit,
     onSend: (String, String) -> Unit,
     rendererCallbacks: RendererCallbacks,
+    scheme: Scheme,
+    highlight: String,
+    onOpenThemes: () -> Unit,
 ) {
     val channels by channelsFlow.collectAsStateWithLifecycle()
     var channelInput by remember { mutableStateOf("") }
@@ -213,14 +245,23 @@ private fun AppScreen(
                     enabled = channelInput.isNotBlank() && nickInput.isNotBlank(),
                 ) { Text("Connect") }
             } else {
-                Text(
-                    "?${active.channel} — ${describe(active.state)} · ${active.roster.size} online",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "?${active.channel} — ${describe(active.state)} · ${active.roster.size} online",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onOpenThemes) { Text("Theme") }
+                }
 
                 MessageWebView(
                     messages = active.messages,
+                    scheme = scheme.name,
+                    highlight = highlight,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     callbacks = rendererCallbacks,
                 )

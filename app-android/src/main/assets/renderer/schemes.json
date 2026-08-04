@@ -1,0 +1,444 @@
+{
+  "schemes": [
+    {
+      "name": "amoled",
+      "label": "Amoled",
+      "background": "#000000",
+      "foreground": "#a6a28c",
+      "nick": "#778fd8",
+      "link": "#ffffff",
+      "warn": "#cfb017",
+      "dark": true
+    },
+    {
+      "name": "android-white",
+      "label": "Android White",
+      "background": "#ffffff",
+      "foreground": "#000000",
+      "nick": "#a3a3a3",
+      "link": "#000000",
+      "warn": "#ff5555",
+      "dark": false
+    },
+    {
+      "name": "android",
+      "label": "Android",
+      "background": "#212121",
+      "foreground": "#e0e0e0",
+      "nick": "#0099cc",
+      "link": "#f2f2f2",
+      "warn": "#fbba37",
+      "dark": true
+    },
+    {
+      "name": "andromeda",
+      "label": "Andromeda",
+      "background": "#525b7a",
+      "foreground": "#040203",
+      "nick": "#cdb79f",
+      "link": "#e8e4cf",
+      "warn": "#ff6c6c",
+      "dark": true
+    },
+    {
+      "name": "atelier-dune",
+      "label": "Atelier Dune",
+      "background": "#20201d",
+      "foreground": "#a6a28c",
+      "nick": "#6684e1",
+      "link": "#e8e4cf",
+      "warn": "#cfb017",
+      "dark": true
+    },
+    {
+      "name": "atelier-forest",
+      "label": "Atelier Forest",
+      "background": "#1b1918",
+      "foreground": "#a8a19f",
+      "nick": "#407ee7",
+      "link": "#e6e2e0",
+      "warn": "#d5911a",
+      "dark": true
+    },
+    {
+      "name": "atelier-heath",
+      "label": "Atelier Heath",
+      "background": "#1b181b",
+      "foreground": "#ab9bab",
+      "nick": "#516aec",
+      "link": "#d8cad8",
+      "warn": "#bb8a35",
+      "dark": true
+    },
+    {
+      "name": "atelier-lakeside",
+      "label": "Atelier Lakeside",
+      "background": "#161b1d",
+      "foreground": "#7ea2b4",
+      "nick": "#257fad",
+      "link": "#c1e4f6",
+      "warn": "#8a8a0f",
+      "dark": true
+    },
+    {
+      "name": "atelier-seaside",
+      "label": "Atelier Seaside",
+      "background": "#131513",
+      "foreground": "#8ca68c",
+      "nick": "#3d62f5",
+      "link": "#cfe8cf",
+      "warn": "#c3c322",
+      "dark": true
+    },
+    {
+      "name": "banana",
+      "label": "Banana",
+      "background": "#fcf000",
+      "foreground": "#000000",
+      "nick": "#0e5a94",
+      "link": "#e0e0e0",
+      "warn": "#0419f9",
+      "dark": false
+    },
+    {
+      "name": "bright",
+      "label": "Bright",
+      "background": "#000000",
+      "foreground": "#e0e0e0",
+      "nick": "#6fb3d2",
+      "link": "#f5f5f5",
+      "warn": "#fda331",
+      "dark": true
+    },
+    {
+      "name": "bubblegum",
+      "label": "Bubblegum",
+      "background": "#840580",
+      "foreground": "#fc62f2",
+      "nick": "#516aec",
+      "link": "#d8cad8",
+      "warn": "#fcf000",
+      "dark": true
+    },
+    {
+      "name": "carrot",
+      "label": "Carrot",
+      "background": "#000000",
+      "foreground": "#ee600d",
+      "nick": "#1db80f",
+      "link": "#97ff97",
+      "warn": "#ffbb00",
+      "dark": true
+    },
+    {
+      "name": "catppuccin",
+      "label": "Catppuccin",
+      "background": "#1e1e2e",
+      "foreground": "#b4befe",
+      "nick": "#b4befe",
+      "link": "#cdd6f4",
+      "warn": "#f5e0dc",
+      "dark": true
+    },
+    {
+      "name": "chalk",
+      "label": "Chalk",
+      "background": "#151515",
+      "foreground": "#d0d0d0",
+      "nick": "#6fc2ef",
+      "link": "#e0e0e0",
+      "warn": "#ddb26f",
+      "dark": true
+    },
+    {
+      "name": "default",
+      "label": "Default",
+      "background": "#151515",
+      "foreground": "#d0d0d0",
+      "nick": "#6a9fb5",
+      "link": "#e0e0e0",
+      "warn": "#f4bf75",
+      "dark": true
+    },
+    {
+      "name": "eighties",
+      "label": "Eighties",
+      "background": "#2d2d2d",
+      "foreground": "#d3d0c8",
+      "nick": "#6699cc",
+      "link": "#e8e6df",
+      "warn": "#ffcc66",
+      "dark": true
+    },
+    {
+      "name": "flamingo",
+      "label": "Flamingo",
+      "background": "#e59da1",
+      "foreground": "#0d1c17",
+      "nick": "#2b3493",
+      "link": "#0d0fa4",
+      "warn": "#be2300",
+      "dark": false
+    },
+    {
+      "name": "fresh-green",
+      "label": "Fresh Green",
+      "background": "#bde9ea",
+      "foreground": "#469c9d",
+      "nick": "#58cac2",
+      "link": "#74d8cc",
+      "warn": "#61cfcc",
+      "dark": false
+    },
+    {
+      "name": "fried-egg",
+      "label": "Fried Egg",
+      "background": "#f7f7f7",
+      "foreground": "#000000",
+      "nick": "#ffd700",
+      "link": "#000000",
+      "warn": "#ff0000",
+      "dark": false
+    },
+    {
+      "name": "greenscreen",
+      "label": "Greenscreen",
+      "background": "#001100",
+      "foreground": "#00bb00",
+      "nick": "#009900",
+      "link": "#00dd00",
+      "warn": "#007700",
+      "dark": true
+    },
+    {
+      "name": "gruvbox-light",
+      "label": "Gruvbox Light",
+      "background": "#fbf1c7",
+      "foreground": "#3c3836",
+      "nick": "#427b58",
+      "link": "#3c3836",
+      "warn": "#b57614",
+      "dark": false
+    },
+    {
+      "name": "hacker",
+      "label": "Hacker",
+      "background": "#191919",
+      "foreground": "#00bb00",
+      "nick": "#009900",
+      "link": "#00dd00",
+      "warn": "#007700",
+      "dark": true
+    },
+    {
+      "name": "lax",
+      "label": "Lax",
+      "background": "#151515",
+      "foreground": "#8e8e8e",
+      "nick": "#6699cc",
+      "link": "#5c9c9f",
+      "warn": "#ffcc66",
+      "dark": true
+    },
+    {
+      "name": "maniac",
+      "label": "Maniac",
+      "background": "#200000",
+      "foreground": "#d0d0d0",
+      "nick": "#0e5a94",
+      "link": "#e0e0e0",
+      "warn": "#f8ca12",
+      "dark": true
+    },
+    {
+      "name": "mariana",
+      "label": "Mariana",
+      "background": "#343d46",
+      "foreground": "#93a1a1",
+      "nick": "#5d8cb7",
+      "link": "#7a8f94",
+      "warn": "#edd400",
+      "dark": true
+    },
+    {
+      "name": "military",
+      "label": "Military",
+      "background": "#1e3801",
+      "foreground": "#c6c6c6",
+      "nick": "#04db24",
+      "link": "#e0e0e0",
+      "warn": "#f8ca12",
+      "dark": true
+    },
+    {
+      "name": "milkyway",
+      "label": "Milkyway",
+      "background": "#dfcdb5",
+      "foreground": "#615c56",
+      "nick": "#928bff",
+      "link": "#e8e4cf",
+      "warn": "#ff6c6c",
+      "dark": false
+    },
+    {
+      "name": "mocha",
+      "label": "Mocha",
+      "background": "#3b3228",
+      "foreground": "#d0c8c6",
+      "nick": "#8ab3b5",
+      "link": "#e9e1dd",
+      "warn": "#f4bc87",
+      "dark": true
+    },
+    {
+      "name": "monokai",
+      "label": "Monokai",
+      "background": "#272822",
+      "foreground": "#f8f8f2",
+      "nick": "#66d9ef",
+      "link": "#f5f4f1",
+      "warn": "#f4bf75",
+      "dark": true
+    },
+    {
+      "name": "nebula",
+      "label": "Nebula",
+      "background": "#131114",
+      "foreground": "#d0d0d0",
+      "nick": "#83c9cd",
+      "link": "#131114",
+      "warn": "#ff6c6c",
+      "dark": true
+    },
+    {
+      "name": "nese",
+      "label": "Nese",
+      "background": "#030303",
+      "foreground": "#cccccc",
+      "nick": "#388bb8",
+      "link": "#f2f2f2",
+      "warn": "#faba3d",
+      "dark": true
+    },
+    {
+      "name": "ocean",
+      "label": "Ocean",
+      "background": "#2b303b",
+      "foreground": "#c0c5ce",
+      "nick": "#8fa1b3",
+      "link": "#dfe1e8",
+      "warn": "#ebcb8b",
+      "dark": true
+    },
+    {
+      "name": "omega",
+      "label": "Omega",
+      "background": "#191919",
+      "foreground": "#02fcf4",
+      "nick": "#05b7b1",
+      "link": "#00dd00",
+      "warn": "#007700",
+      "dark": true
+    },
+    {
+      "name": "pop",
+      "label": "Pop",
+      "background": "#000000",
+      "foreground": "#d0d0d0",
+      "nick": "#0e5a94",
+      "link": "#e0e0e0",
+      "warn": "#f8ca12",
+      "dark": true
+    },
+    {
+      "name": "railscasts",
+      "label": "Railscasts",
+      "background": "#2b2b2b",
+      "foreground": "#e6e1dc",
+      "nick": "#6d9cbe",
+      "link": "#f4f1ed",
+      "warn": "#ffc66d",
+      "dark": true
+    },
+    {
+      "name": "rainbow",
+      "label": "Rainbow",
+      "background": "#111111",
+      "foreground": "#cccccc",
+      "nick": "#cccccc",
+      "link": "#e8e4cf",
+      "warn": "#cfb017",
+      "dark": true
+    },
+    {
+      "name": "retro",
+      "label": "Retro",
+      "background": "#050505",
+      "foreground": "#d0d0d0",
+      "nick": "#6684e1",
+      "link": "#e8e4cf",
+      "warn": "#cfb017",
+      "dark": true
+    },
+    {
+      "name": "solarized",
+      "label": "Solarized",
+      "background": "#002b36",
+      "foreground": "#93a1a1",
+      "nick": "#268bd2",
+      "link": "#eee8d5",
+      "warn": "#b58900",
+      "dark": true
+    },
+    {
+      "name": "sunlight",
+      "label": "Sunlight",
+      "background": "#8ac7f5",
+      "foreground": "#000000",
+      "nick": "#6684e1",
+      "link": "#e8e4cf",
+      "warn": "#eb2902",
+      "dark": false
+    },
+    {
+      "name": "tk-night",
+      "label": "Tk Night",
+      "background": "#1f2224",
+      "foreground": "#b9a8eb",
+      "nick": "#55586d",
+      "link": "#97ff97",
+      "warn": "#eba8a8",
+      "dark": true
+    },
+    {
+      "name": "tomorrow",
+      "label": "Tomorrow",
+      "background": "#1d1f21",
+      "foreground": "#c5c8c6",
+      "nick": "#81a2be",
+      "link": "#e0e0e0",
+      "warn": "#f0c674",
+      "dark": true
+    },
+    {
+      "name": "ubuntu",
+      "label": "Ubuntu",
+      "background": "#2c001e",
+      "foreground": "#e95420",
+      "nick": "#e95420",
+      "link": "#00aa00",
+      "warn": "#cfb017",
+      "dark": true
+    },
+    {
+      "name": "waifu",
+      "label": "Waifu",
+      "background": "#2c001e",
+      "foreground": "#e95420",
+      "nick": "#e95420",
+      "link": "#e95420",
+      "warn": "#f4bf75",
+      "dark": true
+    }
+  ]
+}

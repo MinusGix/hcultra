@@ -46,12 +46,17 @@ private class Bridge(
 private class RendererState {
     var ready = false
     var pending: String? = null
+    /** Replayed on reload so a WebView recreation keeps the chosen theme. */
+    var appliedTheme: String? = null
 }
+
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun MessageWebView(
     messages: List<ChatMessage>,
+    scheme: String,
+    highlight: String,
     modifier: Modifier = Modifier,
     callbacks: RendererCallbacks = RendererCallbacks(),
 ) {
@@ -80,6 +85,7 @@ fun MessageWebView(
                         // WebView calls must be made on the UI thread.
                         post {
                             state.ready = true
+                            state.appliedTheme?.let { evaluateJavascript(it, null) }
                             state.pending?.let { evaluateJavascript(it, null) }
                             state.pending = null
                         }
@@ -90,6 +96,11 @@ fun MessageWebView(
             }
         },
         update = { webView ->
+            val themeCall = RendererBridge.themeCall(scheme, highlight)
+            if (state.appliedTheme != themeCall) {
+                state.appliedTheme = themeCall
+                if (state.ready) webView.evaluateJavascript(themeCall, null)
+            }
             val call = RendererBridge.renderCall(messages)
             if (state.ready) webView.evaluateJavascript(call, null) else state.pending = call
         },

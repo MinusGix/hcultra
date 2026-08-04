@@ -139,8 +139,8 @@ the `?channel` linkifier). Parity with the site is the entire reason this is a
 WebView; if the site changes its options, change `app.js` to match.
 
 Only woff2 KaTeX fonts are shipped (360K of the original 1.5M — Android WebView
-is Chrome-based, so woff2 always resolves first), and only the `hybrid` hljs
-theme. Total assets 836K; debug APK 13.7MB.
+is Chrome-based, so woff2 always resolves first). With all 44 schemes and 11
+highlight themes, assets total 1.1M; debug APK ~14MB.
 
 Verified rendering on-device against live: bold/italic/strike, inline code,
 inline **and** display KaTeX with fonts, Kotlin syntax highlighting, links,
@@ -161,13 +161,36 @@ Hardening, because every message is untrusted input from a public channel:
 the same payload and the same asset bundle, with only the WKWebView host
 differing.
 
-## Still unverified
+## Theming
 
-- **Dark mode.** `app.css` has a `prefers-color-scheme: dark` block, but the app
-  theme is fixed to `android:Theme.Material.Light.NoActionBar` and the Compose
-  `MaterialTheme()` uses the default light scheme, so night mode never reaches
-  the WebView. Needs a Compose dark colour scheme plus a theme-aware host before
-  that CSS does anything.
+hack.chat's own 44 colour schemes and 11 highlight.js themes ship in
+`assets/renderer/`, and both are switchable at runtime.
+
+The trick is that the renderer emits **the site's own markup** — `.message`,
+`.nick`, `.trip`, `.text`, with `.admin` / `.mod` / `.me` / `.info` / `.warn`
+modifiers — which is exactly what the scheme stylesheets target. So all 44
+apply unmodified, and a new upstream scheme is a file copy. `app.css` is
+therefore layout-only; it loads *before* the scheme so it can never win a
+colour argument with it.
+
+The native chrome follows the same scheme. `tools/gen-schemes.mjs` parses the
+stylesheets at build time into `assets/renderer/schemes.json` (background,
+foreground, nick, link, warn, plus a WCAG-luminance `dark` flag), which
+`Scheme.toColorScheme()` maps onto a Material colour scheme. Extracting from
+the same CSS the WebView loads is what stops the two halves drifting apart.
+Re-run the generator after copying new schemes in.
+
+Choice persists in `ThemePrefs`; the picker previews each scheme in its own
+colours, since names like "atelier-heath" mean nothing otherwise.
+
+Verified on-device: default (dark) and android-white (light) both restyle the
+transcript *and* the native chrome together, and the choice survives a restart.
+
+Note this supersedes `prefers-color-scheme`: the app follows the user's chosen
+hack.chat scheme rather than the system light/dark setting. Following the
+system as a *default* for first run is still open.
+
+## Still unverified
 
 - direct-reply from the notification (`ReplyReceiver`) — hard to trigger from adb
 - `KeystoreTokenStore` round-trip (the emulator runs got fresh installs, so the

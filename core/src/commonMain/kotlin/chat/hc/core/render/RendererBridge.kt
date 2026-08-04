@@ -21,6 +21,8 @@ internal data class WireMessage(
     val text: String,
     val trip: String? = null,
     val color: String? = null,
+    /** Drives the .admin/.mod scheme classes. */
+    val level: Int = 0,
     val delivery: String,
     val isMine: Boolean,
     val streamComplete: Boolean,
@@ -41,6 +43,7 @@ object RendererBridge {
                 text = it.text,
                 trip = it.trip?.takeIf(String::isNotBlank),
                 color = it.color,
+                level = it.level,
                 delivery = it.delivery.name,
                 isMine = it.isMine,
                 streamComplete = it.streamComplete,
@@ -59,5 +62,15 @@ object RendererBridge {
     fun renderCall(messages: List<ChatMessage>): String {
         val payload = json.encodeToString(String.serializer(), encode(messages))
         return "HC.render($payload);"
+    }
+
+    /**
+     * Switches the hack.chat colour scheme and highlight.js theme, both of
+     * which are stylesheet swaps inside the page.
+     */
+    fun themeCall(scheme: String, highlight: String): String {
+        val s = json.encodeToString(String.serializer(), scheme)
+        val h = json.encodeToString(String.serializer(), highlight)
+        return "HC.setTheme($s, $h);"
     }
 }
