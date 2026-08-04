@@ -51,6 +51,7 @@ import chat.hc.ultra.ui.RendererCallbacks
 import chat.hc.ultra.ui.SchemeAssets
 import chat.hc.ultra.ui.ThemePrefs
 import chat.hc.ultra.ui.ThemeSheet
+import chat.hc.ultra.ui.UserList
 import chat.hc.ultra.ui.toColorScheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -248,6 +249,7 @@ private fun AppScreen(
     // to the first tab the instant you join a new channel.
     var awaitingJoin by remember { mutableStateOf<String?>(null) }
     var showJoin by remember { mutableStateOf(false) }
+    var showUsers by remember { mutableStateOf(false) }
     // One draft per channel: switching tabs must not eat what you were typing.
     val drafts = remember { mutableStateMapOf<String, String>() }
 
@@ -321,12 +323,28 @@ private fun AppScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "${describe(active.state)} · ${active.roster.size} online",
+                        describe(active.state),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
                     )
+                    TextButton(onClick = { showUsers = !showUsers }) {
+                        Text("${active.roster.size} online")
+                    }
                     TextButton(onClick = onOpenThemes) { Text("Theme") }
+                }
+
+                if (showUsers) {
+                    UserList(
+                        users = active.roster,
+                        onMention = { nick ->
+                            // Append rather than replace: mentioning someone
+                            // mid-sentence is normal.
+                            val current = drafts[active.channel].orEmpty()
+                            val sep = if (current.isEmpty() || current.endsWith(" ")) "" else " "
+                            drafts[active.channel] = "$current$sep@$nick "
+                        },
+                    )
                 }
 
                 MessageWebView(

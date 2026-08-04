@@ -216,6 +216,46 @@ Two races worth remembering, both found here:
 - `activeChannel` is cleared in `onStop`, so a backgrounded app counts unread for
   every channel, and restored in `onResume`.
 
+## Slash commands
+
+hack.chat parses `/` commands **server-side**, via `in`/`chat` hooks that each
+module registers (`/me`, `/w`, `/nick`, `/shrug`, …), with
+`chat.js#finalCmdCheck` rejecting anything unrecognised and `//` escaping to a
+literal. So this client deliberately does **not** parse commands: sending raw
+text gives exact parity, and a command added upstream works without a client
+change.
+
+The one thing the client must know is whether to expect its own message back,
+since that decides the optimistic bubble. Probed against live:
+
+| input | server sends | echoes our customId |
+|---|---|---|
+| `/me waves` | `emote` | no |
+| `/shrug hi` | `chat`, text rewritten | **yes** |
+| `//literal` | `chat`, text `/literal` | **yes** |
+| `/notacommand` | `warn` id 16 | no |
+| `/myhash` | `info` id 1302 | no |
+| `"  /me waves"` | `chat` verbatim | **yes** |
+| `/me` (no argument) | `warn` id 16 | no |
+
+Since `/shrug` echoes and `/me` does not, "starts with a slash" cannot predict
+the outcome — so `Composer` never tries. Slash commands are sent with no
+customId and no optimistic bubble; whatever the server returns stands on its
+own. Note the matching is **not** trimmed: the hooks test raw text, so
+`"  /me waves"` really is an ordinary message and trimming here would
+misclassify it.
+
+Verified on-device: `/me waves at everyone` renders as an emote with no stuck
+"sending…" bubble, an unknown command surfaces its warn, and ordinary messages
+still reconcile optimistically.
+
+## Known gap
+
+A message sent but disconnected before its echo arrives stays at "sending…"
+forever — the server keeps no history, so the echo can never arrive late. It
+needs either a timeout or a distinct "unconfirmed" state; "failed" would be a
+lie, since it may well have been delivered.
+
 ## Still unverified
 
 - direct-reply from the notification (`ReplyReceiver`) — hard to trigger from adb

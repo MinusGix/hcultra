@@ -113,6 +113,15 @@ class SessionManager(
     suspend fun sendChat(channel: String, text: String) {
         val session = sessions[channel] ?: return
         val buffer = buffers[channel] ?: return
+
+        // Slash commands are handled server-side and may produce an emote, an
+        // info, a warn, or nothing at all — so there is no echo to reconcile
+        // against and an optimistic bubble would hang at "sending…" forever.
+        if (Composer.isSlashCommand(text)) {
+            runCatching { session.send(Outbound.Chat(text)) }
+            return
+        }
+
         val customId = customIdFactory()
         buffer.addPending(text, customId, session.roster.firstOrNull { it.isme }?.nick ?: "", session.userid ?: 0L, now())
         publish(channel)
