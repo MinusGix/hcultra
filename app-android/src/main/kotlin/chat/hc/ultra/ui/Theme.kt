@@ -79,9 +79,16 @@ class ThemePrefs(context: Context) {
         get() = prefs.getString(KEY_SCHEME, Schemes.DEFAULT_SCHEME) ?: Schemes.DEFAULT_SCHEME
         set(value) = prefs.edit().putString(KEY_SCHEME, value).apply()
 
-    var highlight: String
-        get() = prefs.getString(KEY_HIGHLIGHT, Schemes.DEFAULT_HIGHLIGHT) ?: Schemes.DEFAULT_HIGHLIGHT
-        set(value) = prefs.edit().putString(KEY_HIGHLIGHT, value).apply()
+    /**
+     * Explicit highlight-theme choice, or null to follow the scheme's paired
+     * default. Stored separately from the effective value so that switching
+     * scheme keeps moving the highlight along with it until the user pins one.
+     */
+    var highlightOverride: String?
+        get() = prefs.getString(KEY_HIGHLIGHT, null)
+        set(value) = prefs.edit().apply {
+            if (value == null) remove(KEY_HIGHLIGHT) else putString(KEY_HIGHLIGHT, value)
+        }.apply()
 
     private companion object {
         const val KEY_SCHEME = "scheme"

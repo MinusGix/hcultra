@@ -8,7 +8,8 @@
       "nick": "#778fd8",
       "link": "#ffffff",
       "warn": "#cfb017",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "android-white",
@@ -18,7 +19,8 @@
       "nick": "#a3a3a3",
       "link": "#000000",
       "warn": "#ff5555",
-      "dark": false
+      "dark": false,
+      "highlight": "tomorrow"
     },
     {
       "name": "android",
@@ -28,7 +30,8 @@
       "nick": "#0099cc",
       "link": "#f2f2f2",
       "warn": "#fbba37",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "andromeda",
@@ -38,7 +41,8 @@
       "nick": "#cdb79f",
       "link": "#e8e4cf",
       "warn": "#ff6c6c",
-      "dark": true
+      "dark": true,
+      "highlight": "rainbow"
     },
     {
       "name": "atelier-dune",
@@ -48,7 +52,8 @@
       "nick": "#6684e1",
       "link": "#e8e4cf",
       "warn": "#cfb017",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "atelier-forest",
@@ -58,7 +63,8 @@
       "nick": "#407ee7",
       "link": "#e6e2e0",
       "warn": "#d5911a",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "atelier-heath",
@@ -68,7 +74,8 @@
       "nick": "#516aec",
       "link": "#d8cad8",
       "warn": "#bb8a35",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "atelier-lakeside",
@@ -78,7 +85,8 @@
       "nick": "#257fad",
       "link": "#c1e4f6",
       "warn": "#8a8a0f",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "atelier-seaside",
@@ -88,7 +96,8 @@
       "nick": "#3d62f5",
       "link": "#cfe8cf",
       "warn": "#c3c322",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "banana",
@@ -98,7 +107,8 @@
       "nick": "#0e5a94",
       "link": "#e0e0e0",
       "warn": "#0419f9",
-      "dark": false
+      "dark": false,
+      "highlight": "github"
     },
     {
       "name": "bright",
@@ -108,7 +118,8 @@
       "nick": "#6fb3d2",
       "link": "#f5f5f5",
       "warn": "#fda331",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "bubblegum",
@@ -118,7 +129,8 @@
       "nick": "#516aec",
       "link": "#d8cad8",
       "warn": "#fcf000",
-      "dark": true
+      "dark": true,
+      "highlight": "rainbow"
     },
     {
       "name": "carrot",
@@ -128,7 +140,8 @@
       "nick": "#1db80f",
       "link": "#97ff97",
       "warn": "#ffbb00",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "catppuccin",
@@ -138,7 +151,8 @@
       "nick": "#b4befe",
       "link": "#cdd6f4",
       "warn": "#f5e0dc",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "chalk",
@@ -148,7 +162,8 @@
       "nick": "#6fc2ef",
       "link": "#e0e0e0",
       "warn": "#ddb26f",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "default",
@@ -158,7 +173,8 @@
       "nick": "#6a9fb5",
       "link": "#e0e0e0",
       "warn": "#f4bf75",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "eighties",
@@ -168,7 +184,8 @@
       "nick": "#6699cc",
       "link": "#e8e6df",
       "warn": "#ffcc66",
-      "dark": true
+      "dark": true,
+      "highlight": "darcula"
     },
     {
       "name": "flamingo",
@@ -178,7 +195,8 @@
       "nick": "#2b3493",
       "link": "#0d0fa4",
       "warn": "#be2300",
-      "dark": false
+      "dark": false,
+      "highlight": "github"
     },
     {
       "name": "fresh-green",
@@ -188,7 +206,8 @@
       "nick": "#58cac2",
       "link": "#74d8cc",
       "warn": "#61cfcc",
-      "dark": false
+      "dark": false,
+      "highlight": "github"
     },
     {
       "name": "fried-egg",
@@ -198,7 +217,8 @@
       "nick": "#ffd700",
       "link": "#000000",
       "warn": "#ff0000",
-      "dark": false
+      "dark": false,
+      "highlight": "github"
     },
     {
       "name": "greenscreen",
@@ -208,7 +228,8 @@
       "nick": "#009900",
       "link": "#00dd00",
       "warn": "#007700",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "gruvbox-light",
@@ -218,7 +239,8 @@
       "nick": "#427b58",
       "link": "#3c3836",
       "warn": "#b57614",
-      "dark": false
+      "dark": false,
+      "highlight": "github"
     },
     {
       "name": "hacker",
@@ -228,7 +250,8 @@
       "nick": "#009900",
       "link": "#00dd00",
       "warn": "#007700",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "lax",
@@ -238,7 +261,8 @@
       "nick": "#6699cc",
       "link": "#5c9c9f",
       "warn": "#ffcc66",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "maniac",
@@ -248,7 +272,8 @@
       "nick": "#0e5a94",
       "link": "#e0e0e0",
       "warn": "#f8ca12",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "mariana",
@@ -258,7 +283,8 @@
       "nick": "#5d8cb7",
       "link": "#7a8f94",
       "warn": "#edd400",
-      "dark": true
+      "dark": true,
+      "highlight": "zenburn"
     },
     {
       "name": "military",
@@ -268,7 +294,8 @@
       "nick": "#04db24",
       "link": "#e0e0e0",
       "warn": "#f8ca12",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "milkyway",
@@ -278,7 +305,8 @@
       "nick": "#928bff",
       "link": "#e8e4cf",
       "warn": "#ff6c6c",
-      "dark": false
+      "dark": false,
+      "highlight": "github"
     },
     {
       "name": "mocha",
@@ -288,7 +316,8 @@
       "nick": "#8ab3b5",
       "link": "#e9e1dd",
       "warn": "#f4bc87",
-      "dark": true
+      "dark": true,
+      "highlight": "agate"
     },
     {
       "name": "monokai",
@@ -298,7 +327,8 @@
       "nick": "#66d9ef",
       "link": "#f5f4f1",
       "warn": "#f4bf75",
-      "dark": true
+      "dark": true,
+      "highlight": "darcula"
     },
     {
       "name": "nebula",
@@ -308,7 +338,8 @@
       "nick": "#83c9cd",
       "link": "#131114",
       "warn": "#ff6c6c",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "nese",
@@ -318,7 +349,8 @@
       "nick": "#388bb8",
       "link": "#f2f2f2",
       "warn": "#faba3d",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "ocean",
@@ -328,7 +360,8 @@
       "nick": "#8fa1b3",
       "link": "#dfe1e8",
       "warn": "#ebcb8b",
-      "dark": true
+      "dark": true,
+      "highlight": "atom-one-dark"
     },
     {
       "name": "omega",
@@ -338,7 +371,8 @@
       "nick": "#05b7b1",
       "link": "#00dd00",
       "warn": "#007700",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "pop",
@@ -348,7 +382,8 @@
       "nick": "#0e5a94",
       "link": "#e0e0e0",
       "warn": "#f8ca12",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "railscasts",
@@ -358,7 +393,8 @@
       "nick": "#6d9cbe",
       "link": "#f4f1ed",
       "warn": "#ffc66d",
-      "dark": true
+      "dark": true,
+      "highlight": "darcula"
     },
     {
       "name": "rainbow",
@@ -368,17 +404,19 @@
       "nick": "#cccccc",
       "link": "#e8e4cf",
       "warn": "#cfb017",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "retro",
       "label": "Retro",
       "background": "#050505",
-      "foreground": "#d0d0d0",
+      "foreground": "#a6a28c",
       "nick": "#6684e1",
       "link": "#e8e4cf",
       "warn": "#cfb017",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "solarized",
@@ -388,7 +426,8 @@
       "nick": "#268bd2",
       "link": "#eee8d5",
       "warn": "#b58900",
-      "dark": true
+      "dark": true,
+      "highlight": "atom-one-dark"
     },
     {
       "name": "sunlight",
@@ -398,7 +437,8 @@
       "nick": "#6684e1",
       "link": "#e8e4cf",
       "warn": "#eb2902",
-      "dark": false
+      "dark": false,
+      "highlight": "github"
     },
     {
       "name": "tk-night",
@@ -408,7 +448,8 @@
       "nick": "#55586d",
       "link": "#97ff97",
       "warn": "#eba8a8",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "tomorrow",
@@ -418,7 +459,8 @@
       "nick": "#81a2be",
       "link": "#e0e0e0",
       "warn": "#f0c674",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "ubuntu",
@@ -428,7 +470,8 @@
       "nick": "#e95420",
       "link": "#00aa00",
       "warn": "#cfb017",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     },
     {
       "name": "waifu",
@@ -438,7 +481,8 @@
       "nick": "#e95420",
       "link": "#e95420",
       "warn": "#f4bf75",
-      "dark": true
+      "dark": true,
+      "highlight": "hybrid"
     }
   ]
 }

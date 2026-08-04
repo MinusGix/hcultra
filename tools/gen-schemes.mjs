@@ -14,11 +14,18 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 
 const SCHEME_DIR = 'app-android/src/main/assets/renderer/schemes';
+const HLJS_DIR = 'app-android/src/main/assets/renderer/vendor/hljs/styles';
 const OUT = 'app-android/src/main/assets/renderer/schemes.json';
+
+// A trailing comment terminator otherwise glues onto the selector that follows
+// it, so `.hljs` parses as something that matches nothing.
+function stripComments(css) {
+  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
 
 /** Last matching declaration wins, mirroring the cascade. */
 function decl(css, selector, prop) {
-  const rules = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)];
+  const rules = [...stripComments(css).matchAll(/([^{}]+)\{([^}]*)\}/g)];
   let found = null;
   for (const [, sel, body] of rules) {
     const selectors = sel.split(',').map((s) => s.trim());
@@ -64,6 +71,47 @@ function luminance(hex) {
   return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
 }
 
+/**
+ * Each highlight.js theme declares its own `.hljs` background. Pairing a scheme
+ * with the nearest one means code blocks sit inside the message list instead of
+ * punching a light hole in a dark theme (or vice versa), without hand-writing a
+ * 44-entry mapping that would rot the moment a scheme is added.
+ */
+const highlightThemes = readdirSync(HLJS_DIR)
+  .filter((f) => f.endsWith('.min.css'))
+  .map((file) => {
+    const css = readFileSync(join(HLJS_DIR, file), 'utf8');
+    const name = basename(file, '.min.css');
+    const background = firstColor(decl(css, '.hljs', 'background'))
+      ?? firstColor(decl(css, '.hljs', 'background-color'));
+    if (!background) {
+      // Never silently substitute another theme's colour: that made the
+      // unparsed theme impersonate it and win every pairing by sort order.
+      throw new Error(`could not read a background from ${file}`);
+    }
+    return { name, background };
+  });
+
+/** Perceptual-ish distance; good enough to rank backgrounds. */
+function distance(a, b) {
+  const rgb = (h) => [0, 2, 4].map((i) => parseInt(h.slice(1 + i, 3 + i), 16));
+  const [r1, g1, b1] = rgb(a);
+  const [r2, g2, b2] = rgb(b);
+  const rMean = (r1 + r2) / 2;
+  const dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
+  return Math.sqrt((2 + rMean / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rMean) / 256) * db * db);
+}
+
+function nearestHighlight(background) {
+  let best = highlightThemes[0];
+  let bestD = Infinity;
+  for (const t of highlightThemes) {
+    const d = distance(background, t.background);
+    if (d < bestD) { bestD = d; best = t; }
+  }
+  return best.name;
+}
+
 const label = (name) => name
   .replace(/-/g, ' ')
   .replace(/\b\w/g, (c) => c.toUpperCase());
@@ -92,6 +140,8 @@ const schemes = readdirSync(SCHEME_DIR)
       link,
       warn,
       dark: luminance(background) < 0.35,
+      /** Default highlight theme; the user can still override it. */
+      highlight: nearestHighlight(background),
       _parsed: parsedBackground !== null,
     };
   });
@@ -103,5 +153,9 @@ schemes.forEach((s) => delete s._parsed);
 writeFileSync(OUT, JSON.stringify({ schemes }, null, 2) + '\n');
 console.log(`wrote ${schemes.length} schemes -> ${OUT}`);
 console.log(`  dark: ${schemes.filter((s) => s.dark).length}, light: ${schemes.filter((s) => !s.dark).length}`);
+console.log(`  highlight themes available: ${highlightThemes.length}`);
+const usage = {};
+schemes.forEach((s) => { usage[s.highlight] = (usage[s.highlight] ?? 0) + 1; });
+console.log('  paired:', Object.entries(usage).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}=${v}`).join(' '));
 // Flag only genuine parse failures. Several schemes legitimately share
 // default's #151515, which is not an error.

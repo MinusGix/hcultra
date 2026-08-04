@@ -42,9 +42,11 @@ import chat.hc.core.render.Schemes
 fun ThemeSheet(
     schemes: List<Scheme>,
     currentScheme: String,
-    currentHighlight: String,
+    /** null means "follow the scheme's paired default". */
+    highlightOverride: String?,
+    autoHighlight: String,
     onSchemeSelected: (String) -> Unit,
-    onHighlightSelected: (String) -> Unit,
+    onHighlightSelected: (String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -54,8 +56,25 @@ fun ThemeSheet(
                 Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                item {
+                    val selected = highlightOverride == null
+                    Text(
+                        text = "Auto ($autoHighlight)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (selected) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.surfaceVariant
+                            )
+                            .clickable { onHighlightSelected(null) }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                    )
+                }
                 items(Schemes.highlightThemes) { theme ->
-                    val selected = theme == currentHighlight
+                    val selected = theme == highlightOverride
                     Text(
                         text = theme,
                         style = MaterialTheme.typography.bodySmall,

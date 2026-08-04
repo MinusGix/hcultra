@@ -21,7 +21,15 @@ data class Scheme(
     val link: String,
     val warn: String,
     val dark: Boolean,
+    /**
+     * Highlight.js theme whose background sits closest to this scheme's, chosen
+     * at build time. Used unless the user picks one explicitly, so code blocks
+     * do not punch a light hole in a dark theme.
+     */
+    val highlight: String = DEFAULT_HIGHLIGHT_FALLBACK,
 )
+
+internal const val DEFAULT_HIGHLIGHT_FALLBACK = "hybrid"
 
 @Serializable
 private data class SchemeFile(val schemes: List<Scheme>)
@@ -46,6 +54,7 @@ object Schemes {
         link = "#e0e0e0",
         warn = "#f4bf75",
         dark = true,
+        highlight = DEFAULT_HIGHLIGHT_FALLBACK,
     )
 
     private val json = Json { ignoreUnknownKeys = true }

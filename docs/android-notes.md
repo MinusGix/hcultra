@@ -108,6 +108,8 @@ Against live hack.chat, with an independent Node observer
   survives, the service stays foreground, the process stays alive
 - returning to the app restores state **from the service**, with no reconnect
   and no peer-visible noise
+- `KeystoreTokenStore` round-trips: after a full `force-stop`, rejoining a
+  channel restored by token (state reported `resumed`, i.e. `restored=true`)
 - network loss → `Reconnecting (attempt 1)` → restore-by-token on recovery, and
   the app logged "Reconnected." (only emitted when `restored=true`)
 
@@ -180,6 +182,12 @@ foreground, nick, link, warn, plus a WCAG-luminance `dark` flag), which
 the same CSS the WebView loads is what stops the two halves drifting apart.
 Re-run the generator after copying new schemes in.
 
+Highlight themes are paired automatically: `gen-schemes.mjs` reads each
+highlight.js theme's own `.hljs` background and assigns each scheme its nearest
+match, so code blocks do not punch a light hole in a dark theme. The user can
+still pin one explicitly; `ThemePrefs.highlightOverride` is null-for-auto, so
+changing scheme keeps moving the code colours along with it until pinned.
+
 Choice persists in `ThemePrefs`; the picker previews each scheme in its own
 colours, since names like "atelier-heath" mean nothing otherwise.
 
@@ -190,10 +198,26 @@ Note this supersedes `prefers-color-scheme`: the app follows the user's chosen
 hack.chat scheme rather than the system light/dark setting. Following the
 system as a *default* for first run is still open.
 
+## Multi-channel
+
+One socket per channel, so a tab really is a distinct connection — and it can be
+reconnecting while the tab you are reading is fine. Each tab therefore shows a
+status dot alongside its unread count.
+
+Verified on-device: two channels joined at once, unread badge accrues on the
+background tab and clears on selection, per-channel transcripts and drafts stay
+separate, and closing a tab leaves that channel via the service.
+
+Two races worth remembering, both found here:
+
+- Selecting a just-joined channel must not be validated against the channel map
+  until the service has created it, or the selection snaps back to the first tab
+  the moment you join. `awaitingJoin` holds the selection across that gap.
+- `activeChannel` is cleared in `onStop`, so a backgrounded app counts unread for
+  every channel, and restored in `onResume`.
+
 ## Still unverified
 
 - direct-reply from the notification (`ReplyReceiver`) — hard to trigger from adb
-- `KeystoreTokenStore` round-trip (the emulator runs got fresh installs, so the
-  restore path exercised was in-memory within one service lifetime)
 - doze / screen-off survival over a long period
 - OEM battery-killer behaviour — only observable on a real phone

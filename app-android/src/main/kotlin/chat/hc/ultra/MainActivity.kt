@@ -19,20 +19,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,30 +41,25 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import chat.hc.core.render.Scheme
 import chat.hc.core.session.ChannelUi
 import chat.hc.core.session.SessionState
-import chat.hc.core.store.Delivery
-import chat.hc.core.store.MessageKind
 import chat.hc.ultra.service.HcService
+import chat.hc.ultra.ui.ChannelTabs
 import chat.hc.ultra.ui.MessageWebView
 import chat.hc.ultra.ui.RendererCallbacks
-import chat.hc.core.render.Scheme
 import chat.hc.ultra.ui.SchemeAssets
 import chat.hc.ultra.ui.ThemePrefs
 import chat.hc.ultra.ui.ThemeSheet
 import chat.hc.ultra.ui.toColorScheme
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Deliberately thin: the Activity renders whatever the service is holding and
  * sends intents back. It owns no connection and no history, so destroying it
  * costs nothing — which is the entire point of the service-owned design.
- *
- * This is scaffolding for the connection work, not the real UI. Message
- * rendering (markdown, KaTeX, code highlighting) lands with the WebView
- * renderer; for now messages are plain text so the transport can be exercised.
  */
 class MainActivity : ComponentActivity() {
 
@@ -74,11 +67,19 @@ class MainActivity : ComponentActivity() {
     private val channels = MutableStateFlow<Map<String, ChannelUi>>(emptyMap())
     private var bound = false
 
+    /** Mirrors the selected tab into the service so unread counts stay right. */
+    private var activeChannel: String? = null
+        set(value) {
+            field = value
+            service?.sessions?.activeChannel = value
+        }
+
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val svc = (binder as HcService.LocalBinder).service
             service = svc
             bound = true
+            svc.sessions.activeChannel = activeChannel
             // Re-read the service's state; do not reconnect.
             lifecycleScope.launch {
                 svc.sessions.channels.collect { channels.value = it }
@@ -111,11 +112,16 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var schemeName by remember { mutableStateOf(themePrefs.scheme) }
-            var highlight by remember { mutableStateOf(themePrefs.highlight) }
+            var highlightOverride by remember { mutableStateOf(themePrefs.highlightOverride) }
             var showThemes by remember { mutableStateOf(false) }
+            var pendingChannel by remember { mutableStateOf<String?>(null) }
+
             val scheme = remember(schemeName) {
                 allSchemes.firstOrNull { it.name == schemeName } ?: allSchemes.first()
             }
+            // An explicit pick wins; otherwise follow the scheme's pairing, so
+            // changing scheme moves the code colours along with it.
+            val highlight = highlightOverride ?: scheme.highlight
 
             MaterialTheme(colorScheme = scheme.toColorScheme()) {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -123,9 +129,13 @@ class MainActivity : ComponentActivity() {
                         ThemeSheet(
                             schemes = allSchemes,
                             currentScheme = schemeName,
-                            currentHighlight = highlight,
+                            highlightOverride = highlightOverride,
+                            autoHighlight = scheme.highlight,
                             onSchemeSelected = { schemeName = it; themePrefs.scheme = it },
-                            onHighlightSelected = { highlight = it; themePrefs.highlight = it },
+                            onHighlightSelected = {
+                                highlightOverride = it
+                                themePrefs.highlightOverride = it
+                            },
                             onDismiss = { showThemes = false },
                         )
                     }
@@ -133,13 +143,17 @@ class MainActivity : ComponentActivity() {
                         channelsFlow = channels,
                         onJoin = { channel, nick, pass -> startJoin(channel, nick, pass) },
                         onSend = { channel, text -> startSend(channel, text) },
+                        onLeave = { channel -> startLeave(channel) },
+                        onActiveChanged = { activeChannel = it },
                         rendererCallbacks = RendererCallbacks(
                             onLinkTap = { url -> openExternal(url) },
-                            onChannelTap = { channel -> /* TODO: join in a new tab */ },
+                            onChannelTap = { channel -> pendingChannel = channel },
                         ),
                         scheme = scheme,
                         highlight = highlight,
                         onOpenThemes = { showThemes = true },
+                        pendingChannel = pendingChannel,
+                        onPendingConsumed = { pendingChannel = null },
                     )
                 }
             }
@@ -153,11 +167,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        // Nothing is showing, so every channel should count unread again.
+        service?.sessions?.activeChannel = null
         if (bound) {
             unbindService(connection)
             bound = false
         }
         // The service is intentionally NOT stopped here: it holds the sockets.
+    }
+
+    override fun onResume() {
+        super.onResume()
+        service?.sessions?.activeChannel = activeChannel
     }
 
     private fun startJoin(channel: String, nick: String, pass: String?) {
@@ -170,6 +191,18 @@ class MainActivity : ComponentActivity() {
                 putExtra(HcService.EXTRA_PASS, pass)
             },
         )
+        activeChannel = channel
+    }
+
+    private fun startLeave(channel: String) {
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, HcService::class.java).apply {
+                action = HcService.ACTION_LEAVE
+                putExtra(HcService.EXTRA_CHANNEL, channel)
+            },
+        )
+        if (activeChannel == channel) activeChannel = null
     }
 
     /** Links open outside the app; the renderer WebView never navigates. */
@@ -191,7 +224,6 @@ class MainActivity : ComponentActivity() {
             },
         )
     }
-
 }
 
 @Composable
@@ -199,17 +231,70 @@ private fun AppScreen(
     channelsFlow: StateFlow<Map<String, ChannelUi>>,
     onJoin: (String, String, String?) -> Unit,
     onSend: (String, String) -> Unit,
+    onLeave: (String) -> Unit,
+    onActiveChanged: (String?) -> Unit,
     rendererCallbacks: RendererCallbacks,
     scheme: Scheme,
     highlight: String,
     onOpenThemes: () -> Unit,
+    /** A tapped `?channel` link pre-fills the join form rather than joining blind. */
+    pendingChannel: String?,
+    onPendingConsumed: () -> Unit,
 ) {
     val channels by channelsFlow.collectAsStateWithLifecycle()
-    var channelInput by remember { mutableStateOf("") }
-    var nickInput by remember { mutableStateOf("") }
-    var draft by remember { mutableStateOf("") }
+    var selected by remember { mutableStateOf<String?>(null) }
+    // A join we asked for that the service has not created yet. Without this,
+    // the validity check below races the service and snaps the selection back
+    // to the first tab the instant you join a new channel.
+    var awaitingJoin by remember { mutableStateOf<String?>(null) }
+    var showJoin by remember { mutableStateOf(false) }
+    // One draft per channel: switching tabs must not eat what you were typing.
+    val drafts = remember { mutableStateMapOf<String, String>() }
 
-    val active = channels.values.firstOrNull()
+    val ordered = channels.values.toList()
+
+    // Keep the selection valid as channels come and go, and tell the service
+    // which one is on screen so its messages never count as unread.
+    LaunchedEffect(channels.keys, selected, awaitingJoin) {
+        val keys = channels.keys
+        if (awaitingJoin != null && keys.contains(awaitingJoin)) {
+            selected = awaitingJoin
+            awaitingJoin = null
+        }
+        val sel = selected
+        val valid = when {
+            sel != null && keys.contains(sel) -> sel
+            awaitingJoin != null -> sel          // join in flight; hold the selection
+            else -> ordered.firstOrNull()?.channel
+        }
+        if (valid != selected) selected = valid
+        onActiveChanged(valid?.takeIf { keys.contains(it) })
+    }
+
+    val active = selected?.let { channels[it] }
+
+    LaunchedEffect(pendingChannel) {
+        if (pendingChannel != null) showJoin = true
+    }
+
+    if (showJoin || ordered.isEmpty()) {
+        JoinSheet(
+            canCancel = ordered.isNotEmpty(),
+            initialChannel = pendingChannel.orEmpty(),
+            // Reuse the nick we are already known by; joining a second channel
+            // under a different name is possible but almost never intended.
+            initialNick = ordered.firstOrNull()?.roster?.firstOrNull { it.isme }?.nick.orEmpty(),
+            onJoin = { channel, nick, pass ->
+                onJoin(channel, nick, pass)
+                selected = channel
+                awaitingJoin = channel
+                showJoin = false
+                onPendingConsumed()
+            },
+            onCancel = { showJoin = false; onPendingConsumed() },
+        )
+        if (ordered.isEmpty()) return
+    }
 
     Scaffold { padding ->
         Column(
@@ -217,41 +302,27 @@ private fun AppScreen(
                 .fillMaxSize()
                 .padding(padding)
                 // Without this the composer sits *underneath* the soft keyboard:
-                // windowSoftInputMode=adjustResize alone does not inset Compose
-                // content, so the input row and Send button become untappable.
+                // windowSoftInputMode=adjustResize does not inset Compose content.
                 .imePadding()
-                .padding(12.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (active == null) {
-                Text("Join a channel", style = MaterialTheme.typography.titleMedium)
-                OutlinedTextField(
-                    value = channelInput,
-                    onValueChange = { channelInput = it },
-                    label = { Text("Channel") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = nickInput,
-                    onValueChange = { nickInput = it },
-                    label = { Text("Nick (add #password for a trip)") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Button(
-                    onClick = {
-                        val parts = nickInput.split("#", limit = 2)
-                        onJoin(channelInput.trim(), parts[0].trim(), parts.getOrNull(1))
-                    },
-                    enabled = channelInput.isNotBlank() && nickInput.isNotBlank(),
-                ) { Text("Connect") }
-            } else {
+            ChannelTabs(
+                channels = ordered,
+                active = selected,
+                onSelect = { selected = it },
+                onClose = { onLeave(it) },
+                onAdd = { showJoin = true },
+            )
+
+            if (active != null) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "?${active.channel} — ${describe(active.state)} · ${active.roster.size} online",
-                        style = MaterialTheme.typography.titleSmall,
+                        "${describe(active.state)} · ${active.roster.size} online",
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
                     )
@@ -266,6 +337,7 @@ private fun AppScreen(
                     callbacks = rendererCallbacks,
                 )
 
+                val draft = drafts[active.channel].orEmpty()
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -273,20 +345,89 @@ private fun AppScreen(
                 ) {
                     OutlinedTextField(
                         value = draft,
-                        onValueChange = { draft = it },
+                        onValueChange = { drafts[active.channel] = it },
                         modifier = Modifier.weight(1f),
                         placeholder = { Text("Message") },
                     )
                     Button(
                         onClick = {
                             onSend(active.channel, draft)
-                            draft = ""
+                            drafts[active.channel] = ""
                         },
                         enabled = draft.isNotBlank() && active.state is SessionState.Live,
                     ) { Text("Send") }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun JoinSheet(
+    canCancel: Boolean,
+    initialChannel: String = "",
+    initialNick: String = "",
+    onJoin: (String, String, String?) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var channelInput by remember(initialChannel) { mutableStateOf(initialChannel) }
+    var nickInput by remember(initialNick) { mutableStateOf(initialNick) }
+
+    val submit = {
+        val parts = nickInput.split("#", limit = 2)
+        onJoin(channelInput.trim(), parts[0].trim(), parts.getOrNull(1))
+    }
+
+    if (canCancel) {
+        AlertDialog(
+            onDismissRequest = onCancel,
+            title = { Text("Join a channel") },
+            text = {
+                JoinFields(channelInput, nickInput, { channelInput = it }, { nickInput = it })
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = submit,
+                    enabled = channelInput.isNotBlank() && nickInput.isNotBlank(),
+                ) { Text("Join") }
+            },
+            dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+        )
+    } else {
+        Column(
+            modifier = Modifier.fillMaxSize().imePadding().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Join a channel", style = MaterialTheme.typography.titleMedium)
+            JoinFields(channelInput, nickInput, { channelInput = it }, { nickInput = it })
+            Button(
+                onClick = submit,
+                enabled = channelInput.isNotBlank() && nickInput.isNotBlank(),
+            ) { Text("Connect") }
+        }
+    }
+}
+
+@Composable
+private fun JoinFields(
+    channel: String,
+    nick: String,
+    onChannel: (String) -> Unit,
+    onNick: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = channel,
+            onValueChange = onChannel,
+            label = { Text("Channel") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = nick,
+            onValueChange = onNick,
+            label = { Text("Nick (add #password for a trip)") },
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
