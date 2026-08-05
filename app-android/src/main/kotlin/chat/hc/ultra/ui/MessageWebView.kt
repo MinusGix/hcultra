@@ -2,6 +2,8 @@ package chat.hc.ultra.ui
 
 import android.annotation.SuppressLint
 import android.graphics.Color
+import android.os.Handler
+import android.os.Looper
 import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -22,9 +24,11 @@ import chat.hc.core.store.ChatMessage
  * `$math$`, code highlighting, `?channel` links and typographer quirks — which
  * no native reimplementation would match, least of all for KaTeX.
  */
-class RendererCallbacks(
+data class RendererCallbacks(
     val onLinkTap: (String) -> Unit = {},
     val onChannelTap: (String) -> Unit = {},
+    /** A tapped nick: mention them in the composer. */
+    val onNickTap: (String) -> Unit = {},
 )
 
 private class Bridge(
@@ -39,6 +43,17 @@ private class Bridge(
 
     @JavascriptInterface
     fun onChannelTap(channel: String) = callbacks.onChannelTap(channel)
+
+    /**
+     * Bounced to the main thread: unlike the taps above, which hand off to the
+     * system or to a one-shot state write, this one edits the composer's
+     * [androidx.compose.ui.text.input.TextFieldValue], and bridge calls arrive
+     * on a WebView-internal thread.
+     */
+    @JavascriptInterface
+    fun onNickTap(nick: String) {
+        Handler(Looper.getMainLooper()).post { callbacks.onNickTap(nick) }
+    }
 
     @JavascriptInterface
     fun onPinnedChanged(atBottom: String) { /* reserved for a jump-to-latest affordance */ }

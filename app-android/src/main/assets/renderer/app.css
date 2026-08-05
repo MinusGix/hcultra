@@ -116,6 +116,15 @@ html, body {
   opacity: 0.6;
 }
 
+/* Nicks are tap targets (they mention the person). No colour or underline of
+   their own: the 44 schemes own how a nick looks, and this must not fight them.
+   The press feedback is the whole affordance. */
+[data-nick] {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+[data-nick]:active { opacity: 0.55; }
+
 .kind-info .text, .kind-join .text, .kind-leave .text { font-size: 14px; }
 .kind-join .text::before { content: "→ "; }
 .kind-leave .text::before { content: "← "; }

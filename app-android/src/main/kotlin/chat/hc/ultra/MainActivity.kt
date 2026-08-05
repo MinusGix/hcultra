@@ -45,6 +45,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,7 +53,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -416,7 +419,9 @@ private fun AppScreen(
     // the dialog can name what it is about to discard.
     var pendingClose by remember { mutableStateOf<String?>(null) }
     // One draft per channel: switching tabs must not eat what you were typing.
-    val drafts = remember { mutableStateMapOf<String, String>() }
+    // Held as a TextFieldValue rather than a String so a mention can be dropped
+    // at the cursor instead of always at the end.
+    val drafts = remember { mutableStateMapOf<String, TextFieldValue>() }
 
     val ordered = channels.values.toList()
 
@@ -439,6 +444,20 @@ private fun AppScreen(
     }
 
     val active = selected?.let { channels[it] }
+
+    val mention: (String) -> Unit = { nick ->
+        active?.channel?.let { channel ->
+            drafts[channel] = (drafts[channel] ?: TextFieldValue()).withMention(nick)
+        }
+    }
+    // The renderer's bridge is built once, with whatever callbacks the WebView
+    // was first composed with, so it gets a stable lambda that reads the
+    // current one — otherwise tapping a nick would mention into the channel
+    // that happened to be open when the WebView was created.
+    val currentMention by rememberUpdatedState(mention)
+    val webCallbacks = remember(rendererCallbacks) {
+        rendererCallbacks.copy(onNickTap = { nick -> currentMention(nick) })
+    }
 
     LaunchedEffect(pendingChannel) {
         if (pendingChannel != null) showJoin = true
@@ -539,16 +558,10 @@ private fun AppScreen(
                         onWhisper = { nick ->
                             // The server's /w strips a leading @, so this works
                             // whether or not the nick was mentioned first.
-                            drafts[active.channel] = "/w $nick "
+                            drafts[active.channel] = fieldValue("/w $nick ")
                             showUsers = false
                         },
-                        onMention = { nick ->
-                            // Append rather than replace: mentioning someone
-                            // mid-sentence is normal.
-                            val current = drafts[active.channel].orEmpty()
-                            val sep = if (current.isEmpty() || current.endsWith(" ")) "" else " "
-                            drafts[active.channel] = "$current$sep@$nick "
-                        },
+                        onMention = { nick -> mention(nick) },
                         modifier = Modifier.padding(horizontal = 12.dp),
                     )
                 }
@@ -559,14 +572,14 @@ private fun AppScreen(
                     highlight = highlight,
                     layout = nickLayout,
                     modifier = Modifier.fillMaxWidth().weight(1f),
-                    callbacks = rendererCallbacks,
+                    callbacks = webCallbacks,
                 )
 
-                val draft = drafts[active.channel].orEmpty()
-                val canSend = draft.isNotBlank() && active.state is SessionState.Live
+                val draft = drafts[active.channel] ?: TextFieldValue()
+                val canSend = draft.text.isNotBlank() && active.state is SessionState.Live
                 val send = {
-                    onSend(active.channel, draft)
-                    drafts[active.channel] = ""
+                    onSend(active.channel, draft.text)
+                    drafts[active.channel] = TextFieldValue()
                 }
                 // Flush to the bottom edge, with send inside the field rather
                 // than beside it — the site's shape, and it stops the composer
@@ -851,6 +864,27 @@ private fun RecentRow(
                 .padding(horizontal = 10.dp, vertical = 4.dp),
         )
     }
+}
+
+/** Text the app puts in the composer itself, with the caret left after it. */
+private fun fieldValue(text: String) = TextFieldValue(text, TextRange(text.length))
+
+/**
+ * Drops `@nick` into the draft where the cursor is, and leaves the cursor after
+ * it so typing continues where it left off.
+ *
+ * At the cursor rather than appended: you notice who you are replying to
+ * partway through a sentence as often as before starting one. A selection is
+ * replaced, as typing would. Spaces are added only where one is missing, so a
+ * mention never arrives glued to the previous word or double-spaced from it.
+ */
+private fun TextFieldValue.withMention(nick: String): TextFieldValue {
+    val before = text.take(selection.min)
+    val after = text.substring(selection.max)
+    val lead = if (before.isEmpty() || before.last().isWhitespace()) "" else " "
+    val trail = if (after.startsWith(" ")) "" else " "
+    val insert = "$lead@$nick$trail"
+    return TextFieldValue(before + insert + after, TextRange(before.length + insert.length))
 }
 
 /**

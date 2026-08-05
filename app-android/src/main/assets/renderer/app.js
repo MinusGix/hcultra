@@ -173,22 +173,30 @@
       return '<span class="trip">' + parts.join(' ') + '</span>';
     }
 
+    /*
+     * Tapping a nick mentions it in the composer, so every nick the transcript
+     * shows is marked with the nick it stands for. An attribute rather than the
+     * element's text: the .nick span also carries the trip and flair, which are
+     * not part of the name.
+     */
+    function nickAttr(m) { return ' data-nick="' + esc(m.nick) + '"'; }
+
     var head = '';
     if (m.kind === 'Chat') {
       // An explicit per-user colour from the server overrides the scheme's
       // .nick colour, matching how the site treats /changecolor.
       var style = m.color ? ' style="color:#' + esc(m.color).replace(/[^0-9a-fA-F]/g, '') + '"' : '';
-      head = '<span class="nick"' + style + '>' + tripSpan(m) + esc(m.nick) + '</span>';
+      head = '<span class="nick"' + nickAttr(m) + style + '>' + tripSpan(m) + esc(m.nick) + '</span>';
     } else if (m.kind === 'Emote') {
       head = '<span class="nick">*</span>';
     } else if (m.kind === 'Whisper') {
       // Incoming: who it came from.
-      head = '<span class="wtag">whisper from</span> <span class="nick">' +
+      head = '<span class="wtag">whisper from</span> <span class="nick"' + nickAttr(m) + '>' +
         esc(m.nick) + '</span>';
     } else if (m.kind === 'WhisperSent') {
       // Outgoing: the server echoes our own whisper back to us with the same
       // shape, so it needs distinguishing or it reads as if they sent it.
-      head = '<span class="wtag">whisper to</span> <span class="nick">' +
+      head = '<span class="wtag">whisper to</span> <span class="nick"' + nickAttr(m) + '>' +
         esc(m.nick) + '</span>';
     }
 
@@ -213,9 +221,12 @@
      * one containing * or _ must not come out italicised.
      */
     var body;
-    if (m.kind === 'Join') body = esc(m.nick) + ' joined';
-    else if (m.kind === 'Leave') body = esc(m.nick) + ' left';
-    else body = renderBody(m.text);
+    if (m.kind === 'Join' || m.kind === 'Leave') {
+      body = '<span' + nickAttr(m) + '>' + esc(m.nick) + '</span>' +
+        (m.kind === 'Join' ? ' joined' : ' left');
+    } else {
+      body = renderBody(m.text);
+    }
 
     row.innerHTML = head + '<span class="text">' + body + '</span>' + flag;
   }
@@ -262,11 +273,22 @@
   }
 
   document.addEventListener('click', function (e) {
-    var a = e.target.closest && e.target.closest('a');
-    if (!a) return;
-    e.preventDefault();
-    if (a.hasAttribute('data-chan')) post('onChannelTap', a.getAttribute('data-chan'));
-    else if (a.getAttribute('href')) post('onLinkTap', a.getAttribute('href'));
+    if (!e.target.closest) return;
+    var a = e.target.closest('a');
+    if (a) {
+      e.preventDefault();
+      if (a.hasAttribute('data-chan')) post('onChannelTap', a.getAttribute('data-chan'));
+      else if (a.getAttribute('href')) post('onLinkTap', a.getAttribute('href'));
+      return;
+    }
+    // A nick anywhere in the transcript — the head of a message, or the name in
+    // a join/leave line. Checked after links so a nick inside link text (which
+    // cannot happen today) would still navigate.
+    var n = e.target.closest('[data-nick]');
+    if (n) {
+      e.preventDefault();
+      post('onNickTap', n.getAttribute('data-nick'));
+    }
   });
 
   function setHref(id, href) {
