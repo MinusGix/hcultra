@@ -64,7 +64,7 @@ class ChatNotifications(private val context: Context) {
         val recent = recentLines(channels)
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ONGOING)
-            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setSmallIcon(chat.hc.ultra.R.drawable.ic_notification)
             .setContentTitle(title)
             // Collapsed shows the latest line, so the notification is worth
             // reading without expanding it; the channel summary moves to the

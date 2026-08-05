@@ -9,6 +9,9 @@
  *   normal  — echo chat back like the real server (sanity check)
  *   silent  — accept chat and never echo it (exercises Unconfirmed)
  *   drop    — accept the handshake, then close the socket after N seconds
+ *   demo    — like normal, plus a short scripted exchange from the other users
+ *             in the roster, so the transcript is populated for screenshots and
+ *             for eyeballing rendering changes. Nothing depends on it.
  *   restore — honour session tokens, reinstating the identity they were issued
  *             for. This is the one the real server does and the fake one could
  *             not: a restore *overrides* the join that would have followed, so
@@ -154,6 +157,24 @@ wss.on('connection', (ws) => {
           id: 1,
         });
       }, 400);
+
+      if (mode === 'demo') {
+        // Peers cannot type, so the only way to see a real-looking transcript
+        // is to script one. Delays are staggered so messages arrive separately
+        // and the scroll behaviour gets exercised too.
+        const script = [
+          [900,  'starlord', 4243, 9999999, 'aBc12', 'd73737', 'pin the version, the flake is upstream'],
+          [1800, 'victim',   4242, 100,     '',      'ed5e5e', 'it only fails on the 3.12 matrix leg'],
+          [2700, 'starlord', 4243, 9999999, 'aBc12', 'd73737', '`pytest -p no:randomly` if you want to confirm'],
+        ];
+        for (const [after, nick, userid, lvl, trip, color, text] of script) {
+          setTimeout(() => send({
+            cmd: 'chat', nick, userid, text, channel: p.channel,
+            level: lvl, trip, color, flair: flairFor(lvl),
+            id: Math.floor(Math.random() * 999999),
+          }), after);
+        }
+      }
 
       if (mode === 'drop') {
         setTimeout(() => { log('closing socket'); ws.close(); }, dropAfter);

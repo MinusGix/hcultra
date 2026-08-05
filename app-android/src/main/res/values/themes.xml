@@ -10,6 +10,6 @@
 
          The splash background itself is API 31+, so it lives in values-v31. -->
     <style name="Theme.HcUltra" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/ic_launcher_background</item>
+        <item name="android:windowBackground">@color/splash_background</item>
     </style>
 </resources>

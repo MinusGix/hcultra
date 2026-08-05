@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#1B1E23</color>
+    <!-- The icon's plate. White because hack.chat's mark is black line art and
+         is drawn on white everywhere upstream uses it. -->
+    <color name="ic_launcher_background">#FFFFFF</color>
+
+    <!-- Deliberately not the icon plate. This is what the window and the
+         Android 12+ splash are painted with before Compose draws, and the app
+         defaults to a dark scheme; MainActivity repaints it from the chosen
+         scheme as soon as it can read the preference. -->
+    <color name="splash_background">#1B1E23</color>
 </resources>

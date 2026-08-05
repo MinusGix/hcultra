@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version to build, e.g. v0.2.0'
+        required: true
+
+permissions:
+  contents: write      # create the release and upload the APK
+  id-token: write      # sign the build provenance attestation
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the version
+        id: version
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          case "$TAG" in
+            v*) ;;
+            *) echo "::error::Tag '$TAG' must start with 'v', e.g. v0.2.0"; exit 1 ;;
+          esac
+          NAME="${TAG#v}"
+          # versionCode must increase monotonically or Android refuses the
+          # update, so derive it from the version rather than a run number
+          # (which resets if the repo is ever migrated): 1.2.3 -> 10203.
+          CODE=$(echo "$NAME" | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')
+          echo "tag=$TAG"   >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Building $TAG as versionName=$NAME versionCode=$CODE"
+
+      - name: Check signing secrets are present
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE" ]; then
+            echo "::error::KEYSTORE_BASE64 is not set. See docs/releasing.md — an" \
+                 "unsigned APK cannot be installed, so there is nothing to publish."
+            exit 1
+          fi
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: sdkmanager --install "platforms;android-37.1" "build-tools;37.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Tests gate the release. A tag that cannot pass them should not become a
+      # download people install.
+      - name: Test
+        run: ./gradlew :core:jvmTest --no-daemon
+
+      - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          # Fail here rather than with an opaque Gradle error if the secret was
+          # pasted with the wrong encoding.
+          keytool -list -keystore "$RUNNER_TEMP/release.jks" \
+                  -storepass "${{ secrets.KEYSTORE_PASSWORD }}" > /dev/null
+
+      - name: Build signed APK
+        env:
+          HCULTRA_KEYSTORE: ${{ runner.temp }}/release.jks
+          HCULTRA_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          HCULTRA_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          HCULTRA_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          HCULTRA_VERSION_NAME: ${{ steps.version.outputs.name }}
+          HCULTRA_VERSION_CODE: ${{ steps.version.outputs.code }}
+        run: ./gradlew :app-android:assembleRelease --no-daemon
+
+      - name: Name the APK after the version
+        id: apk
+        run: |
+          SRC=$(find app-android/build/outputs/apk/release -name '*.apk' | head -1)
+          test -n "$SRC" || { echo "::error::no APK was produced"; exit 1; }
+          OUT="hcultra-${{ steps.version.outputs.name }}.apk"
+          cp "$SRC" "$OUT"
+          sha256sum "$OUT" > "$OUT.sha256"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          echo "sha=$(cut -d' ' -f1 < "$OUT.sha256")" >> "$GITHUB_OUTPUT"
+
+      # Records which workflow, at which commit, produced this exact file, and
+      # signs that with GitHub's OIDC identity. `gh attestation verify` then
+      # answers "did this really come from that source" without anyone having
+      # to take our word for it.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ steps.apk.outputs.path }}
+
+      - name: Read the signing certificate fingerprint
+        id: cert
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          FP=$("$BT/apksigner" verify --print-certs "${{ steps.apk.outputs.path }}" \
+               | grep -i 'SHA-256 digest' | head -1 | awk '{print $NF}')
+          echo "sha256=$FP" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: hcultra ${{ steps.version.outputs.name }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.apk.outputs.path }}
+            ${{ steps.apk.outputs.path }}.sha256
+          body: |
+            Download `${{ steps.apk.outputs.path }}` and open it on your phone.
+            Android will ask you to allow installs from your browser or file
+            manager the first time.
+
+            **Verifying this build.** It was built by GitHub Actions from this
+            repository at `${{ github.sha }}` — no APK is ever uploaded by hand.
+
+            ```sh
+            # Did GitHub build it, from this source?
+            gh attestation verify hcultra-${{ steps.version.outputs.name }}.apk \
+               --repo ${{ github.repository }}
+
+            # Is the file the one this release lists?
+            sha256sum -c hcultra-${{ steps.version.outputs.name }}.apk.sha256
+            ```
+
+            SHA-256: `${{ steps.apk.outputs.sha }}`
+
+            Signing certificate SHA-256: `${{ steps.cert.outputs.sha256 }}`
+            — the same for every release, so an update signed with anything else
+            will be refused by Android rather than silently installed.

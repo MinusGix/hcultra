@@ -5,7 +5,7 @@
          devices below 31 keep the windowBackground alone — which is what they
          paint the launch window with anyway. -->
     <style name="Theme.HcUltra" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/ic_launcher_background</item>
-        <item name="android:windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="android:windowBackground">@color/splash_background</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
     </style>
 </resources>

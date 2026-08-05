@@ -24,3 +24,7 @@ node_modules/
 .idea/
 *.iml
 .DS_Store
+
+# Release signing key — never committed. See docs/releasing.md.
+*.jks
+*.keystore

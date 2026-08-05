@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# The APK is the point of the release workflow; this one only has to prove the
+# tree is sound, so it needs nothing but read access.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      # compileSdk 37.1 is a minor-versioned platform and newer than the runner
+      # image ships, so ask for it explicitly rather than relying on AGP's
+      # auto-download, which fails less legibly.
+      - name: Install SDK packages
+        run: sdkmanager --install "platforms;android-37.1" "build-tools;37.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # `build` is tests + lint + assembleDebug. The core's tests are the ones
+      # that matter — they cover the protocol edges that have actually bitten.
+      - name: Build and test
+        run: ./gradlew build --no-daemon
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcultra-debug
+          path: app-android/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
