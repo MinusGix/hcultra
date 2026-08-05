@@ -106,14 +106,11 @@ jobs:
         with:
           subject-path: ${{ steps.apk.outputs.path }}
 
-      - name: Read the signing certificate fingerprint
-        id: cert
-        run: |
-          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          FP=$("$BT/apksigner" verify --print-certs "${{ steps.apk.outputs.path }}" \
-               | grep -i 'SHA-256 digest' | head -1 | awk '{print $NF}')
-          echo "sha256=$FP" >> "$GITHUB_OUTPUT"
-
+      # The notes stay short on purpose: the attestation and the .sha256 are
+      # still attached to every release, and anyone who wants to check them
+      # already knows how. Spending the top of the page on it would bury the
+      # one instruction that every reader actually needs. The README carries
+      # the verification commands for those who go looking.
       - name: Publish the release
         uses: softprops/action-gh-release@v2
         with:
@@ -128,20 +125,5 @@ jobs:
             Android will ask you to allow installs from your browser or file
             manager the first time.
 
-            **Verifying this build.** It was built by GitHub Actions from this
-            repository at `${{ github.sha }}` — no APK is ever uploaded by hand.
-
-            ```sh
-            # Did GitHub build it, from this source?
-            gh attestation verify hcultra-${{ steps.version.outputs.name }}.apk \
-               --repo ${{ github.repository }}
-
-            # Is the file the one this release lists?
-            sha256sum -c hcultra-${{ steps.version.outputs.name }}.apk.sha256
-            ```
-
-            SHA-256: `${{ steps.apk.outputs.sha }}`
-
-            Signing certificate SHA-256: `${{ steps.cert.outputs.sha256 }}`
-            — the same for every release, so an update signed with anything else
-            will be refused by Android rather than silently installed.
+            You should enable notifications — without them Android kills the
+            connection as soon as you leave the app.
