@@ -74,7 +74,7 @@ fun main() = runBlocking {
     check(live != null) { "never reached Live: ${session.state.value}" }
     println("✓ joined (restored=${live.restored}) userid=${session.userid}")
 
-    val token = store.load(url, channel)
+    val token = store.load(url, channel, Credentials(nick))
     check(!token.isNullOrEmpty()) { "no session token captured — the trailing-token wait is broken" }
     println("✓ captured trailing token (${token.length} chars)")
 

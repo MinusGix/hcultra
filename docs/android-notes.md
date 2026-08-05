@@ -355,10 +355,23 @@ that mis-orders the handshake fails against it too).
 node probe/fakeserver.mjs --port 6060 --mode silent   # accept chat, never echo
 node probe/fakeserver.mjs --mode drop --drop-after 15 # close the socket after 15s
 node probe/fakeserver.mjs --mode normal               # echo like the real server
+node probe/fakeserver.mjs --mode restore              # honour session tokens
 ```
 
+`restore` is the one that exercises identity. It issues legible
+`restore:<nick>:<channel>` tokens and reinstates the identity inside them,
+which is what lets a client be caught coming back as whoever it was here last
+time instead of as the nick the user typed. It also derives a trip from `pass`,
+so trip-carrying identities are observable without real credentials.
+
 From the emulator the host is `10.0.2.2`, so the address is
-`ws://10.0.2.2:6060` — note the explicit `ws://`.
+`ws://10.0.2.2:6060` — note the explicit `ws://`. A bare `10.0.2.2:6060` is
+normalised to `wss://` and will fail against a plaintext server.
+
+Cleartext needs permitting, which `app-android/src/debug/AndroidManifest.xml`
+does for debug builds only — it is off by default from targetSdk 28. Without it
+the connection is blocked in a way that looks exactly like an ordinary network
+failure: the client reconnects and backs off, and nothing reaches the server log.
 
 Verified on-device: switching to it, joining, observing `unconfirmed`, then
 resetting to hack.chat and rejoining a channel that still reported `resumed`.

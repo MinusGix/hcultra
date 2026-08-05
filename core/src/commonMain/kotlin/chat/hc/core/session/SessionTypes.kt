@@ -10,7 +10,7 @@ data class Credentials(
 )
 
 /**
- * Persisted session tokens, keyed by **server and channel**.
+ * Persisted session tokens, keyed by **server, channel and identity**.
  *
  * A token is only meaningful to the server that issued it, so the server is
  * part of the key rather than a global namespace. That also means trying a
@@ -18,25 +18,36 @@ data class Credentials(
  * — and losing it would be worse than an inconvenience, since a cold rejoin is
  * visible to the whole channel as a leave/join pair.
  *
+ * The [Credentials] are part of the key because a token *is* an identity: the
+ * server restores the nick, trip and level it was issued for and ignores
+ * whatever `join` would have said. Keyed by channel alone, presenting the
+ * stored token silently reinstates whoever you were here last time — so typing
+ * a different nick into the join form changed nothing, which is exactly the bug
+ * this key shape prevents. A token that does not match the identity being asked
+ * for is simply not offered, and the session cold-joins as asked instead.
+ *
  * Tokens are JWTs valid 7 days, reissued on both join and restore — so a client
  * that connects at least weekly keeps a rolling window indefinitely. They grant
  * the holder our nick, trip and level: on Android this must be backed by the
  * Keystore, not plain preferences.
  */
 interface TokenStore {
-    suspend fun load(server: String, channel: String): String?
-    suspend fun save(server: String, channel: String, token: String)
-    suspend fun clear(server: String, channel: String)
+    suspend fun load(server: String, channel: String, identity: Credentials): String?
+    suspend fun save(server: String, channel: String, identity: Credentials, token: String)
+    suspend fun clear(server: String, channel: String, identity: Credentials)
 }
 
 /** In-memory store; the default for tests and for ephemeral-by-default mode. */
 class InMemoryTokenStore : TokenStore {
-    private val tokens = mutableMapOf<Pair<String, String>, String>()
-    override suspend fun load(server: String, channel: String): String? = tokens[server to channel]
-    override suspend fun save(server: String, channel: String, token: String) {
-        tokens[server to channel] = token
+    private val tokens = mutableMapOf<Triple<String, String, Credentials>, String>()
+    override suspend fun load(server: String, channel: String, identity: Credentials): String? =
+        tokens[Triple(server, channel, identity)]
+    override suspend fun save(server: String, channel: String, identity: Credentials, token: String) {
+        tokens[Triple(server, channel, identity)] = token
     }
-    override suspend fun clear(server: String, channel: String) { tokens.remove(server to channel) }
+    override suspend fun clear(server: String, channel: String, identity: Credentials) {
+        tokens.remove(Triple(server, channel, identity))
+    }
 }
 
 sealed interface SessionState {

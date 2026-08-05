@@ -18,6 +18,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 internal const val TEST_URL = "wss://example/chat-ws"
+private val TESTER = Credentials(nick = "tester")
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChannelSessionTest {
@@ -28,9 +29,10 @@ class ChannelSessionTest {
     private fun session(
         transport: FakeTransport,
         store: TokenStore = InMemoryTokenStore(),
+        credentials: Credentials = TESTER,
     ) = ChannelSession(
         channel = "testroom",
-        credentials = Credentials(nick = "tester"),
+        credentials = credentials,
         url = TEST_URL,
         transport = transport,
         governor = RateGovernor(),
@@ -98,7 +100,7 @@ class ChannelSessionTest {
         s.start(this)
         advanceUntilIdle()
 
-        assertEquals("tok-trailing", store.load(TEST_URL, "testroom"))
+        assertEquals("tok-trailing", store.load(TEST_URL, "testroom", TESTER))
         s.stop()
     }
 
@@ -112,14 +114,14 @@ class ChannelSessionTest {
         advanceUntilIdle()
 
         assertTrue(s.state.value is SessionState.Live)
-        assertNull(store.load(TEST_URL, "testroom"))
+        assertNull(store.load(TEST_URL, "testroom", TESTER))
         s.stop()
     }
 
     /** With a valid token the server restores us and no join is sent at all. */
     @Test
     fun restorePathSkipsJoin() = runTest {
-        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", "tok-existing") }
+        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", TESTER, "tok-existing") }
         val transport = FakeTransport()
         transport.onSend = { raw ->
             if (cmdOf(raw) == "session") {
@@ -136,14 +138,14 @@ class ChannelSessionTest {
         assertEquals("session", cmdOf(sent[0]))
         assertEquals(SessionState.Live(restored = true), s.state.value)
         // The renewed token must replace the old one, rolling the 7-day window.
-        assertEquals("tok-renewed", store.load(TEST_URL, "testroom"))
+        assertEquals("tok-renewed", store.load(TEST_URL, "testroom", TESTER))
         s.stop()
     }
 
     /** The token we hold must actually be presented on reconnect. */
     @Test
     fun presentsStoredTokenOnConnect() = runTest {
-        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", "tok-abc") }
+        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", TESTER, "tok-abc") }
         val transport = FakeTransport().apply { scriptColdJoin() }
         val s = session(transport, store)
         s.start(this)
@@ -151,6 +153,51 @@ class ChannelSessionTest {
 
         val first = Json.parseToJsonElement(transport.latest.sent[0]).jsonObject
         assertEquals("tok-abc", first["token"]?.jsonPrimitive?.content)
+        s.stop()
+    }
+
+    /**
+     * The bug this key shape exists to prevent: a restore reinstates the
+     * identity the token was issued for and never reads our `join`, so a token
+     * held for `tester` must not be presented when the user asked to be someone
+     * else. On-device this looked like the join form ignoring the nick you typed
+     * for any channel you had visited before.
+     */
+    @Test
+    fun tokenForAnotherNickIsNotPresented() = runTest {
+        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", TESTER, "tok-tester") }
+        val transport = FakeTransport().apply { scriptColdJoin() }
+        val s = session(transport, store, credentials = Credentials(nick = "someoneelse"))
+        s.start(this)
+        advanceUntilIdle()
+
+        val sent = transport.latest.sent
+        val first = Json.parseToJsonElement(sent[0]).jsonObject
+        assertTrue("token" !in first, "presented tester's token while joining as someoneelse")
+        // …and therefore actually cold-joins under the nick that was asked for.
+        val join = Json.parseToJsonElement(sent[1]).jsonObject
+        assertEquals("join", join["cmd"]?.jsonPrimitive?.content)
+        assertEquals("someoneelse", join["nick"]?.jsonPrimitive?.content)
+        // tester's token is untouched, so switching back still resumes silently.
+        assertEquals("tok-tester", store.load(TEST_URL, "testroom", TESTER))
+        s.stop()
+    }
+
+    /**
+     * The same nick with and without a trip password are different identities —
+     * the trip is the whole point — so adding or dropping one must cold-join
+     * rather than resume the other.
+     */
+    @Test
+    fun tokenForTheSameNickWithoutATripIsNotPresented() = runTest {
+        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", TESTER, "tok-plain") }
+        val transport = FakeTransport().apply { scriptColdJoin() }
+        val s = session(transport, store, credentials = Credentials(nick = "tester", pass = "hunter2"))
+        s.start(this)
+        advanceUntilIdle()
+
+        val first = Json.parseToJsonElement(transport.latest.sent[0]).jsonObject
+        assertTrue("token" !in first, "resumed the tripless session for a tripped join")
         s.stop()
     }
 
@@ -207,7 +254,7 @@ class ChannelSessionTest {
      */
     @Test
     fun midHandshakeChatIsOrderedAfterTheResumeNotice() = runTest {
-        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", "tok-existing") }
+        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", TESTER, "tok-existing") }
         val transport = FakeTransport()
         transport.onSend = { raw ->
             if (cmdOf(raw) == "session") {

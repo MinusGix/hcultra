@@ -80,9 +80,38 @@ class SessionManager(
             value?.let { ch -> mutate(ch) { it.copy(unread = 0) } }
         }
 
+    /**
+     * Joins a channel, or changes who we are in one we are already in.
+     *
+     * The identity check is the point of the second case. hack.chat has no
+     * rename, so becoming someone else is a leave and a fresh join — and the
+     * alternative, treating any re-join as a no-op, is what made the join form
+     * look like it ignored the nick you typed for a channel already on screen.
+     * An identical identity stays a no-op: the server rejects a second `join`
+     * on an established socket, and there would be nothing to change.
+     */
     suspend fun join(channel: String, credentials: Credentials) {
         lock.withLock {
-            if (sessions.containsKey(channel)) return
+            val existing = sessions[channel]
+            if (existing != null) {
+                if (existing.credentials == credentials) return
+                existing.stop()
+                jobs.remove(channel)?.cancel()
+                // The scrollback is kept: the server holds no history, so
+                // dropping it to change nick would destroy the conversation.
+                buffers[channel]?.add(
+                    ChatMessage(
+                        0,
+                        MessageKind.Info,
+                        text = "Rejoining as ${credentials.nick}.",
+                        at = now(),
+                    )
+                )
+                // The roster belongs to the session being retired, and its
+                // `isme` entry is about to name the wrong person.
+                mutate(channel) { it.copy(roster = emptyList(), state = SessionState.Connecting) }
+            }
+
             val session = ChannelSession(
                 channel = channel,
                 credentials = credentials,
@@ -92,14 +121,16 @@ class SessionManager(
                 tokenStore = tokenStore,
             )
             sessions[channel] = session
-            buffers[channel] = ChannelBuffer(bufferCapacity)
-            _channels.update { it + (channel to ChannelUi(channel)) }
+            buffers.getOrPut(channel) { ChannelBuffer(bufferCapacity) }
+            _channels.update { it + (channel to (it[channel] ?: ChannelUi(channel))) }
+            publish(channel)
 
+            // Both collectors under one parent, so cancelling the entry stops
+            // both. A state collector left running on a retired session would
+            // keep writing its state over the replacement's.
             jobs[channel] = scope.launch {
-                session.events.collect { onEvent(session, it) }
-            }
-            scope.launch {
-                session.state.collect { st -> mutate(channel) { it.copy(state = st) } }
+                launch { session.events.collect { onEvent(session, it) } }
+                launch { session.state.collect { st -> mutate(channel) { it.copy(state = st) } } }
             }
             session.start(scope)
         }

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- windowSplashScreenBackground is API 31+. Declaring it in the base theme
+         is a lint error at minSdk 26, so the qualified folder carries it and
+         devices below 31 keep the windowBackground alone — which is what they
+         paint the launch window with anyway. -->
+    <style name="Theme.HcUltra" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/ic_launcher_background</item>
+        <item name="android:windowSplashScreenBackground">@color/ic_launcher_background</item>
+    </style>
+</resources>

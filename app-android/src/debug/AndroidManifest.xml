@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug builds only: permits `ws://`, so the app can reach probe/fakeserver.mjs.
+
+  Cleartext is off by default from targetSdk 28, which silently blocks the
+  workflow the probe server documents (Settings → Server → 10.0.2.2:6060 from
+  the emulator). The failure looks like an ordinary connection problem — the
+  client reconnects and backs off — so it is worth being explicit that this is
+  a build-type capability and not something a release ships.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:usesCleartextTraffic="true" />
+</manifest>

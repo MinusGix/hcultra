@@ -22,9 +22,12 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -36,6 +39,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,8 +60,8 @@ import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.protocol.User
 import chat.hc.core.session.ChannelUi
-import chat.hc.core.session.Credentials
-import chat.hc.ultra.data.CredentialStore
+import chat.hc.ultra.data.ChannelHistory
+import chat.hc.ultra.data.ChannelIdentity
 import chat.hc.core.session.ModAction
 import chat.hc.core.session.Moderation
 import chat.hc.core.session.SessionState
@@ -89,7 +93,7 @@ class MainActivity : ComponentActivity() {
     private var bound = false
 
     private val serverPrefs by lazy { ServerPrefs(this) }
-    private val credentialStore by lazy { CredentialStore(this) }
+    private val history by lazy { ChannelHistory(this) }
 
     /** Mirrors the selected tab into the service so unread counts stay right. */
     private var activeChannel: String? = null
@@ -154,10 +158,37 @@ class MainActivity : ComponentActivity() {
             // rotation or recreate never repaints from a stale colour.
             LaunchedEffect(scheme) { applyWindowBackground(scheme) }
 
-            // Loaded off the main thread, so it arrives after the first frame —
-            // JoinFields keys its remember on the value, which picks it up.
-            var remembered by remember { mutableStateOf<Credentials?>(null) }
-            LaunchedEffect(serverUrl) { remembered = credentialStore.load(serverUrl) }
+            // Loaded off the main thread, so it arrives after the first frame;
+            // the join screen fills itself in from an effect keyed on the value,
+            // which picks it up. `historyVersion` is bumped by anything that
+            // writes, since the store is an encrypted blob rather than a flow.
+            var historyVersion by remember { mutableIntStateOf(0) }
+            var recent by remember { mutableStateOf<List<ChannelIdentity>>(emptyList()) }
+            var lastSession by remember { mutableStateOf<List<ChannelIdentity>>(emptyList()) }
+            LaunchedEffect(serverUrl, historyVersion) {
+                recent = history.recent(serverUrl)
+                lastSession = history.lastSession(serverUrl)
+            }
+
+            // The trip only exists once the server has derived it, so it can be
+            // learned from the roster and nowhere else. This also records which
+            // tabs are open, which is what "Resume last" reopens.
+            LaunchedEffect(serverUrl) {
+                var previous: List<ChannelIdentity>? = null
+                channels.collect { map ->
+                    val open = map.values.mapNotNull { ui ->
+                        ui.roster.firstOrNull { it.isme }
+                            ?.let { ChannelIdentity(ui.channel, it.nick, trip = it.trip) }
+                    }
+                    // The roster changes on every join and part in the channel;
+                    // rewriting an encrypted blob at that rate would be absurd.
+                    if (open == previous) return@collect
+                    previous = open
+                    open.forEach { history.observeTrip(serverUrl, it.channel, it.nick, it.trip) }
+                    history.rememberOpen(serverUrl, open)
+                    historyVersion++
+                }
+            }
             // An explicit pick wins; otherwise follow the scheme's pairing, so
             // changing scheme moves the code colours along with it.
             val highlight = highlightOverride ?: scheme.highlight
@@ -199,10 +230,13 @@ class MainActivity : ComponentActivity() {
                             startModerate(channel, action, target)
                         },
                         onActiveChanged = { activeChannel = it },
-                        rememberedNick = remembered?.let { c ->
-                            // Rebuilt in the field's own `nick#password` form, so
-                            // a full re-login — trip included — is one tap.
-                            c.nick + (c.pass?.let { "#$it" } ?: "")
+                        recent = recent,
+                        lastSession = lastSession,
+                        onForget = { identity ->
+                            lifecycleScope.launch {
+                                history.forget(serverUrl, identity)
+                                historyVersion++
+                            }
                         },
                         rendererCallbacks = RendererCallbacks(
                             onLinkTap = { url -> openExternal(url) },
@@ -243,9 +277,10 @@ class MainActivity : ComponentActivity() {
 
     private fun startJoin(channel: String, nick: String, pass: String?) {
         // Remembered per server, since a trip is derived from a server-side salt
-        // and the same password gives a different trip elsewhere.
+        // and the same password gives a different trip elsewhere. The trip
+        // itself is filled in later, from the roster.
         lifecycleScope.launch {
-            credentialStore.save(serverPrefs.url, Credentials(nick = nick, pass = pass))
+            history.record(serverPrefs.url, ChannelIdentity(channel, nick, pass))
         }
         ContextCompat.startForegroundService(
             this,
@@ -339,8 +374,11 @@ private fun AppScreen(
     onLeave: (String) -> Unit,
     onModerate: (String, ModAction, User) -> Unit,
     onActiveChanged: (String?) -> Unit,
-    /** Last credentials used on this server, in `nick#password` form. */
-    rememberedNick: String?,
+    /** Who you have been on this server, most recent first. */
+    recent: List<ChannelIdentity>,
+    /** The tabs that were open when the app was last used. */
+    lastSession: List<ChannelIdentity>,
+    onForget: (ChannelIdentity) -> Unit,
     rendererCallbacks: RendererCallbacks,
     scheme: Scheme,
     highlight: String,
@@ -388,25 +426,35 @@ private fun AppScreen(
     }
 
     if (showJoin || ordered.isEmpty()) {
+        val join = { channel: String, nick: String, pass: String? ->
+            onJoin(channel, nick, pass)
+            selected = channel
+            awaitingJoin = channel
+            showJoin = false
+            onPendingConsumed()
+        }
         JoinSheet(
             canCancel = ordered.isNotEmpty(),
             // Reachable before any channel exists: changing server is exactly
             // what you want to do *before* connecting, not after.
             onOpenSettings = onOpenThemes,
             initialChannel = pendingChannel.orEmpty(),
-            // The stored credentials win over the live roster: the roster knows
-            // the nick but not the password behind the trip, so preferring it
-            // would silently join a second channel *without* the trip. Falls
-            // back to the roster for a session where nothing was stored yet.
-            initialNick = rememberedNick
-                ?: ordered.firstOrNull()?.roster?.firstOrNull { it.isme }?.nick.orEmpty(),
-            onJoin = { channel, nick, pass ->
-                onJoin(channel, nick, pass)
-                selected = channel
-                awaitingJoin = channel
+            recent = recent,
+            // Nothing to resume if it is already open — the button would join
+            // channels the tab strip is showing.
+            lastSession = lastSession.filterNot { channels.containsKey(it.channel) },
+            onJoin = join,
+            onResumeLast = { identities ->
+                // Only the first is selected; the rest arrive as tabs. Joins are
+                // rate-limited server-side (3 of 25, shared across sockets), and
+                // RateGovernor paces them, so a wide resume is slow rather than
+                // throttled into failure.
+                identities.forEach { onJoin(it.channel, it.nick, it.pass) }
+                identities.firstOrNull()?.let { selected = it.channel; awaitingJoin = it.channel }
                 showJoin = false
                 onPendingConsumed()
             },
+            onForget = onForget,
             onCancel = { showJoin = false; onPendingConsumed() },
         )
         if (ordered.isEmpty()) return
@@ -528,31 +576,61 @@ private fun JoinSheet(
     canCancel: Boolean,
     onOpenSettings: () -> Unit,
     initialChannel: String = "",
-    initialNick: String = "",
+    recent: List<ChannelIdentity>,
+    lastSession: List<ChannelIdentity>,
     onJoin: (String, String, String?) -> Unit,
+    onResumeLast: (List<ChannelIdentity>) -> Unit,
+    onForget: (ChannelIdentity) -> Unit,
     onCancel: () -> Unit,
 ) {
+    // Prefilled from the most recent identity, but the *channel* drives the nick
+    // from there on: people are routinely a different person in each channel, so
+    // the last nick used anywhere is only a starting guess.
     var channelInput by remember(initialChannel) { mutableStateOf(initialChannel) }
-    var nickInput by remember(initialNick) { mutableStateOf(initialNick) }
+    var nickInput by remember { mutableStateOf("") }
+    // Typing a nick pins it: adopting a remembered one afterwards would undo
+    // what was just typed, which is the very complaint this screen answers.
+    // It also protects the field from `recent` reloading underneath it, which
+    // happens whenever a channel elsewhere reconnects.
+    var nickPinned by remember { mutableStateOf(false) }
+
+    LaunchedEffect(channelInput, recent) {
+        if (nickPinned) return@LaunchedEffect
+        val known = recent.firstOrNull { it.channel.equals(channelInput.trim(), ignoreCase = true) }
+        nickInput = (known ?: recent.firstOrNull())?.fieldText.orEmpty()
+    }
 
     val submit = {
         val parts = nickInput.split("#", limit = 2)
-        onJoin(channelInput.trim(), parts[0].trim(), parts.getOrNull(1))
+        onJoin(channelInput.trim(), parts[0].trim(), parts.getOrNull(1)?.takeIf(String::isNotEmpty))
+    }
+    val canSubmit = channelInput.isNotBlank() && nickInput.isNotBlank()
+
+    val body: @Composable () -> Unit = {
+        JoinBody(
+            channel = channelInput,
+            nick = nickInput,
+            onChannel = { channelInput = it },
+            onNick = { nickInput = it; nickPinned = true },
+            recent = recent,
+            lastSession = lastSession,
+            onPick = { identity ->
+                // Straight to connected: the whole point of the list is that the
+                // identity is already decided, so making it fill the form and
+                // wait for a second tap would be a worse version of typing it.
+                onJoin(identity.channel, identity.nick, identity.pass)
+            },
+            onResumeLast = { onResumeLast(lastSession) },
+            onForget = onForget,
+        )
     }
 
     if (canCancel) {
         AlertDialog(
             onDismissRequest = onCancel,
             title = { Text("Join a channel") },
-            text = {
-                JoinFields(channelInput, nickInput, { channelInput = it }, { nickInput = it })
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = submit,
-                    enabled = channelInput.isNotBlank() && nickInput.isNotBlank(),
-                ) { Text("Join") }
-            },
+            text = body,
+            confirmButton = { TextButton(onClick = submit, enabled = canSubmit) { Text("Join") } },
             dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
         )
     } else {
@@ -575,23 +653,53 @@ private fun JoinSheet(
                 )
                 TextButton(onClick = onOpenSettings) { Text("Settings") }
             }
-            JoinFields(channelInput, nickInput, { channelInput = it }, { nickInput = it })
-            Button(
-                onClick = submit,
-                enabled = channelInput.isNotBlank() && nickInput.isNotBlank(),
-            ) { Text("Connect") }
+            Column(modifier = Modifier.weight(1f, fill = false)) { body() }
+            Button(onClick = submit, enabled = canSubmit) { Text("Connect") }
         }
     }
 }
 
+/**
+ * Resume, then the remembered identities, then the fields.
+ *
+ * That order is the claim that the common case is returning somewhere you have
+ * already been: typing a channel and a nick from scratch is the fallback, so it
+ * sits at the bottom rather than being the only thing on offer.
+ */
 @Composable
-private fun JoinFields(
+private fun JoinBody(
     channel: String,
     nick: String,
     onChannel: (String) -> Unit,
     onNick: (String) -> Unit,
+    recent: List<ChannelIdentity>,
+    lastSession: List<ChannelIdentity>,
+    onPick: (ChannelIdentity) -> Unit,
+    onResumeLast: () -> Unit,
+    onForget: (ChannelIdentity) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = Modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (lastSession.isNotEmpty()) {
+            Button(onClick = onResumeLast, modifier = Modifier.fillMaxWidth()) {
+                Text("Resume last (" + lastSession.joinToString(", ") { "?" + it.channel } + ")")
+            }
+        }
+
+        if (recent.isNotEmpty()) {
+            Text(
+                "Recent",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            recent.forEach { identity ->
+                RecentRow(identity, onPick = { onPick(identity) }, onForget = { onForget(identity) })
+            }
+            HorizontalDivider()
+        }
+
         OutlinedTextField(
             value = channel,
             onValueChange = onChannel,
@@ -603,6 +711,58 @@ private fun JoinFields(
             onValueChange = onNick,
             label = { Text("Nick (add #password for a trip)") },
             modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/** `?channel` over `nick trip`, plus a way to forget it. */
+@Composable
+private fun RecentRow(
+    identity: ChannelIdentity,
+    onPick: () -> Unit,
+    onForget: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onPick).padding(vertical = 4.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("?" + identity.channel, style = MaterialTheme.typography.bodyLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    identity.nick,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // The trip is the only way to tell two people using the same
+                // nick apart, so it earns its place beside every one of them.
+                // Before the first connection there is no trip to show yet, only
+                // the knowledge that a password is stored.
+                identity.trip?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } ?: identity.pass?.let {
+                    Text(
+                        "tripcode saved",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
+        Text(
+            "×",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .clip(CircleShape)
+                .clickable(onClick = onForget)
+                .semantics { contentDescription = "Forget ${identity.nick} in ${identity.channel}" }
+                .padding(horizontal = 10.dp, vertical = 4.dp),
         )
     }
 }

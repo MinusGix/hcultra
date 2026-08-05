@@ -43,6 +43,10 @@ the trip.
 Verified on-device: joined as `mubot2#hunter2`, `am force-stop`, relaunched — the
 field came back prefilled.
 
+**Superseded.** `CredentialStore` remembered *one* identity per server, which
+turned out to be the wrong unit — see "Identity is per channel, not per server"
+below. `data/ChannelHistory.kt` replaced it; the Keystore handling is unchanged.
+
 ### 2. Dark flash before a light scheme
 
 **Observed:** a dark box on launch, then the app settles into the light scheme.
@@ -299,3 +303,122 @@ moderator, only on someone strictly below.
 Only visible once a light scheme was in use. The window follows the scheme now
 (bug 2), but the status bar draws over it with its own icons, which stayed white.
 `applyWindowBackground` sets `isAppearanceLightStatusBars` from `scheme.dark`.
+
+## Identity is per channel, not per server
+
+Found on 2026-08-05, from the report that the join form "asks for a channel and
+a username, but if you've been to that channel before it uses your last username
+rather than the one you typed — so you can't change who you are".
+
+Both halves of that are real, and they are separate bugs with a common cause:
+**a session token is an identity, and it outranks anything the client asks for.**
+
+### The typed nick was discarded by the restore
+
+`ChannelSession.connectAndHandshake` loaded the stored token for the channel and
+presented it as frame 1. When the server honours it, `session.js` restores the
+nick, trip and level the token was issued for and *returns before the `join` is
+ever sent* — so the nick from the form was never transmitted at all. Everything
+downstream was correct; the identity had already been decided.
+
+The fix is in the key shape. `TokenStore` is now keyed by `(server, channel,
+identity)` rather than `(server, channel)`, so a token earned as `alice` is
+simply not found when the user asks to be `bob`, and the session cold-joins as
+asked. Nothing is invalidated: alice's token stays where it is, so switching
+back to her still resumes silently. The password is part of the identity but
+deliberately *not* part of the preferences key — those are stored as plaintext
+XML — so it lives in the encrypted value beside the token and is compared on
+load.
+
+Note that nick alone would have been nearly enough, and is wrong in one case
+that matters: the same nick with and without a trip password are different
+people, and the trip is the whole point.
+
+Covered by `ChannelSessionTest.tokenForAnotherNickIsNotPresented` and
+`tokenForTheSameNickWithoutATripIsNotPresented`.
+
+### Re-joining a channel already on screen did nothing at all
+
+`SessionManager.join` opened with `if (sessions.containsKey(channel)) return`.
+That guard is correct for its original purpose — the server rejects a second
+`join` on an established socket — but it also silently swallowed every attempt
+to change identity in a channel already open, which from the form looks exactly
+like the bug above.
+
+`join` now compares the credentials: identical is still a no-op, different tears
+the session down and opens a new socket. The scrollback survives, because
+hack.chat keeps no history and dropping it to change nick would destroy the
+conversation; an info line marks the seam. The roster is cleared at the same
+moment, since its `isme` entry is about to name the wrong person.
+
+This turned up a pre-existing leak. Only the events collector was tracked in
+`jobs`; the state collector was launched loose and never cancelled, so every
+`leave` left one running forever. Harmless while a session could only be created
+once — actively wrong once it can be replaced, since the retired session's
+collector would keep writing state over the replacement's. Both now sit under
+one parent job.
+
+Covered by `SessionManagerJoinTest`.
+
+### The join screen
+
+The store behind it is `data/ChannelHistory.kt`, keyed by server and holding
+`(channel, nick, pass, trip)`. The pair is the unit, not the nick: people are
+routinely a different person in different channels, which is the same reason the
+token is keyed that way.
+
+- The remembered identities are listed, most recent first, and one tap connects.
+  Filling the form and waiting for a second tap would be a worse version of
+  typing it.
+- Each row shows its trip. It is the only way to tell two people using the same
+  nick apart, and it is *observed*, not stored at join time — the server derives
+  it, so it can only be learned from the roster afterwards. Before the first
+  connection a row can only say that a password is saved.
+- Typing a channel adopts that channel's remembered nick, unless a nick has been
+  typed — pinning it, because overwriting what someone just typed is the
+  original complaint in a new costume.
+- **Resume last** reopens the tabs that were open, each as who you were in it.
+  The open set is never recorded as empty: it is empty on every cold start and
+  after the last tab closes, and treating either as "the last session was
+  nothing" would destroy the thing the button exists to restore.
+
+Joins are rate-limited server-side (3 of 25, shared across sockets), so a wide
+resume is paced by `RateGovernor` rather than throttled into failure.
+
+### Verified on-device
+
+Against `probe/fakeserver.mjs --mode restore`, which is new: the fake server
+previously never restored, and therefore could not reproduce any of this. It now
+issues `restore:<nick>:<channel>` tokens and honours them, and derives a trip
+from a `pass` so the trip column is observable.
+
+Joined `?testroom` as `alice`; re-joined as `bob` from the form and watched the
+wire go `{"cmd":"session"}` with **no token** followed by
+`{"cmd":"join","channel":"testroom","nick":"bob"}`, with `Rejoining as bob.` and
+a fresh `Users online: bob, …` in the transcript above the preserved scrollback.
+Joined `?lounge` as `carol#hunter2`; the recent list showed her trip. Cold start
+then offered `Resume last (?testroom, ?lounge)`, which restored both — each
+presenting its *own* token, `restore:bob:testroom` and `restore:carol:lounge`.
+Forgetting a row removed only that identity.
+
+Reaching the fake server at all needed `app-android/src/debug/AndroidManifest.xml`:
+cleartext is off by default from targetSdk 28, so `ws://10.0.2.2:6060` was being
+blocked outright. It failed as an ordinary connection problem — the client
+reconnected and backed off — which is a slow thing to recognise.
+
+### Found while verifying: a resume erased the trip
+
+The trip appeared beside `carol` after a cold join and was gone after the first
+resume. `observeTrip` is driven off the roster and wrote whatever it found,
+including nothing — so a restored session reporting an empty trip overwrote the
+one already learned, and the list lost the only thing distinguishing two people
+sharing a nick.
+
+It now only ever fills in. "This identity has no trip" is already carried by
+having no password stored, so an empty field is the roster saying nothing rather
+than an assertion, and a password *change* clears the trip in `record` — which
+is the case where the stored one is genuinely wrong.
+
+The fake server was half the story and worth fixing on its own: its restore path
+reinstated the nick but not the trip, which the real server does. It now keeps
+the trips it issues, so a restore reinstates the whole identity.

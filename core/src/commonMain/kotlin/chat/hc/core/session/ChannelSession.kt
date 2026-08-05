@@ -45,10 +45,16 @@ import kotlinx.coroutines.withTimeout
  *     the handshake is not complete at `onlineSet`.
  *  3. Reconnect is only silent if the old socket is still open when the new one
  *     restores (make-before-break). A dropped socket cannot be silent.
+ *  4. A token restore **overrides the `join` that would have followed** — the
+ *     server reinstates the identity the token was issued for and never reads
+ *     our nick. So the token is looked up by [credentials] as well as channel
+ *     ([TokenStore]): asking to join as someone else must not be answered by
+ *     silently becoming who we were here last time.
  */
 class ChannelSession(
     val channel: String,
-    private val credentials: Credentials,
+    /** Public so [SessionManager] can tell a re-join from a change of identity. */
+    val credentials: Credentials,
     private val url: String,
     private val transport: Transport,
     private val governor: RateGovernor,
@@ -138,7 +144,7 @@ class ChannelSession(
         // Bring the replacement fully up *before* retiring the old socket:
         // disconnect.js suppresses onlineRemove only while a duplicate userid
         // is still present in the channel.
-        val fresh = connectAndHandshake(scope, tokenStore.load(url, channel))
+        val fresh = connectAndHandshake(scope, tokenStore.load(url, channel, credentials))
         current = fresh.connection
         old.close()
         emit(SessionEvent.Resumed(channel, fresh.restored, silent = true))
@@ -151,7 +157,7 @@ class ChannelSession(
         while (scope.isActive && !stopped) {
             try {
                 _state.value = SessionState.Connecting
-                val live = connectAndHandshake(scope, tokenStore.load(url, channel))
+                val live = connectAndHandshake(scope, tokenStore.load(url, channel, credentials))
                 current = live.connection
                 attempt = 0
                 _state.value = SessionState.Live(live.restored)
@@ -209,7 +215,7 @@ class ChannelSession(
             val session = awaitFrame(frames, "session reply", deferred) {
                 it is Inbound.Session
             } as Inbound.Session
-            if (session.token.isNotEmpty()) tokenStore.save(url, channel, session.token)
+            if (session.token.isNotEmpty()) tokenStore.save(url, channel, credentials, session.token)
 
             if (session.restored) {
                 // restoreJoin replies with a fresh onlineSet for the restored channel.
@@ -242,7 +248,7 @@ class ChannelSession(
                     val tok = awaitFrame(frames, "post-join token", deferred) {
                         it is Inbound.Session && it.token.isNotEmpty()
                     } as Inbound.Session
-                    tokenStore.save(url, channel, tok.token)
+                    tokenStore.save(url, channel, credentials, tok.token)
                 }
             } catch (_: TimeoutCancellationException) {
                 // Leave the old token in place; a later frame may still carry one.
@@ -328,7 +334,8 @@ class ChannelSession(
                 emit(SessionEvent.Warning(channel, frame))
             }
 
-            is Inbound.Session -> if (frame.token.isNotEmpty()) tokenStore.save(url, channel, frame.token)
+            is Inbound.Session ->
+                if (frame.token.isNotEmpty()) tokenStore.save(url, channel, credentials, frame.token)
             is Inbound.Unknown -> emit(SessionEvent.UnknownFrame(channel, frame))
         }
     }

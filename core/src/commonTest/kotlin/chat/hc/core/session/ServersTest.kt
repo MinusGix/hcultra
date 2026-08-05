@@ -73,14 +73,15 @@ class ServersTest {
     @Test
     fun tokensDoNotLeakBetweenServers() = runTest {
         val store = InMemoryTokenStore()
-        store.save("wss://hack.chat/chat-ws", "lounge", "live-token")
-        store.save("ws://localhost:6060/chat-ws", "lounge", "local-token")
+        val me = Credentials(nick = "tester")
+        store.save("wss://hack.chat/chat-ws", "lounge", me, "live-token")
+        store.save("ws://localhost:6060/chat-ws", "lounge", me, "local-token")
 
-        assertEquals("live-token", store.load("wss://hack.chat/chat-ws", "lounge"))
-        assertEquals("local-token", store.load("ws://localhost:6060/chat-ws", "lounge"))
+        assertEquals("live-token", store.load("wss://hack.chat/chat-ws", "lounge", me))
+        assertEquals("local-token", store.load("ws://localhost:6060/chat-ws", "lounge", me))
 
-        store.clear("ws://localhost:6060/chat-ws", "lounge")
-        assertNull(store.load("ws://localhost:6060/chat-ws", "lounge"))
-        assertEquals("live-token", store.load("wss://hack.chat/chat-ws", "lounge"))
+        store.clear("ws://localhost:6060/chat-ws", "lounge", me)
+        assertNull(store.load("ws://localhost:6060/chat-ws", "lounge", me))
+        assertEquals("live-token", store.load("wss://hack.chat/chat-ws", "lounge", me))
     }
 }
