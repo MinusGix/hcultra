@@ -47,7 +47,15 @@ data class ChatMessage(
     val serverId: Long? = null,
     val isMine: Boolean = false,
     val delivery: Delivery = Delivery.Sent,
-    /** True once a `complete` update arrives; bots stream until then. */
+    /**
+     * False only between an `append`/`prepend` update and the `complete` that
+     * ends it — a bot mid-sentence.
+     *
+     * Not inferred from the message carrying a customId: every client that
+     * reconciles its own echo sends one (this one included), and the server
+     * only treats it as "editable for five minutes". Reading it as "still
+     * streaming" put a trailing ellipsis on every ordinary message.
+     */
     val streamComplete: Boolean = true,
 )
 
@@ -141,7 +149,6 @@ class ChannelBuffer(private val capacity: Int = 500) {
                 customId = frame.customId,
                 serverId = frame.id,
                 isMine = myUserid != null && frame.userid == myUserid,
-                streamComplete = frame.customId == null,
             )
         )
     }
@@ -150,6 +157,12 @@ class ChannelBuffer(private val capacity: Int = 500) {
      * Bot streaming edits. Unknown customIds are ignored rather than buffered:
      * the target may have aged out of the ring, and a partial edit applied to
      * the wrong message is worse than a dropped one.
+     *
+     * A growing edit is what marks a message as still streaming — a message is
+     * only known to be mid-stream once more of it actually arrives. `overwrite`
+     * leaves the flag alone: it is equally the one-shot edit a bot makes to a
+     * finished message, and inferring a stream from it would strand that
+     * message with an ellipsis it never sheds.
      */
     fun applyUpdate(frame: Inbound.UpdateMessage): ChatMessage? {
         val localId = byCustomId[frame.customId] ?: return null
@@ -158,8 +171,8 @@ class ChannelBuffer(private val capacity: Int = 500) {
         val current = messages[idx]
         val updated = when (frame.updateMode) {
             UpdateMode.Overwrite -> current.copy(text = frame.text)
-            UpdateMode.Append -> current.copy(text = current.text + frame.text)
-            UpdateMode.Prepend -> current.copy(text = frame.text + current.text)
+            UpdateMode.Append -> current.copy(text = current.text + frame.text, streamComplete = false)
+            UpdateMode.Prepend -> current.copy(text = frame.text + current.text, streamComplete = false)
             UpdateMode.Complete -> current.copy(text = current.text + frame.text, streamComplete = true)
             UpdateMode.Unknown -> return null
         }

@@ -116,6 +116,7 @@ class ChannelBufferTest {
 
         b.applyUpdate(Inbound.UpdateMessage(mode = "append", text = "+A", customId = "s1"))
         assertEquals("base+A", b.snapshot().single().text)
+        assertFalse(b.snapshot().single().streamComplete, "a growing message is mid-stream")
 
         b.applyUpdate(Inbound.UpdateMessage(mode = "prepend", text = "P-", customId = "s1"))
         assertEquals("P-base+A", b.snapshot().single().text)
@@ -125,6 +126,28 @@ class ChannelBufferTest {
 
         b.applyUpdate(Inbound.UpdateMessage(mode = "complete", text = "!", customId = "s1"))
         assertEquals("new!", b.snapshot().single().text)
+        assertTrue(b.snapshot().single().streamComplete)
+    }
+
+    /**
+     * Every client that reconciles its own echo puts a customId on the wire, so
+     * reading one as "a bot is still typing" marked ordinary messages — from
+     * this very app — as incomplete, and the renderer trailed each one with an
+     * ellipsis that never went away.
+     */
+    @Test
+    fun aCustomIdAloneDoesNotMeanStreaming() {
+        val b = ChannelBuffer()
+        b.applyChat(chat("hello", customId = "abc123"), myUserid = 1L)
+        assertTrue(b.snapshot().single().streamComplete)
+    }
+
+    /** A bot editing a finished message must not strand it mid-stream. */
+    @Test
+    fun aLoneOverwriteLeavesTheMessageComplete() {
+        val b = ChannelBuffer()
+        b.add(ChatMessage(0, MessageKind.Chat, text = "base", customId = "s1"))
+        b.applyUpdate(Inbound.UpdateMessage(mode = "overwrite", text = "edited", customId = "s1"))
         assertTrue(b.snapshot().single().streamComplete)
     }
 
