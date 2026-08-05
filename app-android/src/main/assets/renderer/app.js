@@ -206,7 +206,18 @@
     else if (m.delivery === 'Unconfirmed') flag = '<span class="flag unconfirmed">unconfirmed</span>';
     if (m.streamComplete === false) flag += '<span class="flag streaming">\u2026</span>';
 
-    row.innerHTML = head + '<span class="text">' + renderBody(m.text) + '</span>' + flag;
+    /*
+     * Join and leave carry the nick structurally and no text at all, so the
+     * line is composed here — as client.js does ("nick joined"/"nick left").
+     * Escaped rather than run through renderBody: a nick is not markdown, and
+     * one containing * or _ must not come out italicised.
+     */
+    var body;
+    if (m.kind === 'Join') body = esc(m.nick) + ' joined';
+    else if (m.kind === 'Leave') body = esc(m.nick) + ' left';
+    else body = renderBody(m.text);
+
+    row.innerHTML = head + '<span class="text">' + body + '</span>' + flag;
   }
 
   // Full-snapshot diff. The buffer is bounded (a few hundred), so this stays
