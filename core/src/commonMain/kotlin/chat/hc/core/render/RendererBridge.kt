@@ -21,6 +21,8 @@ internal data class WireMessage(
     val text: String,
     val trip: String? = null,
     val color: String? = null,
+    /** Server-assigned nick decoration; an arbitrary string, not an enum. */
+    val flair: String? = null,
     /** Drives the .admin/.mod scheme classes. */
     val level: Int = 0,
     val delivery: String,
@@ -43,6 +45,7 @@ object RendererBridge {
                 text = it.text,
                 trip = it.trip?.takeIf(String::isNotBlank),
                 color = it.color,
+                flair = it.flair?.takeIf(String::isNotBlank),
                 level = it.level,
                 delivery = it.delivery.name,
                 isMine = it.isMine,
@@ -72,5 +75,38 @@ object RendererBridge {
         val s = json.encodeToString(String.serializer(), scheme)
         val h = json.encodeToString(String.serializer(), highlight)
         return "HC.setTheme($s, $h);"
+    }
+
+    /**
+     * Switches how a message's nick and trip sit relative to its text.
+     *
+     * A class on the document rather than three different DOM shapes: the
+     * scheme stylesheets target `.message` / `.nick` / `.trip`, so the markup
+     * has to stay constant across all three layouts or 44 stylesheets would
+     * need to know about them.
+     */
+    fun layoutCall(layout: NickLayout): String {
+        val l = json.encodeToString(String.serializer(), layout.cssClass)
+        return "HC.setLayout($l);"
+    }
+}
+
+/** How a message's nick and trip sit relative to its text. */
+enum class NickLayout(val cssClass: String, val label: String) {
+    /** Nick, trip and text on one run, as the transcript has always been. */
+    Inline("layout-inline", "Inline"),
+
+    /** Nicks in a fixed gutter, text in a column beside it — closest to the site. */
+    Gutter("layout-gutter", "Name column"),
+
+    /** `trip nick` on its own line, text beneath it. */
+    Stacked("layout-stacked", "Stacked"),
+    ;
+
+    companion object {
+        val DEFAULT = Inline
+
+        fun from(name: String?): NickLayout =
+            entries.firstOrNull { it.name == name } ?: DEFAULT
     }
 }

@@ -33,6 +33,13 @@ data class ChatMessage(
     val trip: String? = null,
     val text: String = "",
     val color: String? = null,
+    /**
+     * The server's own nick decoration — 🌟 admin, ⭐ mod, 👑 owner, 💫 channel
+     * mod, 🤖 bot by default, but `forceflair` can set any string of up to two
+     * characters. Rendered as text for exactly that reason: it is not an enum
+     * and cannot be mapped to a fixed icon set.
+     */
+    val flair: String? = null,
     val level: Int = 0,
     val at: Long = 0L,
     /** Correlates our optimistic echo, and targets `updateMessage` edits. */
@@ -112,6 +119,7 @@ class ChannelBuffer(private val capacity: Int = 500) {
                     delivery = Delivery.Sent,
                     trip = frame.trip,
                     color = frame.color,
+                    flair = frame.flair,
                     level = frame.level,
                 )
                 messages[idx] = reconciled
@@ -127,6 +135,7 @@ class ChannelBuffer(private val capacity: Int = 500) {
                 trip = frame.trip,
                 text = frame.text,
                 color = frame.color,
+                flair = frame.flair,
                 level = frame.level,
                 at = frame.time ?: 0L,
                 customId = frame.customId,

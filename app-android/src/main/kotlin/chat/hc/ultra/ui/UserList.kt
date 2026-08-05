@@ -143,6 +143,12 @@ private fun UserRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        // The server's own decoration, shown verbatim — `forceflair` allows any
+        // string of up to two characters, so this is not a fixed icon set. It is
+        // also the fastest read on who can actually moderate.
+        user.flair?.takeIf { it.isNotBlank() }?.let {
+            Text(text = it, style = MaterialTheme.typography.labelMedium)
+        }
         badgeFor(user)?.let {
             Text(
                 text = it,

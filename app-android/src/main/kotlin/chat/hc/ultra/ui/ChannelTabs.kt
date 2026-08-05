@@ -18,6 +18,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import chat.hc.core.session.ChannelUi
@@ -37,33 +39,57 @@ fun ChannelTabs(
     onSelect: (String) -> Unit,
     onClose: (String) -> Unit,
     onAdd: () -> Unit,
+    /** Tapping a tab's online count opens the roster for that channel. */
+    onShowRoster: (String) -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    LazyRow(
+    Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        items(channels, key = { it.channel }) { ui ->
-            ChannelTab(
-                ui = ui,
-                selected = ui.channel == active,
-                onSelect = { onSelect(ui.channel) },
-                onClose = { onClose(ui.channel) },
-            )
+        LazyRow(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            items(channels, key = { it.channel }) { ui ->
+                ChannelTab(
+                    ui = ui,
+                    selected = ui.channel == active,
+                    onSelect = { onSelect(ui.channel) },
+                    onClose = { onClose(ui.channel) },
+                    onShowRoster = { onShowRoster(ui.channel) },
+                )
+            }
+            item {
+                Text(
+                    text = "+",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable(onClick = onAdd)
+                        .padding(horizontal = 14.dp, vertical = 5.dp),
+                )
+            }
         }
-        item {
-            Text(
-                text = "+",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .clickable(onClick = onAdd)
-                    .padding(horizontal = 14.dp, vertical = 5.dp),
-            )
-        }
+
+        // Settings lives on this strip rather than a row of its own: scheme and
+        // server are not per-session choices, and vertical space is the scarce
+        // thing on a phone.
+        Text(
+            text = "⚙",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            modifier = Modifier
+                .padding(start = 6.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onOpenSettings)
+                .semantics { contentDescription = "Settings" }
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
     }
 }
 
@@ -73,6 +99,7 @@ private fun ChannelTab(
     selected: Boolean,
     onSelect: () -> Unit,
     onClose: () -> Unit,
+    onShowRoster: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
@@ -104,6 +131,24 @@ private fun ChannelTab(
                     .clip(CircleShape)
                     .background(colors.primary)
                     .padding(horizontal = 5.dp, vertical = 1.dp),
+            )
+        }
+
+        // How many people are here, per tab — and the way into the roster, now
+        // that there is no status row to hang it off. Zero means the handshake
+        // has not landed yet, so there is nothing to open.
+        if (ui.roster.isNotEmpty()) {
+            Text(
+                text = ui.roster.size.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = (if (selected) colors.onPrimary else colors.onSurface).copy(alpha = 0.75f),
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable {
+                        onSelect()
+                        onShowRoster()
+                    }
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
             )
         }
 

@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Compose supplies the real theming; this only needs to be action-bar-free. -->
-    <style name="Theme.HcUltra" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Compose supplies the real theming; this only needs to be action-bar-free.
+
+         The two backgrounds are static and cannot follow the chosen hack.chat
+         scheme — MainActivity repaints the window from it before the first
+         Compose frame. What they can do is stop the launch icon reading as a
+         dark box on a light splash: matching the splash to the icon's own
+         background plate makes that edge disappear. -->
+    <style name="Theme.HcUltra" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/ic_launcher_background</item>
+        <item name="android:windowSplashScreenBackground">@color/ic_launcher_background</item>
+    </style>
 </resources>

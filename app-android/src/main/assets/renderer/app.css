@@ -27,6 +27,46 @@ html, body {
 .trip { margin-right: 3px; }
 .kind-emote .text { font-style: italic; }
 
+/* --- nick/trip layouts ---------------------------------------------------
+ *
+ * Three arrangements of the same markup, selected by a class on <body>. The
+ * DOM never changes shape between them: the scheme stylesheets target .nick
+ * and .trip directly, so a layout that moved those around would have to be
+ * taught to all 44.
+ *
+ * `.head` wraps whatever precedes the text — nick, or the wtag+nick pair a
+ * whisper uses, or nothing at all for info/join/leave.
+ */
+
+/* Inline: nick, trip and text on one run. The original, and the default. */
+.layout-inline .head:empty { display: none; }
+
+/* Gutter: nicks aligned in a fixed column, text beside them — closest to the
+   site. The gutter is in `em` so it tracks the font rather than the screen. */
+.layout-gutter .message {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.layout-gutter .head {
+  flex: 0 0 7.5em;
+  text-align: right;
+  /* A long nick wraps inside the gutter rather than widening it, which would
+     misalign every other line. */
+  overflow-wrap: anywhere;
+}
+.layout-gutter .text { flex: 1 1 auto; min-width: 0; }
+/* The flag sits after the text, not on its own row. */
+.layout-gutter .flag { flex: 0 0 auto; }
+/* Whispers put their tag above the nick; side by side they blow the gutter. */
+.layout-gutter .wtag { display: block; }
+
+/* Stacked: `trip nick` on its own line, text beneath. */
+.layout-stacked .head { display: block; }
+.layout-stacked .head:empty { display: none; }
+.layout-stacked .text { display: block; }
+.layout-stacked .message { margin-bottom: 9px; }
+
 /* Whispers are private; mark them clearly in both directions. Schemes do not
    style whispers (the site renders them as plain info text), so this uses
    currentColor and stays readable on all 44. */

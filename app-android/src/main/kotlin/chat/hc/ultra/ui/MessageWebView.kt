@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import chat.hc.core.render.NickLayout
 import chat.hc.core.render.RendererBridge
 import chat.hc.core.store.ChatMessage
 
@@ -48,6 +49,7 @@ private class RendererState {
     var pending: String? = null
     /** Replayed on reload so a WebView recreation keeps the chosen theme. */
     var appliedTheme: String? = null
+    var appliedLayout: String? = null
 }
 
 
@@ -57,6 +59,7 @@ fun MessageWebView(
     messages: List<ChatMessage>,
     scheme: String,
     highlight: String,
+    layout: NickLayout,
     modifier: Modifier = Modifier,
     callbacks: RendererCallbacks = RendererCallbacks(),
 ) {
@@ -86,6 +89,7 @@ fun MessageWebView(
                         post {
                             state.ready = true
                             state.appliedTheme?.let { evaluateJavascript(it, null) }
+                            state.appliedLayout?.let { evaluateJavascript(it, null) }
                             state.pending?.let { evaluateJavascript(it, null) }
                             state.pending = null
                         }
@@ -100,6 +104,11 @@ fun MessageWebView(
             if (state.appliedTheme != themeCall) {
                 state.appliedTheme = themeCall
                 if (state.ready) webView.evaluateJavascript(themeCall, null)
+            }
+            val layoutCall = RendererBridge.layoutCall(layout)
+            if (state.appliedLayout != layoutCall) {
+                state.appliedLayout = layoutCall
+                if (state.ready) webView.evaluateJavascript(layoutCall, null)
             }
             val call = RendererBridge.renderCall(messages)
             if (state.ready) webView.evaluateJavascript(call, null) else state.pending = call

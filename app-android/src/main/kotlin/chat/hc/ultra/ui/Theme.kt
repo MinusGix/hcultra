@@ -5,6 +5,8 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
 import chat.hc.core.session.Servers
@@ -23,6 +25,18 @@ object SchemeAssets {
 private fun String.toColor(fallback: Color): Color = runCatching {
     Color(android.graphics.Color.parseColor(this))
 }.getOrDefault(fallback)
+
+/**
+ * The scheme's background as a plain ARGB int.
+ *
+ * Used to paint the window *before* Compose runs. Without it the activity shows
+ * one frame of whatever `themes.xml` hardcoded — which cannot know the chosen
+ * scheme — and a light scheme visibly flashes dark on launch.
+ */
+fun Scheme.windowBackgroundArgb(): Int = background.toColor(Color(0xFF151515)).toArgb()
+
+/** The named scheme, falling back to the first if the stored name is unknown. */
+fun List<Scheme>.resolve(name: String): Scheme = firstOrNull { it.name == name } ?: first()
 
 /**
  * Builds a Material colour scheme from a hack.chat scheme so the native chrome
@@ -104,8 +118,14 @@ class ThemePrefs(context: Context) {
             if (value == null) remove(KEY_HIGHLIGHT) else putString(KEY_HIGHLIGHT, value)
         }.apply()
 
+    /** How a message's nick and trip sit relative to its text. */
+    var nickLayout: NickLayout
+        get() = NickLayout.from(prefs.getString(KEY_LAYOUT, null))
+        set(value) = prefs.edit().putString(KEY_LAYOUT, value.name).apply()
+
     private companion object {
         const val KEY_SCHEME = "scheme"
         const val KEY_HIGHLIGHT = "highlight"
+        const val KEY_LAYOUT = "nick_layout"
     }
 }

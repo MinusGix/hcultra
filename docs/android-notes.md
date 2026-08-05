@@ -89,6 +89,30 @@ Two gotchas: `avdmanager` needs `ANDROID_SDK_ROOT` set explicitly, and the
 *newer* cmdline-tools failed to resolve system images where the SDK-bundled one
 succeeded — so create AVDs with `/opt/android-sdk/cmdline-tools/latest/bin/avdmanager`.
 
+### Watching it, on Wayland
+
+Dropping `-no-window` to actually watch the app needs `QT_QPA_PLATFORM=xcb`:
+
+```sh
+QT_QPA_PLATFORM=xcb /opt/android-sdk/emulator/emulator -avd hcultra -no-audio \
+    -no-boot-anim -gpu swiftshader_indirect -no-snapshot-save &
+```
+
+The emulator's bundled Qt ships only `vnc`, `linuxfb`, `offscreen`, `minimal`
+and `xcb` plugins — no `wayland` — so under a Wayland session it aborts with
+*"no Qt platform plugin could be initialized"*. Forcing xcb routes it through
+XWayland. Headless runs never initialise Qt at all, which is why this only
+appears the first time someone wants to look at the screen.
+
+`wait-for-device` returns while the guest is still booting; wait for the
+property before installing:
+
+```sh
+adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
+adb install -r app-android/build/outputs/apk/debug/app-android-debug.apk
+adb shell monkey -p chat.hc.ultra -c android.intent.category.LAUNCHER 1
+```
+
 The service is not exported, so `adb shell am start-foreground-service` is
 rejected ("Requires permission not exported"). Drive the real UI instead:
 `adb shell input tap/text` plus `adb shell uiautomator dump` to read state.

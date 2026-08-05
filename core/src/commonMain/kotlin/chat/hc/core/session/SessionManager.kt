@@ -192,7 +192,10 @@ class SessionManager(
     suspend fun moderate(channel: String, action: ModAction, target: chat.hc.core.protocol.User): Boolean {
         val session = sessions[channel] ?: return false
         val me = me(channel) ?: return false
-        if (!action.permitted(me.level)) return false
+        // The full check, not just the level gate: a target at or above our own
+        // level is refused server-side too, and a stale button must not be able
+        // to spend rate budget discovering that.
+        if (action !in Moderation.available(me, target)) return false
         val frame = Moderation.frameFor(action, channel, target) ?: return false
         return runCatching { session.send(frame) }.isSuccess
     }
@@ -265,8 +268,31 @@ class SessionManager(
 
             // A cold resume is peer-visible; a silent one is not. Worth noting in
             // the transcript so a reader can tell why join/leave noise appeared.
-            is SessionEvent.Resumed -> if (!event.silent && event.restored) {
-                buffer.add(ChatMessage(0, MessageKind.Info, text = "Reconnected.", at = now()))
+            is SessionEvent.Resumed -> {
+                if (!event.silent && event.restored) {
+                    buffer.add(ChatMessage(0, MessageKind.Info, text = "Reconnected.", at = now()))
+                }
+                // Mirrors client.js#onlineSet: the site answers "who is here"
+                // in the transcript, not only in a sidebar. Emitted here rather
+                // than on the onlineSet frame itself so it lands *below* the
+                // reconnect notice — the roster is already current by now,
+                // since the handshake has completed.
+                //
+                // Skipped on a silent handoff: nothing observable changed, and
+                // repeating the roster would be pure noise.
+                if (!event.silent) {
+                    val nicks = session.roster.map { it.nick }
+                    if (nicks.isNotEmpty()) {
+                        buffer.add(
+                            ChatMessage(
+                                0,
+                                MessageKind.Info,
+                                text = "Users online: " + nicks.joinToString(", "),
+                                at = now(),
+                            )
+                        )
+                    }
+                }
             }
 
             // One notice per outage, not one per retry: a long outage produces a

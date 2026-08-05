@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
 import chat.hc.core.session.Servers
@@ -61,6 +62,8 @@ fun ThemeSheet(
     autoHighlight: String,
     onSchemeSelected: (String) -> Unit,
     onHighlightSelected: (String?) -> Unit,
+    nickLayout: NickLayout,
+    onNickLayoutSelected: (NickLayout) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -71,6 +74,34 @@ fun ThemeSheet(
                 .verticalScroll(rememberScrollState()),
         ) {
             ServerSetting(currentServer, onServerChanged)
+
+            Text(
+                "Message layout",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(top = 16.dp),
+            )
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                NickLayout.entries.forEach { option ->
+                    val selected = option == nickLayout
+                    Text(
+                        text = option.label,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (selected) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.surfaceVariant
+                            )
+                            .clickable { onNickLayoutSelected(option) }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                    )
+                }
+            }
 
             Text(
                 "Syntax highlighting",

@@ -55,6 +55,25 @@ class ModerationTest {
         assertTrue(actions.containsAll(ModAction.entries.toList()))
     }
 
+    /**
+     * Upstream refuses a target at or above your own level — `kick.js`
+     * ("Cannot kick other users with the same level, how rude") and `dumb.js`
+     * both test `target.level >= socket.level`. Offering the action anyway is
+     * an affordance the server always rejects.
+     */
+    @Test
+    fun noActionsAgainstSomeoneSenior() {
+        val me = user(1, Levels.MODERATOR, isme = true)
+        assertTrue(Moderation.available(me, user(2, Levels.ADMIN)).isEmpty())
+    }
+
+    /** The comparison is `>=`: peers are off limits, not only seniors. */
+    @Test
+    fun noActionsAgainstAPeer() {
+        val me = user(1, Levels.MODERATOR, isme = true)
+        assertTrue(Moderation.available(me, user(2, Levels.MODERATOR)).isEmpty())
+    }
+
     /** Kicking yourself is legal server-side and never intended. */
     @Test
     fun noActionsAgainstYourself() {

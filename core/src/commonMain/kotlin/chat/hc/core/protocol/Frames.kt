@@ -19,6 +19,7 @@ data class User(
     val hash: String? = null,
     val level: Int = 0,
     val color: String? = null,
+    @Serializable(with = FlairSerializer::class)
     val flair: String? = null,
     val uType: String? = null,
     val isBot: Boolean = false,
@@ -55,6 +56,7 @@ sealed interface Inbound {
         val hash: String? = null,
         val level: Int = 0,
         val color: String? = null,
+        @Serializable(with = FlairSerializer::class)
         val flair: String? = null,
         val uType: String? = null,
         val isBot: Boolean = false,
@@ -84,6 +86,7 @@ sealed interface Inbound {
         val hash: String? = null,
         val level: Int = 0,
         val color: String? = null,
+        @Serializable(with = FlairSerializer::class)
         val flair: String? = null,
         val uType: String? = null,
         val isBot: Boolean = false,
@@ -100,6 +103,7 @@ sealed interface Inbound {
         val level: Int = 0,
         val trip: String? = null,
         val color: String? = null,
+        @Serializable(with = FlairSerializer::class)
         val flair: String? = null,
         val uType: String? = null,
         val customId: String? = null,

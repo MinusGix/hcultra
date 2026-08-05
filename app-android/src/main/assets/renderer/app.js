@@ -133,7 +133,8 @@
   // Signature of everything that affects rendering, so an unchanged message is
   // never re-rendered (re-running KaTeX on every frame is expensive).
   function signature(m) {
-    return [m.text, m.delivery, m.nick, m.streamComplete, m.kind, m.color, m.level].join(' ');
+    return [m.text, m.delivery, m.nick, m.streamComplete, m.kind, m.color, m.level,
+            m.trip, m.flair].join(' ');
   }
 
   function build(m) {
@@ -158,25 +159,44 @@
     cls.push('kind-' + String(m.kind).toLowerCase());
     row.className = cls.join(' ');
 
+    /*
+     * Flair and trip share the .trip span, in the site's own order — see
+     * client.js: flair alone, trip alone, or "flair trip". Flair is whatever
+     * the server says (forceflair allows any string up to 2 chars), so it is
+     * escaped and rendered as text rather than mapped to an icon.
+     */
+    function tripSpan(m) {
+      var parts = [];
+      if (m.flair) parts.push(esc(m.flair));
+      if (m.trip) parts.push(esc(m.trip));
+      if (!parts.length) return '';
+      return '<span class="trip">' + parts.join(' ') + '</span>';
+    }
+
     var head = '';
     if (m.kind === 'Chat') {
-      var trip = m.trip ? '<span class="trip">' + esc(m.trip) + '</span>' : '';
       // An explicit per-user colour from the server overrides the scheme's
       // .nick colour, matching how the site treats /changecolor.
       var style = m.color ? ' style="color:#' + esc(m.color).replace(/[^0-9a-fA-F]/g, '') + '"' : '';
-      head = '<span class="nick"' + style + '>' + trip + esc(m.nick) + '</span> ';
+      head = '<span class="nick"' + style + '>' + tripSpan(m) + esc(m.nick) + '</span>';
     } else if (m.kind === 'Emote') {
-      head = '<span class="nick">*</span> ';
+      head = '<span class="nick">*</span>';
     } else if (m.kind === 'Whisper') {
       // Incoming: who it came from.
       head = '<span class="wtag">whisper from</span> <span class="nick">' +
-        esc(m.nick) + '</span> ';
+        esc(m.nick) + '</span>';
     } else if (m.kind === 'WhisperSent') {
       // Outgoing: the server echoes our own whisper back to us with the same
       // shape, so it needs distinguishing or it reads as if they sent it.
       head = '<span class="wtag">whisper to</span> <span class="nick">' +
-        esc(m.nick) + '</span> ';
+        esc(m.nick) + '</span>';
     }
+
+    // Always wrapped, even when empty, so every layout has one element to size
+    // and align against. Without it the gutter layout would have to cope with
+    // .nick sometimes being absent (info, join, leave) and sometimes being
+    // preceded by a .wtag (whispers).
+    head = '<span class="head">' + head + '</span> ';
 
     var flag = '';
     if (m.delivery === 'Sending') flag = '<span class="flag pending">sending\u2026</span>';
@@ -255,6 +275,12 @@
       nodes = Object.create(null);
     },
     setKatex: setKatex,
+    /** One class on <body>; the three layouts are pure CSS over stable markup. */
+    setLayout: function (cssClass) {
+      var wasPinned = pinned || atBottom();
+      document.body.className = String(cssClass || 'layout-inline');
+      if (wasPinned) scrollToBottom();
+    },
     setTheme: function (scheme, hljsTheme) {
       if (scheme) setHref('scheme', 'schemes/' + scheme + '.css');
       if (hljsTheme) setHref('hljs-theme', 'vendor/hljs/styles/' + hljsTheme + '.min.css');

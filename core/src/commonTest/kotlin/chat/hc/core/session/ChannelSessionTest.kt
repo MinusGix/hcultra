@@ -200,6 +200,70 @@ class ChannelSessionTest {
         s.stop()
     }
 
+    /**
+     * Chat can land between the session reply and the onlineSet. It must not be
+     * dropped, and it must not jump ahead of the resume notice either — that is
+     * what made a peer's message appear above "Reconnected." on-device.
+     */
+    @Test
+    fun midHandshakeChatIsOrderedAfterTheResumeNotice() = runTest {
+        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", "tok-existing") }
+        val transport = FakeTransport()
+        transport.onSend = { raw ->
+            if (cmdOf(raw) == "session") {
+                serverSends("""{"cmd":"session","restored":true,"token":"tok-renewed","channels":["testroom"]}""")
+                // Arrives *before* the onlineSet completes the handshake.
+                serverSends("""{"cmd":"chat","nick":"peer","userid":7,"text":"hi","channel":"testroom"}""")
+                serverSends("""{"cmd":"onlineSet","users":[{"isme":true,"nick":"tester","userid":99}],"channel":"testroom"}""")
+            }
+        }
+        val s = session(transport, store)
+        val seen = mutableListOf<SessionEvent>()
+        val collector = this.launchCollect(s, seen)
+        s.start(this)
+        advanceUntilIdle()
+
+        val resumed = seen.indexOfFirst { it is SessionEvent.Resumed }
+        val message = seen.indexOfFirst { it is SessionEvent.Message }
+        assertTrue(resumed >= 0, "no Resumed event")
+        assertTrue(message >= 0, "the mid-handshake chat was dropped")
+        assertTrue(resumed < message, "chat (at $message) must follow Resumed (at $resumed)")
+        collector.cancel()
+        s.stop()
+    }
+
+    /**
+     * Deferring those frames must not become a way to lose them: a handshake
+     * that fails has no resume notice to order against, so whatever arrived is
+     * delivered rather than discarded.
+     */
+    @Test
+    fun handshakeFailureStillDeliversWhatArrived() = runTest {
+        val transport = FakeTransport()
+        transport.onSend = { raw ->
+            when (cmdOf(raw)) {
+                "session" -> serverSends("""{"cmd":"session","restored":false,"token":"","channels":[]}""")
+                "join" -> {
+                    serverSends("""{"cmd":"info","text":"that nick is reserved","id":1304,"channel":"testroom"}""")
+                    serverSends("""{"cmd":"warn","text":"Nickname taken","id":32,"channel":false}""")
+                }
+            }
+        }
+        val s = session(transport)
+        val seen = mutableListOf<SessionEvent>()
+        val collector = this.launchCollect(s, seen)
+        s.start(this)
+        advanceUntilIdle()
+
+        assertTrue(s.state.value is SessionState.Failed)
+        assertTrue(
+            seen.any { it is SessionEvent.Notice && it.frame.text == "that nick is reserved" },
+            "the info explaining the refusal was swallowed",
+        )
+        collector.cancel()
+        s.stop()
+    }
+
     /** Unknown frames reach the UI layer rather than being swallowed. */
     @Test
     fun surfacesUnknownFrames() = runTest {

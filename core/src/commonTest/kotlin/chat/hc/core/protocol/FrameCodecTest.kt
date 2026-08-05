@@ -3,6 +3,7 @@ package chat.hc.core.protocol
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -24,6 +25,31 @@ class FrameCodecTest {
         assertEquals(6414342456L, f.userid)
         assertEquals("before the drop", f.text)
         assertEquals(1785832964599L, f.time)
+        // `flair: false` is how the server says "none" — see getAppearance() in
+        // _UAC.js. Lenient parsing would otherwise decode the boolean as the
+        // string "false" and render it as a badge beside every ordinary nick.
+        assertNull(f.flair)
+    }
+
+    /** A real flair is a short string, and must survive untouched. */
+    @Test
+    fun decodesFlairString() {
+        val f = FrameCodec.decode(
+            """{"cmd":"chat","nick":"amod","userid":7,"text":"hi","level":999999,"flair":"⭐","channel":"c"}"""
+        )
+        assertIs<Inbound.Chat>(f)
+        assertEquals("⭐", f.flair)
+    }
+
+    /** The same normalisation has to apply on the roster, not just on chat. */
+    @Test
+    fun decodesFlairOnRoster() {
+        val f = FrameCodec.decode(
+            """{"cmd":"onlineSet","users":[{"nick":"plain","userid":1,"flair":false},{"nick":"boss","userid":2,"flair":"👑"}],"channel":"c"}"""
+        )
+        assertIs<Inbound.OnlineSet>(f)
+        assertNull(f.users[0].flair)
+        assertEquals("👑", f.users[1].flair)
     }
 
     @Test

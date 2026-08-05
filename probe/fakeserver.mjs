@@ -33,6 +33,21 @@ const mode = arg('mode', 'silent');
 const level = Number(arg('level', 100));
 const dropAfter = Number(arg('drop-after', 15)) * 1000;
 
+/*
+ * The flair table from hc/commands/utility/_UAC.js#levelAppearance. An
+ * undecorated level gets `flair: false` — not null, not absent — which is
+ * exactly the shape a client is most likely to mishandle, so it is reproduced
+ * verbatim rather than simplified.
+ */
+const flairFor = (lvl) => {
+  if (lvl >= 9999999) return String.fromCodePoint(127775);  // admin      🌟
+  if (lvl >= 999999) return String.fromCodePoint(11088);    // moderator  ⭐
+  if (lvl >= 99999) return String.fromCodePoint(128081);    // owner      👑
+  if (lvl >= 9999) return String.fromCodePoint(128171);     // ch-mod     💫
+  if (lvl === 99) return String.fromCodePoint(129302);      // bot        🤖
+  return false;
+};
+
 const wss = new WebSocketServer({ port });
 let nextUserid = 1000;
 
@@ -60,11 +75,13 @@ wss.on('connection', (ws) => {
       state.channel = p.channel;
       send({
         cmd: 'onlineSet',
-        nicks: [p.nick, 'victim'],
+        nicks: [p.nick, 'victim', 'starlord'],
         users: [
-          { isme: true, nick: p.nick, userid: state.userid, trip: '', uType: 'user', level, hash: 'selfhash', color: '5e89ed', channel: p.channel },
+          { isme: true, nick: p.nick, userid: state.userid, trip: '', uType: 'user', level, hash: 'selfhash', color: '5e89ed', flair: flairFor(level), channel: p.channel },
           // A target to moderate; the real server would have sent one too.
-          { isme: false, nick: 'victim', userid: 4242, trip: '', uType: 'user', level: 100, hash: 'victimhash', color: 'ed5e5e', channel: p.channel },
+          { isme: false, nick: 'victim', userid: 4242, trip: '', uType: 'user', level: 100, hash: 'victimhash', color: 'ed5e5e', flair: false, channel: p.channel },
+          // An admin, so a decorated flair is on screen even at --level 100.
+          { isme: false, nick: 'starlord', userid: 4243, trip: 'aBc12', uType: 'user', level: 9999999, hash: 'adminhash', color: 'd73737', flair: flairFor(9999999), channel: p.channel },
         ],
         channel: p.channel,
       });
@@ -72,6 +89,23 @@ wss.on('connection', (ws) => {
       // The real server sends the token *after* onlineSet and the MOTD; keep
       // that ordering so clients that get it wrong fail here too.
       send({ cmd: 'session', restored: false, token: 'fake-token', channels: [p.channel] });
+
+      // A decorated peer talking, so flair rendering is observable without a
+      // second client and without holding real moderator rights on live.
+      setTimeout(() => {
+        send({
+          cmd: 'chat',
+          nick: 'starlord',
+          userid: 4243,
+          text: 'flair should render before the trip',
+          channel: p.channel,
+          level: 9999999,
+          trip: 'aBc12',
+          color: 'd73737',
+          flair: flairFor(9999999),
+          id: 1,
+        });
+      }, 400);
 
       if (mode === 'drop') {
         setTimeout(() => { log('closing socket'); ws.close(); }, dropAfter);
@@ -96,7 +130,8 @@ wss.on('connection', (ws) => {
         userid: state.userid,
         text: p.text,
         channel: state.channel,
-        level: 100,
+        level,
+        flair: flairFor(level),
         customId: p.customId,
         id: Math.floor(Math.random() * 999999),
       });

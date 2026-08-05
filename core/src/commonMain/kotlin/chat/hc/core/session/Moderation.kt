@@ -45,10 +45,18 @@ object Moderation {
      * Excludes actions aimed at yourself — kicking yourself is legal on the
      * server and never intended — and hides [ModAction.Unmuzzle] behind a
      * known hash, since `speak` keys on hash rather than userid.
+     *
+     * Also excludes targets at or above our own level. Upstream refuses those
+     * explicitly — `kick.js` ("Cannot kick other users with the same level,
+     * how rude") and `dumb.js` both test `target.level >= socket.level` — so
+     * offering the action would be an affordance the server always rejects.
+     * Note the comparison is `>=`: a moderator cannot act on another moderator,
+     * not merely on someone senior.
      */
     fun available(me: User?, target: User): List<ModAction> {
         val level = me?.level ?: return emptyList()
         if (me.userid == target.userid) return emptyList()
+        if (target.level >= level) return emptyList()
         return ModAction.entries.filter { action ->
             action.permitted(level) &&
                 (action != ModAction.Unmuzzle || !target.hash.isNullOrBlank())

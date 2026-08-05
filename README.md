@@ -80,3 +80,5 @@ Verified on an emulator against live hack.chat.
 
 Next: a send-on-reconnect outbox (the composer is currently disabled while
 reconnecting), and iOS, which needs a Mac in the loop.
+`docs/ui-backlog.md` collects the smaller UI bugs and presentation work found in
+emulator testing.

@@ -142,6 +142,7 @@ class ChannelSession(
         current = fresh.connection
         old.close()
         emit(SessionEvent.Resumed(channel, fresh.restored, silent = true))
+        flushDeferred(fresh)
         pump(fresh)
     }
 
@@ -156,6 +157,7 @@ class ChannelSession(
                 _state.value = SessionState.Live(live.restored)
                 emit(SessionEvent.Resumed(channel, live.restored, silent = expectSilentResume))
                 expectSilentResume = false
+                flushDeferred(live)
                 pump(live)
                 emit(SessionEvent.Disconnected(channel, null))
             } catch (c: CancellationException) {
@@ -182,53 +184,81 @@ class ChannelSession(
         val connection: Connection,
         val frames: ReceiveChannel<Inbound>,
         val restored: Boolean,
+        /**
+         * Frames that arrived mid-handshake, held back rather than dispatched.
+         *
+         * They must not be dropped — the MOTD, peer joins and even chat land in
+         * this window — but dispatching them as they arrive puts them *above*
+         * the resume notice, since that is only emitted once the handshake
+         * returns. Holding them lets the notice keep its place at the seam.
+         */
+        val deferred: List<Inbound>,
     )
 
     private suspend fun connectAndHandshake(scope: CoroutineScope, token: String?): LiveConnection {
-        _state.value = SessionState.Handshaking
-        val conn = transport.open(url)
-        val frames = conn.incoming.map(FrameCodec::decode).produceIn(scope)
-
-        // Frame 1, always: declares protocol v2 whether or not we hold a token.
-        governor.spend(RateGovernor.Cost.SESSION)
-        conn.send(FrameCodec.encode(Outbound.Session(token)))
-
-        val session = awaitFrame(frames, "session reply") { it is Inbound.Session } as Inbound.Session
-        if (session.token.isNotEmpty()) tokenStore.save(url, channel, session.token)
-
-        if (session.restored) {
-            // restoreJoin replies with a fresh onlineSet for the restored channel.
-            runCatching {
-                awaitFrame(frames, "restored onlineSet") { it is Inbound.OnlineSet }
-            }.onSuccess { dispatch(it) }
-            return LiveConnection(conn, frames, restored = true)
-        }
-
-        governor.spend(RateGovernor.Cost.JOIN)
-        conn.send(FrameCodec.encode(Outbound.Join(channel, credentials.nick, credentials.pass)))
-
-        val joined = awaitFrame(frames, "onlineSet") {
-            it is Inbound.OnlineSet || (it is Inbound.Warn && it.isJoinFailure())
-        }
-        if (joined is Inbound.Warn) {
-            throw FatalSessionException("join refused (id ${joined.id}): ${joined.text}")
-        }
-        dispatch(joined)
-
-        // The token trails onlineSet and the MOTD. Missing it is not fatal —
-        // we simply lose silent-resume until the next token arrives.
+        val deferred = mutableListOf<Inbound>()
         try {
-            withTimeout(tokenGraceMillis) {
-                val tok = awaitFrame(frames, "post-join token") {
-                    it is Inbound.Session && it.token.isNotEmpty()
-                } as Inbound.Session
-                tokenStore.save(url, channel, tok.token)
-            }
-        } catch (_: TimeoutCancellationException) {
-            // Leave the old token in place; a later frame may still carry one.
-        }
+            _state.value = SessionState.Handshaking
+            val conn = transport.open(url)
+            val frames = conn.incoming.map(FrameCodec::decode).produceIn(scope)
 
-        return LiveConnection(conn, frames, restored = false)
+            // Frame 1, always: declares protocol v2 whether or not we hold a token.
+            governor.spend(RateGovernor.Cost.SESSION)
+            conn.send(FrameCodec.encode(Outbound.Session(token)))
+
+            val session = awaitFrame(frames, "session reply", deferred) {
+                it is Inbound.Session
+            } as Inbound.Session
+            if (session.token.isNotEmpty()) tokenStore.save(url, channel, session.token)
+
+            if (session.restored) {
+                // restoreJoin replies with a fresh onlineSet for the restored channel.
+                runCatching {
+                    awaitFrame(frames, "restored onlineSet", deferred) { it is Inbound.OnlineSet }
+                }.onSuccess {
+                    // Dispatched immediately, not deferred: the roster and our
+                    // own userid have to be current before any held-back chat
+                    // is replayed through it.
+                    dispatch(it)
+                }
+                return LiveConnection(conn, frames, restored = true, deferred = deferred.toList())
+            }
+
+            governor.spend(RateGovernor.Cost.JOIN)
+            conn.send(FrameCodec.encode(Outbound.Join(channel, credentials.nick, credentials.pass)))
+
+            val joined = awaitFrame(frames, "onlineSet", deferred) {
+                it is Inbound.OnlineSet || (it is Inbound.Warn && it.isJoinFailure())
+            }
+            if (joined is Inbound.Warn) {
+                throw FatalSessionException("join refused (id ${joined.id}): ${joined.text}")
+            }
+            dispatch(joined)
+
+            // The token trails onlineSet and the MOTD. Missing it is not fatal —
+            // we simply lose silent-resume until the next token arrives.
+            try {
+                withTimeout(tokenGraceMillis) {
+                    val tok = awaitFrame(frames, "post-join token", deferred) {
+                        it is Inbound.Session && it.token.isNotEmpty()
+                    } as Inbound.Session
+                    tokenStore.save(url, channel, tok.token)
+                }
+            } catch (_: TimeoutCancellationException) {
+                // Leave the old token in place; a later frame may still carry one.
+            }
+
+            return LiveConnection(conn, frames, restored = false, deferred = deferred.toList())
+        } catch (c: CancellationException) {
+            throw c
+        } catch (e: Throwable) {
+            // The handshake failed, so no resume notice will ever be emitted and
+            // there is no seam left to order against. Deliver what we collected
+            // rather than losing it — a join refusal in particular is usually
+            // preceded by the info frames explaining why.
+            deferred.forEach { dispatch(it) }
+            throw e
+        }
     }
 
     /** Reads until the connection closes. */
@@ -236,19 +266,25 @@ class ChannelSession(
         for (frame in live.frames) dispatch(frame)
     }
 
+    /** Replays the mid-handshake frames, once the resume notice is in place. */
+    private suspend fun flushDeferred(live: LiveConnection) {
+        live.deferred.forEach { dispatch(it) }
+    }
+
     /**
-     * Waits for a matching frame, dispatching everything else on the way — the
-     * MOTD, peer joins and even chat can arrive mid-handshake and must not be
-     * dropped on the floor.
+     * Waits for a matching frame, collecting everything else into [deferred] on
+     * the way — the MOTD, peer joins and even chat can arrive mid-handshake and
+     * must not be dropped on the floor.
      */
     private suspend fun awaitFrame(
         frames: ReceiveChannel<Inbound>,
         label: String,
+        deferred: MutableList<Inbound>,
         predicate: (Inbound) -> Boolean,
     ): Inbound = withTimeout(handshakeTimeoutMillis) {
         for (frame in frames) {
             if (predicate(frame)) return@withTimeout frame
-            dispatch(frame)
+            deferred += frame
         }
         throw ConnectionClosedException("$channel: closed while awaiting $label")
     }

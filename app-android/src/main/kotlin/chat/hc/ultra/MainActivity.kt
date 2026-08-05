@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -20,6 +21,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -28,6 +31,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,14 +42,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.protocol.User
 import chat.hc.core.session.ChannelUi
+import chat.hc.core.session.Credentials
+import chat.hc.ultra.data.CredentialStore
 import chat.hc.core.session.ModAction
 import chat.hc.core.session.Moderation
 import chat.hc.core.session.SessionState
@@ -55,9 +68,11 @@ import chat.hc.ultra.ui.RendererCallbacks
 import chat.hc.ultra.ui.SchemeAssets
 import chat.hc.ultra.ui.ServerPrefs
 import chat.hc.ultra.ui.ThemePrefs
+import chat.hc.ultra.ui.resolve
 import chat.hc.ultra.ui.ThemeSheet
 import chat.hc.ultra.ui.UserList
 import chat.hc.ultra.ui.toColorScheme
+import chat.hc.ultra.ui.windowBackgroundArgb
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -72,6 +87,9 @@ class MainActivity : ComponentActivity() {
     private var service: HcService? = null
     private val channels = MutableStateFlow<Map<String, ChannelUi>>(emptyMap())
     private var bound = false
+
+    private val serverPrefs by lazy { ServerPrefs(this) }
+    private val credentialStore by lazy { CredentialStore(this) }
 
     /** Mirrors the selected tab into the service so unread counts stay right. */
     private var activeChannel: String? = null
@@ -114,19 +132,32 @@ class MainActivity : ComponentActivity() {
         }
 
         val themePrefs = ThemePrefs(this)
-        val serverPrefs = ServerPrefs(this)
         val allSchemes = SchemeAssets.load(this)
+
+        // Paint the window from the chosen scheme *before* Compose draws.
+        // themes.xml is a static resource and cannot know which of the 44
+        // schemes is in force, so without this the first frame is the wrong
+        // colour and a light scheme flashes dark.
+        applyWindowBackground(allSchemes.resolve(themePrefs.scheme))
 
         setContent {
             var schemeName by remember { mutableStateOf(themePrefs.scheme) }
             var highlightOverride by remember { mutableStateOf(themePrefs.highlightOverride) }
+            var nickLayout by remember { mutableStateOf(themePrefs.nickLayout) }
             var showThemes by remember { mutableStateOf(false) }
             var pendingChannel by remember { mutableStateOf<String?>(null) }
             var serverUrl by remember { mutableStateOf(serverPrefs.url) }
 
-            val scheme = remember(schemeName) {
-                allSchemes.firstOrNull { it.name == schemeName } ?: allSchemes.first()
-            }
+            val scheme = remember(schemeName) { allSchemes.resolve(schemeName) }
+
+            // Keep the window in step with a runtime scheme change, so a later
+            // rotation or recreate never repaints from a stale colour.
+            LaunchedEffect(scheme) { applyWindowBackground(scheme) }
+
+            // Loaded off the main thread, so it arrives after the first frame —
+            // JoinFields keys its remember on the value, which picks it up.
+            var remembered by remember { mutableStateOf<Credentials?>(null) }
+            LaunchedEffect(serverUrl) { remembered = credentialStore.load(serverUrl) }
             // An explicit pick wins; otherwise follow the scheme's pairing, so
             // changing scheme moves the code colours along with it.
             val highlight = highlightOverride ?: scheme.highlight
@@ -151,6 +182,11 @@ class MainActivity : ComponentActivity() {
                                 highlightOverride = it
                                 themePrefs.highlightOverride = it
                             },
+                            nickLayout = nickLayout,
+                            onNickLayoutSelected = {
+                                nickLayout = it
+                                themePrefs.nickLayout = it
+                            },
                             onDismiss = { showThemes = false },
                         )
                     }
@@ -163,12 +199,18 @@ class MainActivity : ComponentActivity() {
                             startModerate(channel, action, target)
                         },
                         onActiveChanged = { activeChannel = it },
+                        rememberedNick = remembered?.let { c ->
+                            // Rebuilt in the field's own `nick#password` form, so
+                            // a full re-login — trip included — is one tap.
+                            c.nick + (c.pass?.let { "#$it" } ?: "")
+                        },
                         rendererCallbacks = RendererCallbacks(
                             onLinkTap = { url -> openExternal(url) },
                             onChannelTap = { channel -> pendingChannel = channel },
                         ),
                         scheme = scheme,
                         highlight = highlight,
+                        nickLayout = nickLayout,
                         onOpenThemes = { showThemes = true },
                         pendingChannel = pendingChannel,
                         onPendingConsumed = { pendingChannel = null },
@@ -200,6 +242,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startJoin(channel: String, nick: String, pass: String?) {
+        // Remembered per server, since a trip is derived from a server-side salt
+        // and the same password gives a different trip elsewhere.
+        lifecycleScope.launch {
+            credentialStore.save(serverPrefs.url, Credentials(nick = nick, pass = pass))
+        }
         ContextCompat.startForegroundService(
             this,
             Intent(this, HcService::class.java).apply {
@@ -250,6 +297,19 @@ class MainActivity : ComponentActivity() {
         if (activeChannel == channel) activeChannel = null
     }
 
+    /**
+     * Paints the window itself from the scheme, so the frame that appears
+     * before Compose has drawn anything is already the right colour.
+     */
+    private fun applyWindowBackground(scheme: Scheme) {
+        window.setBackgroundDrawable(ColorDrawable(scheme.windowBackgroundArgb()))
+        // The status bar draws over our background, so its icons have to follow
+        // the scheme too — on a light scheme the default white icons vanish
+        // into it completely.
+        WindowCompat.getInsetsController(window, window.decorView)
+            .isAppearanceLightStatusBars = !scheme.dark
+    }
+
     /** Links open outside the app; the renderer WebView never navigates. */
     private fun openExternal(url: String) {
         val uri = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return
@@ -279,9 +339,12 @@ private fun AppScreen(
     onLeave: (String) -> Unit,
     onModerate: (String, ModAction, User) -> Unit,
     onActiveChanged: (String?) -> Unit,
+    /** Last credentials used on this server, in `nick#password` form. */
+    rememberedNick: String?,
     rendererCallbacks: RendererCallbacks,
     scheme: Scheme,
     highlight: String,
+    nickLayout: NickLayout,
     onOpenThemes: () -> Unit,
     /** A tapped `?channel` link pre-fills the join form rather than joining blind. */
     pendingChannel: String?,
@@ -331,9 +394,12 @@ private fun AppScreen(
             // what you want to do *before* connecting, not after.
             onOpenSettings = onOpenThemes,
             initialChannel = pendingChannel.orEmpty(),
-            // Reuse the nick we are already known by; joining a second channel
-            // under a different name is possible but almost never intended.
-            initialNick = ordered.firstOrNull()?.roster?.firstOrNull { it.isme }?.nick.orEmpty(),
+            // The stored credentials win over the live roster: the roster knows
+            // the nick but not the password behind the trip, so preferring it
+            // would silently join a second channel *without* the trip. Falls
+            // back to the roster for a session where nothing was stored yet.
+            initialNick = rememberedNick
+                ?: ordered.firstOrNull()?.roster?.firstOrNull { it.isme }?.nick.orEmpty(),
             onJoin = { channel, nick, pass ->
                 onJoin(channel, nick, pass)
                 selected = channel
@@ -353,8 +419,7 @@ private fun AppScreen(
                 .padding(padding)
                 // Without this the composer sits *underneath* the soft keyboard:
                 // windowSoftInputMode=adjustResize does not inset Compose content.
-                .imePadding()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .imePadding(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             ChannelTabs(
@@ -363,23 +428,23 @@ private fun AppScreen(
                 onSelect = { selected = it },
                 onClose = { onLeave(it) },
                 onAdd = { showJoin = true },
+                onShowRoster = { showUsers = !showUsers },
+                onOpenSettings = onOpenThemes,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
             )
 
             if (active != null) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                // Only when something is wrong. "connected" and "resumed" are
+                // distinctions this codebase cares about and a reader does not,
+                // and the per-tab status dot already carries the rest.
+                describe(active.state)?.let { status ->
                     Text(
-                        describe(active.state),
+                        status,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 12.dp),
                     )
-                    TextButton(onClick = { showUsers = !showUsers }) {
-                        Text("${active.roster.size} online")
-                    }
-                    TextButton(onClick = onOpenThemes) { Text("Theme") }
                 }
 
                 if (showUsers) {
@@ -404,6 +469,7 @@ private fun AppScreen(
                             val sep = if (current.isEmpty() || current.endsWith(" ")) "" else " "
                             drafts[active.channel] = "$current$sep@$nick "
                         },
+                        modifier = Modifier.padding(horizontal = 12.dp),
                     )
                 }
 
@@ -411,30 +477,47 @@ private fun AppScreen(
                     messages = active.messages,
                     scheme = scheme.name,
                     highlight = highlight,
+                    layout = nickLayout,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     callbacks = rendererCallbacks,
                 )
 
                 val draft = drafts[active.channel].orEmpty()
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedTextField(
-                        value = draft,
-                        onValueChange = { drafts[active.channel] = it },
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text("Message") },
-                    )
-                    Button(
-                        onClick = {
-                            onSend(active.channel, draft)
-                            drafts[active.channel] = ""
-                        },
-                        enabled = draft.isNotBlank() && active.state is SessionState.Live,
-                    ) { Text("Send") }
+                val canSend = draft.isNotBlank() && active.state is SessionState.Live
+                val send = {
+                    onSend(active.channel, draft)
+                    drafts[active.channel] = ""
                 }
+                // Flush to the bottom edge, with send inside the field rather
+                // than beside it — the site's shape, and it stops the composer
+                // reading as two separate controls.
+                TextField(
+                    value = draft,
+                    onValueChange = { drafts[active.channel] = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Message") },
+                    maxLines = 5,
+                    trailingIcon = {
+                        Text(
+                            text = "➤",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (canSend) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable(enabled = canSend, onClick = send)
+                                .semantics { contentDescription = "Send" }
+                                .padding(10.dp),
+                        )
+                    },
+                    colors = TextFieldDefaults.colors(
+                        // No underline: the field is the bottom edge, so a
+                        // divider under it only draws a second one.
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent,
+                    ),
+                )
             }
         }
     }
@@ -524,10 +607,17 @@ private fun JoinFields(
     }
 }
 
-private fun describe(state: SessionState): String = when (state) {
-    is SessionState.Live -> if (state.restored) "resumed" else "connected"
-    is SessionState.Reconnecting -> "reconnecting (attempt ${state.attempt})"
-    is SessionState.Failed -> "failed: ${state.reason}"
-    SessionState.Connecting, SessionState.Handshaking -> "connecting…"
-    SessionState.Idle -> "idle"
+/**
+ * Status worth a line of screen, or null when there is nothing to say.
+ *
+ * `Live` returns null deliberately: "connected" and "resumed" differ only in
+ * whether a token restored us, which matters to this codebase and not to a
+ * reader. `Failed` keeps its reason — a red dot alone cannot say *why*.
+ */
+private fun describe(state: SessionState): String? = when (state) {
+    is SessionState.Live -> null
+    is SessionState.Reconnecting -> "Reconnecting (attempt ${state.attempt})"
+    is SessionState.Failed -> "Failed: ${state.reason}"
+    SessionState.Connecting, SessionState.Handshaking -> "Connecting…"
+    SessionState.Idle -> null
 }
