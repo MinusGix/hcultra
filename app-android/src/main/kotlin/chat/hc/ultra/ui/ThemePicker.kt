@@ -23,6 +23,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -64,6 +65,8 @@ fun ThemeSheet(
     onHighlightSelected: (String?) -> Unit,
     nickLayout: NickLayout,
     onNickLayoutSelected: (NickLayout) -> Unit,
+    confirmClose: Boolean,
+    onConfirmCloseChanged: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -101,6 +104,29 @@ fun ThemeSheet(
                             .padding(horizontal = 12.dp, vertical = 7.dp),
                     )
                 }
+            }
+
+            Text(
+                "Channels",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(top = 16.dp),
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onConfirmCloseChanged(!confirmClose) }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Ask before closing", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Leaving a channel discards its history — the server keeps none.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = confirmClose, onCheckedChange = onConfirmCloseChanged)
             }
 
             Text(

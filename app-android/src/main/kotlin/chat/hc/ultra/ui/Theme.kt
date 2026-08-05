@@ -123,9 +123,20 @@ class ThemePrefs(context: Context) {
         get() = NickLayout.from(prefs.getString(KEY_LAYOUT, null))
         set(value) = prefs.edit().putString(KEY_LAYOUT, value.name).apply()
 
+    /**
+     * Whether closing a channel asks first. On by default, because closing is
+     * destructive in a way this app cannot undo: hack.chat keeps no history, so
+     * the scrollback only exists in our buffer and leaving discards it. The ×
+     * is also a small target sitting inside the tab you tap to *switch* to.
+     */
+    var confirmClose: Boolean
+        get() = prefs.getBoolean(KEY_CONFIRM_CLOSE, true)
+        set(value) = prefs.edit().putBoolean(KEY_CONFIRM_CLOSE, value).apply()
+
     private companion object {
         const val KEY_SCHEME = "scheme"
         const val KEY_HIGHLIGHT = "highlight"
         const val KEY_LAYOUT = "nick_layout"
+        const val KEY_CONFIRM_CLOSE = "confirm_close"
     }
 }

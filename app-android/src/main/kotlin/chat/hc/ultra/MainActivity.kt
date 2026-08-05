@@ -25,8 +25,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -148,6 +150,7 @@ class MainActivity : ComponentActivity() {
             var schemeName by remember { mutableStateOf(themePrefs.scheme) }
             var highlightOverride by remember { mutableStateOf(themePrefs.highlightOverride) }
             var nickLayout by remember { mutableStateOf(themePrefs.nickLayout) }
+            var confirmClose by remember { mutableStateOf(themePrefs.confirmClose) }
             var showThemes by remember { mutableStateOf(false) }
             var pendingChannel by remember { mutableStateOf<String?>(null) }
             var serverUrl by remember { mutableStateOf(serverPrefs.url) }
@@ -218,6 +221,11 @@ class MainActivity : ComponentActivity() {
                                 nickLayout = it
                                 themePrefs.nickLayout = it
                             },
+                            confirmClose = confirmClose,
+                            onConfirmCloseChanged = {
+                                confirmClose = it
+                                themePrefs.confirmClose = it
+                            },
                             onDismiss = { showThemes = false },
                         )
                     }
@@ -226,6 +234,11 @@ class MainActivity : ComponentActivity() {
                         onJoin = { channel, nick, pass -> startJoin(channel, nick, pass) },
                         onSend = { channel, text -> startSend(channel, text) },
                         onLeave = { channel -> startLeave(channel) },
+                        confirmClose = confirmClose,
+                        onStopAskingToClose = {
+                            confirmClose = false
+                            themePrefs.confirmClose = false
+                        },
                         onModerate = { channel, action, target ->
                             startModerate(channel, action, target)
                         },
@@ -372,6 +385,9 @@ private fun AppScreen(
     onJoin: (String, String, String?) -> Unit,
     onSend: (String, String) -> Unit,
     onLeave: (String) -> Unit,
+    /** Whether closing a tab asks first; see [ThemePrefs.confirmClose]. */
+    confirmClose: Boolean,
+    onStopAskingToClose: () -> Unit,
     onModerate: (String, ModAction, User) -> Unit,
     onActiveChanged: (String?) -> Unit,
     /** Who you have been on this server, most recent first. */
@@ -396,6 +412,9 @@ private fun AppScreen(
     var awaitingJoin by remember { mutableStateOf<String?>(null) }
     var showJoin by remember { mutableStateOf(false) }
     var showUsers by remember { mutableStateOf(false) }
+    // A close waiting on confirmation. Held by channel rather than a boolean so
+    // the dialog can name what it is about to discard.
+    var pendingClose by remember { mutableStateOf<String?>(null) }
     // One draft per channel: switching tabs must not eat what you were typing.
     val drafts = remember { mutableStateMapOf<String, String>() }
 
@@ -460,6 +479,19 @@ private fun AppScreen(
         if (ordered.isEmpty()) return
     }
 
+    pendingClose?.let { channel ->
+        CloseChannelDialog(
+            channel = channel,
+            unread = channels[channel]?.unread ?: 0,
+            onConfirm = { stopAsking ->
+                if (stopAsking) onStopAskingToClose()
+                onLeave(channel)
+                pendingClose = null
+            },
+            onDismiss = { pendingClose = null },
+        )
+    }
+
     Scaffold { padding ->
         Column(
             modifier = Modifier
@@ -474,7 +506,7 @@ private fun AppScreen(
                 channels = ordered,
                 active = selected,
                 onSelect = { selected = it },
-                onClose = { onLeave(it) },
+                onClose = { if (confirmClose) pendingClose = it else onLeave(it) },
                 onAdd = { showJoin = true },
                 onShowRoster = { showUsers = !showUsers },
                 onOpenSettings = onOpenThemes,
@@ -569,6 +601,60 @@ private fun AppScreen(
             }
         }
     }
+}
+
+/**
+ * Confirms a close, and offers to stop asking.
+ *
+ * The offer belongs here rather than only in Settings: someone who finds the
+ * prompt unnecessary discovers that at the moment it interrupts them, and
+ * making them go hunting for the switch is its own small insult.
+ */
+@Composable
+private fun CloseChannelDialog(
+    channel: String,
+    unread: Int,
+    onConfirm: (stopAsking: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var stopAsking by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Close ?$channel?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    buildString {
+                        append("You will leave the channel and its history will be discarded — ")
+                        append("hack.chat keeps none, so it cannot be fetched again.")
+                        if (unread > 0) {
+                            append(" There ")
+                            append(if (unread == 1) "is 1 unread message." else "are $unread unread messages.")
+                        }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { stopAsking = !stopAsking }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(checked = stopAsking, onCheckedChange = { stopAsking = it })
+                    Text("Don't ask again", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(stopAsking) }) {
+                Text("Close", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable

@@ -51,9 +51,42 @@ html, body {
 .layout-gutter .head {
   flex: 0 0 7.5em;
   text-align: right;
-  /* A long nick wraps inside the gutter rather than widening it, which would
-     misalign every other line. */
-  overflow-wrap: anywhere;
+  /* A flex item will not shrink below its min-content width unless told to, so
+     without this a long nick widens the gutter and misaligns every other line.
+     With it the column is exactly 7.5em and `break-word` below only has to
+     break a word that genuinely cannot fit. */
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+/*
+ * Flair, trip and nick each get their own line in the gutter.
+ *
+ * The markup nests .trip *inside* .nick and puts no whitespace between the trip
+ * and the nick text, because that is the site's own DOM and the schemes target
+ * it. Inline in a 7.5em column that gives the browser one unbreakable run —
+ * "aBc12starlord" — with the only break opportunity being the space the flair
+ * adds in front. So a flair made it worse rather than better: the emoji was
+ * stranded alone on the first line and the trip and nick were broken apart at
+ * an arbitrary character below it.
+ *
+ * Stacking them removes the problem rather than tuning around it, and it is
+ * also simply what a fixed column wants: three short right-aligned runs. Both
+ * flair and trip are bounded (2 chars and 6), so neither ever needs to wrap.
+ */
+/*
+ * column-reverse puts the nick — the bare text node, an anonymous flex item —
+ * on the first line, with the trip beneath it. Order matters because the row
+ * aligns on the *first* baseline: the message text should line up with the name
+ * of whoever said it, not with their trip.
+ */
+.layout-gutter .nick {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-end;
+}
+.layout-gutter .trip {
+  margin-right: 0;
+  white-space: nowrap;
 }
 .layout-gutter .text { flex: 1 1 auto; min-width: 0; }
 /* The flag sits after the text, not on its own row. */

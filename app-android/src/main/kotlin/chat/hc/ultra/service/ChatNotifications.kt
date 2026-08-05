@@ -11,6 +11,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
 import chat.hc.core.session.ChannelUi
 import chat.hc.core.session.SessionState
+import chat.hc.core.store.MessageKind
 import chat.hc.ultra.MainActivity
 
 /**
@@ -53,22 +54,46 @@ class ChatNotifications(private val context: Context) {
             reconnecting -> "Reconnecting…"
             else -> "$connected channel${if (connected == 1) "" else "s"} connected"
         }
-        val text = channels.values.joinToString(", ") { ui ->
+        val summary = channels.values.joinToString(", ") { ui ->
             buildString {
                 append('?').append(ui.channel)
                 if (ui.unread > 0) append(" (").append(ui.unread).append(')')
             }
         }
 
+        val recent = recentLines(channels)
+
         val builder = NotificationCompat.Builder(context, CHANNEL_ONGOING)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle(title)
-            .setContentText(text.ifEmpty { "No channels joined" })
+            // Collapsed shows the latest line, so the notification is worth
+            // reading without expanding it; the channel summary moves to the
+            // sub-text, which is where it still fits.
+            .setContentText(recent.lastOrNull() ?: summary.ifEmpty { "No channels joined" })
+            .setSubText(summary.takeIf { it.isNotEmpty() && recent.isNotEmpty() })
             .setOngoing(true)
             .setSilent(true)
+            // Every update is a redraw of the same persistent notification, not
+            // news. Without this an expanded update can still buzz on some OEM
+            // builds even at IMPORTANCE_LOW.
+            .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            // PRIVATE, not SECRET: SECRET hides it from the lock screen
+            // entirely, which defeats reading the conversation without opening
+            // the app. PRIVATE shows it and defers to the system's
+            // "hide sensitive content" setting for what to reveal when locked,
+            // which is the user's decision to make rather than ours.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(openApp())
+
+        if (recent.isNotEmpty()) {
+            builder.setStyle(
+                NotificationCompat.InboxStyle().also { style ->
+                    recent.forEach(style::addLine)
+                    if (summary.isNotEmpty()) style.setSummaryText(summary)
+                }
+            )
+        }
 
         if (unread > 0) builder.setNumber(unread)
 
@@ -84,6 +109,41 @@ class ChatNotifications(private val context: Context) {
 
     fun update(channels: Map<String, ChannelUi>) {
         manager.notify(ONGOING_ID, build(channels))
+    }
+
+    /**
+     * The last few messages worth glancing at, oldest first.
+     *
+     * Only what someone actually said: joins, parts, the MOTD and our own
+     * status notices are the bulk of a hack.chat transcript by volume and none
+     * of it is worth the two or three lines a notification affords. Our own
+     * messages stay — a conversation reads oddly with one side missing, and
+     * seeing what you sent last is how you know it went.
+     *
+     * Ordered across channels by timestamp so the tail really is the tail. The
+     * channel is named only when more than one is open, since prefixing every
+     * line with the only channel there is wastes the width on a phone.
+     */
+    private fun recentLines(channels: Map<String, ChannelUi>): List<String> {
+        val labelled = channels.size > 1
+        return channels.values
+            .flatMap { ui -> ui.messages.map { ui.channel to it } }
+            .filter { (_, m) -> m.kind in GLANCEABLE }
+            .sortedBy { (_, m) -> m.at }
+            .takeLast(RECENT_LINES)
+            .map { (channel, m) ->
+                val body = m.text.replace('\n', ' ').trim()
+                val who = when (m.kind) {
+                    MessageKind.Emote -> "* ${m.nick}"
+                    MessageKind.Whisper -> "${m.nick} whispers"
+                    MessageKind.WhisperSent -> "you whisper to ${m.nick}"
+                    else -> m.nick
+                }
+                buildString {
+                    if (labelled) append('?').append(channel).append(' ')
+                    append(who).append(": ").append(body)
+                }
+            }
     }
 
     private fun replyAction(channel: String): NotificationCompat.Action {
@@ -140,5 +200,16 @@ class ChatNotifications(private val context: Context) {
         const val CHANNEL_ONGOING = "connection"
         const val CHANNEL_MESSAGES = "messages"
         const val KEY_REPLY = "reply_text"
+
+        /** How many lines the expanded notification carries. */
+        private const val RECENT_LINES = 3
+
+        /** What counts as conversation, as opposed to transcript bookkeeping. */
+        private val GLANCEABLE = setOf(
+            MessageKind.Chat,
+            MessageKind.Emote,
+            MessageKind.Whisper,
+            MessageKind.WhisperSent,
+        )
     }
 }

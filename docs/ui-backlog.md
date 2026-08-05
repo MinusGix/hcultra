@@ -422,3 +422,71 @@ is the case where the stored one is genuinely wrong.
 The fake server was half the story and worth fixing on its own: its restore path
 reinstated the nick but not the trip, which the real server does. It now keeps
 the trips it issues, so a restore reinstates the whole identity.
+
+## Phone-use round, 2026-08-05
+
+Three things found using the app on a real phone rather than an emulator.
+
+### The gutter layout broke on flair
+
+**Observed:** "Name column" almost works, but wraps strangely around flairs.
+
+**Cause:** the markup nests `.trip` *inside* `.nick` and puts no whitespace
+between the trip and the nick text — the site's own DOM, which the schemes
+target, so it is not ours to reshape. Inline in a 7.5em column that leaves the
+browser one unbreakable run, `aBc12starlord`, whose only break opportunity is
+the space the flair adds in front of it. So a flair made things worse rather
+than better: the emoji was stranded alone on the first line and the trip and
+nick were broken apart mid-word beneath it, which is what `overflow-wrap:
+anywhere` was there to permit.
+
+**Fixed:** the gutter stacks them instead of tuning the wrap. `.nick` becomes a
+`column-reverse` flex box, which puts the nick on the first line with the trip
+beneath it. The order matters: the row aligns on the *first* baseline, so the
+message text lines up with the name of whoever said it rather than with their
+trip. `min-width: 0` holds the column at exactly 7.5em — a flex item will not
+shrink below min-content otherwise, which is what forced `anywhere` — and
+`break-word` now only has to break a word that genuinely cannot fit. Flair and
+trip stay together on their line under `white-space: nowrap`; both are bounded
+(2 characters and 6) so neither can need to wrap.
+
+The gutter is still 7.5em. It is the one knob left here: it fits a typical nick
+on one line, at the cost of about a third of the width on a phone.
+
+### Closing a channel had no confirmation
+
+Closing is destructive in a way this app cannot undo — hack.chat keeps no
+history, so the scrollback exists only in our buffer — and the × is a small
+target *inside* the tab you tap to switch to. It now confirms by default, names
+the channel, says what is lost, and mentions the unread count when there is one.
+
+The dialog carries its own "Don't ask again" as well as the switch under
+Settings → Channels. Someone who finds the prompt unnecessary discovers that at
+the moment it interrupts them, and making them go hunting for the switch is its
+own small insult.
+
+### The persistent notification now carries the conversation
+
+The ongoing notification already existed to keep the process alive and show what
+was connected. It now also shows the last three messages, so the common "has
+anything happened" can be answered without opening the app at all.
+
+Nothing about this alerts: the channel is `IMPORTANCE_LOW`, the notification is
+`setSilent`, and `setOnlyAlertOnce` is set because an expanded update can still
+buzz on some OEM builds regardless. Verified on-device — it sits in the shade's
+**Silent** section and updates in place.
+
+Two judgement calls worth recording:
+
+- Only actual conversation is shown (chat, emotes, whispers). Joins, parts and
+  the MOTD are most of a hack.chat transcript by volume and none of it is worth
+  the two or three lines a notification affords. Our own messages stay: a
+  conversation reads oddly with one side missing.
+- Visibility moved from `SECRET` to `PRIVATE`. `SECRET` hides the notification
+  from the lock screen entirely, which defeats the point of reading without
+  unlocking. `PRIVATE` shows it and defers to the system's "hide sensitive
+  content" setting for what to reveal while locked — the user's decision rather
+  than ours, and reachable from the notification's own long-press menu.
+
+Collapsed shows the newest line with the channel summary as sub-text; expanded
+shows three, with Reply and Disconnect unchanged.
