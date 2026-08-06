@@ -6,6 +6,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+      Required for a notification channel's vibration to actually fire. It is a
+      normal permission, so there is no runtime prompt, but without it the
+      system silently drops the vibration and a mention arrives with no buzz.
+    -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!--

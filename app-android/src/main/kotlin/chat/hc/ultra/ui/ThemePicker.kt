@@ -41,6 +41,7 @@ import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
 import chat.hc.core.session.Servers
+import chat.hc.ultra.service.ChatNotifications
 
 /**
  * Settings: server endpoint, then theming.
@@ -67,6 +68,14 @@ fun ThemeSheet(
     onNickLayoutSelected: (NickLayout) -> Unit,
     confirmClose: Boolean,
     onConfirmCloseChanged: (Boolean) -> Unit,
+    notifyMentions: Boolean,
+    onNotifyMentionsChanged: (Boolean) -> Unit,
+    notifyWhispers: Boolean,
+    onNotifyWhispersChanged: (Boolean) -> Unit,
+    notifyOtherChannels: Boolean,
+    onNotifyOtherChannelsChanged: (Boolean) -> Unit,
+    /** Opens the system's own settings for one notification channel id. */
+    onOpenSystemNotifications: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -130,6 +139,40 @@ fun ThemeSheet(
             }
 
             Text(
+                "Notifications",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(top = 16.dp),
+            )
+            ToggleRow(
+                title = "Mentions",
+                subtitle = "When someone writes @yournick in a channel you have joined.",
+                checked = notifyMentions,
+                onChanged = onNotifyMentionsChanged,
+                // Straight to the system switches for this exact channel. Sound
+                // and vibration are the platform's to own since Android 8, and
+                // an in-app copy of them would simply not work.
+                onTune = { onOpenSystemNotifications(ChatNotifications.CHANNEL_MENTIONS) },
+            )
+            ToggleRow(
+                title = "Whispers",
+                subtitle = "A whisper is addressed to you by definition.",
+                checked = notifyWhispers,
+                onChanged = onNotifyWhispersChanged,
+                onTune = { onOpenSystemNotifications(ChatNotifications.CHANNEL_WHISPERS) },
+            )
+            ToggleRow(
+                title = "Other channels while the app is open",
+                subtitle = "The channel you are reading never alerts either way.",
+                checked = notifyOtherChannels,
+                onChanged = onNotifyOtherChannelsChanged,
+            )
+            Text(
+                "Nothing else alerts — ordinary channel messages never do.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Text(
                 "Syntax highlighting",
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(top = 16.dp),
@@ -189,6 +232,55 @@ fun ThemeSheet(
                 }
             }
         }
+    }
+}
+
+/**
+ * A switch with a reason under it, and a way through to the system's own
+ * controls for the same thing.
+ *
+ * The "Sound" link is not decoration: the complaint this whole section answers
+ * was that mentions did not buzz, and whether they buzz is a per-channel system
+ * setting the app is not allowed to change once the channel exists. A switch
+ * here that claimed to control vibration would be a lie; a link that lands on
+ * the real one is not.
+ */
+@Composable
+private fun ToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onChanged: (Boolean) -> Unit,
+    /** Null when the row has no notification channel of its own to tune. */
+    onTune: (() -> Unit)? = null,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onChanged(!checked) }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (checked && onTune != null) {
+                Text(
+                    "Sound & vibration",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(onClick = onTune)
+                        .padding(vertical = 4.dp),
+                )
+            }
+        }
+        Switch(checked = checked, onCheckedChange = onChanged)
     }
 }
 

@@ -8,9 +8,13 @@ import chat.hc.core.store.ChatMessage
 import chat.hc.core.store.Delivery
 import chat.hc.core.store.MessageKind
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -72,6 +76,21 @@ class SessionManager(
 
     private val _channels = MutableStateFlow<Map<String, ChannelUi>>(emptyMap())
     val channels: StateFlow<Map<String, ChannelUi>> = _channels.asStateFlow()
+
+    /**
+     * Messages addressed to the user personally; see [Alert].
+     *
+     * Hot and lossy by design. Nothing here is load-bearing — the message is
+     * already in the buffer either way — so a slow or absent collector must
+     * never be able to stall the socket pipeline. With no subscriber (the UI is
+     * bound but the service is not collecting, say) alerts are simply dropped,
+     * which is the right answer: an alert is only meaningful when it arrives.
+     */
+    private val _alerts = MutableSharedFlow<Alert>(
+        extraBufferCapacity = 16,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val alerts: SharedFlow<Alert> = _alerts.asSharedFlow()
 
     /** Channel the UI is currently showing; its messages never count as unread. */
     var activeChannel: String? = null
@@ -238,16 +257,27 @@ class SessionManager(
         when (event) {
             is SessionEvent.Message -> {
                 val msg = buffer.applyChat(event.frame, session.userid)
-                if (!msg.isMine && channel != activeChannel) {
-                    mutate(channel) { it.copy(unread = it.unread + 1) }
+                if (!msg.isMine) {
+                    if (channel != activeChannel) {
+                        mutate(channel) { it.copy(unread = it.unread + 1) }
+                    }
+                    alertIfMentioned(session, msg.nick, msg.text, event.frame.time ?: now())
                 }
             }
 
             is SessionEvent.MessageUpdated -> buffer.applyUpdate(event.frame)
 
-            is SessionEvent.Emote -> buffer.add(
-                ChatMessage(0, MessageKind.Emote, event.frame.nick, event.frame.userid, text = event.frame.text, at = event.frame.time ?: now())
-            )
+            // Emotes are alerted on too: `/me pokes @you` is someone talking to
+            // you, and the third person is a grammatical choice rather than a
+            // quieter one.
+            is SessionEvent.Emote -> {
+                buffer.add(
+                    ChatMessage(0, MessageKind.Emote, event.frame.nick, event.frame.userid, text = event.frame.text, at = event.frame.time ?: now())
+                )
+                if (event.frame.userid != session.userid) {
+                    alertIfMentioned(session, event.frame.nick, event.frame.text, event.frame.time ?: now())
+                }
+            }
 
             // The server sends the *same* frame to both parties, so direction
             // is only knowable by comparing `from` against our own userid.
@@ -274,8 +304,21 @@ class SessionManager(
                     )
                 )
                 // Our own outgoing whisper must not mark the channel unread.
-                if (!who.outgoing && channel != activeChannel) {
-                    mutate(channel) { ui -> ui.copy(unread = ui.unread + 1) }
+                if (!who.outgoing) {
+                    if (channel != activeChannel) {
+                        mutate(channel) { ui -> ui.copy(unread = ui.unread + 1) }
+                    }
+                    // No mention test: a whisper was sent to one person and we
+                    // are that person. Being addressed is what it is for.
+                    _alerts.tryEmit(
+                        Alert(
+                            channel = channel,
+                            kind = Alert.Kind.Whisper,
+                            nick = who.nick,
+                            text = event.frame.text,
+                            at = event.frame.time ?: now(),
+                        )
+                    )
                 }
             }
 
@@ -350,6 +393,23 @@ class SessionManager(
             is SessionEvent.Invited, is SessionEvent.UnknownFrame -> Unit
         }
         publish(channel)
+    }
+
+    /**
+     * Raises a [Alert.Kind.Mention] if [text] says `@us`.
+     *
+     * The roster is asked first and the credentials are only a fallback: the
+     * server has the last word on what we are called — a nick collision or a
+     * token restore can both leave us answering to something other than what we
+     * asked for — but the roster is empty until the handshake completes, and a
+     * mention arriving in that window should still land.
+     */
+    private fun alertIfMentioned(session: ChannelSession, from: String, text: String, at: Long) {
+        val me = session.roster.firstOrNull { it.isme }?.nick ?: session.credentials.nick
+        if (!Mentions.mentions(text, me)) return
+        _alerts.tryEmit(
+            Alert(session.channel, Alert.Kind.Mention, nick = from, text = text, at = at)
+        )
     }
 
     private fun publish(channel: String) {

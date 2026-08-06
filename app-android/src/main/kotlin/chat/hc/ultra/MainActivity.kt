@@ -73,6 +73,7 @@ import chat.hc.core.session.SessionState
 import chat.hc.ultra.service.HcService
 import chat.hc.ultra.ui.ChannelTabs
 import chat.hc.ultra.ui.MessageWebView
+import chat.hc.ultra.ui.NotifyPrefs
 import chat.hc.ultra.ui.RendererCallbacks
 import chat.hc.ultra.ui.SchemeAssets
 import chat.hc.ultra.ui.ServerPrefs
@@ -100,19 +101,34 @@ class MainActivity : ComponentActivity() {
     private val serverPrefs by lazy { ServerPrefs(this) }
     private val history by lazy { ChannelHistory(this) }
 
-    /** Mirrors the selected tab into the service so unread counts stay right. */
+    /**
+     * Mirrors the selected tab into the service, so unread counts stay right and
+     * the channel's notifications clear as soon as you are looking at it.
+     */
     private var activeChannel: String? = null
         set(value) {
             field = value
-            service?.sessions?.activeChannel = value
+            service?.showing(value)
         }
+
+    /** Between onStart and onStop, i.e. while alerts should stay silent. */
+    private var visible = false
+
+    /**
+     * A channel a notification tap asked for, held until the tab exists. Null
+     * once honoured, so returning to the app later does not re-select it.
+     */
+    private val showChannel = MutableStateFlow<String?>(null)
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val svc = (binder as HcService.LocalBinder).service
             service = svc
             bound = true
-            svc.sessions.activeChannel = activeChannel
+            // The bind completes asynchronously, so the service can only learn
+            // about a foreground that started before it here.
+            svc.uiForeground = visible
+            svc.showing(activeChannel)
             // Re-read the service's state; do not reconnect.
             lifecycleScope.launch {
                 svc.sessions.channels.collect { channels.value = it }
@@ -140,7 +156,10 @@ class MainActivity : ComponentActivity() {
             requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
+        showChannel.value = intent.getStringExtra(EXTRA_SHOW_CHANNEL)
+
         val themePrefs = ThemePrefs(this)
+        val notifyPrefs = NotifyPrefs(this)
         val allSchemes = SchemeAssets.load(this)
 
         // Paint the window from the chosen scheme *before* Compose draws.
@@ -154,6 +173,9 @@ class MainActivity : ComponentActivity() {
             var highlightOverride by remember { mutableStateOf(themePrefs.highlightOverride) }
             var nickLayout by remember { mutableStateOf(themePrefs.nickLayout) }
             var confirmClose by remember { mutableStateOf(themePrefs.confirmClose) }
+            var notifyMentions by remember { mutableStateOf(notifyPrefs.mentions) }
+            var notifyWhispers by remember { mutableStateOf(notifyPrefs.whispers) }
+            var notifyOtherChannels by remember { mutableStateOf(notifyPrefs.otherChannels) }
             var showThemes by remember { mutableStateOf(false) }
             var pendingChannel by remember { mutableStateOf<String?>(null) }
             var serverUrl by remember { mutableStateOf(serverPrefs.url) }
@@ -229,6 +251,22 @@ class MainActivity : ComponentActivity() {
                                 confirmClose = it
                                 themePrefs.confirmClose = it
                             },
+                            notifyMentions = notifyMentions,
+                            onNotifyMentionsChanged = {
+                                notifyMentions = it
+                                notifyPrefs.mentions = it
+                            },
+                            notifyWhispers = notifyWhispers,
+                            onNotifyWhispersChanged = {
+                                notifyWhispers = it
+                                notifyPrefs.whispers = it
+                            },
+                            notifyOtherChannels = notifyOtherChannels,
+                            onNotifyOtherChannelsChanged = {
+                                notifyOtherChannels = it
+                                notifyPrefs.otherChannels = it
+                            },
+                            onOpenSystemNotifications = { openNotificationSettings(it) },
                             onDismiss = { showThemes = false },
                         )
                     }
@@ -264,6 +302,8 @@ class MainActivity : ComponentActivity() {
                         onOpenThemes = { showThemes = true },
                         pendingChannel = pendingChannel,
                         onPendingConsumed = { pendingChannel = null },
+                        showChannel = showChannel.collectAsStateWithLifecycle().value,
+                        onShowChannelConsumed = { showChannel.value = null },
                     )
                 }
             }
@@ -272,13 +312,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        visible = true
+        service?.uiForeground = true
         bindService(Intent(this, HcService::class.java), connection, Context.BIND_AUTO_CREATE)
     }
 
     override fun onStop() {
         super.onStop()
-        // Nothing is showing, so every channel should count unread again.
-        service?.sessions?.activeChannel = null
+        // Nothing is showing, so every channel should count unread again — and
+        // alerts start reaching the shade again.
+        visible = false
+        service?.uiForeground = false
+        service?.showing(null)
         if (bound) {
             unbindService(connection)
             bound = false
@@ -288,7 +333,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        service?.sessions?.activeChannel = activeChannel
+        service?.showing(activeChannel)
+    }
+
+    /**
+     * A notification tap while we are already running. `launchMode=singleTask`
+     * means this, not a second onCreate, so the request has to be picked up
+     * from here as well as from the launch intent.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(EXTRA_SHOW_CHANNEL)?.let { showChannel.value = it }
     }
 
     private fun startJoin(channel: String, nick: String, pass: String?) {
@@ -370,6 +426,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Hands off to the system's own settings for one notification channel.
+     *
+     * Sound, vibration and heads-up behaviour have belonged to the platform
+     * since Android 8 and cannot be set by the app after a channel exists, so
+     * the honest thing is to send the user where the switches actually are
+     * rather than to mirror them into a second set that would not work.
+     */
+    private fun openNotificationSettings(channelId: String) {
+        runCatching {
+            startActivity(
+                Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
+                    .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, channelId)
+            )
+        }
+    }
+
     private fun startSend(channel: String, text: String) {
         ContextCompat.startForegroundService(
             this,
@@ -379,6 +453,11 @@ class MainActivity : ComponentActivity() {
                 putExtra(HcService.EXTRA_TEXT, text)
             },
         )
+    }
+
+    companion object {
+        /** Set by an alert notification: the channel it was about. */
+        const val EXTRA_SHOW_CHANNEL = "showChannel"
     }
 }
 
@@ -406,6 +485,9 @@ private fun AppScreen(
     /** A tapped `?channel` link pre-fills the join form rather than joining blind. */
     pendingChannel: String?,
     onPendingConsumed: () -> Unit,
+    /** A channel a notification tap asked to be shown; already joined. */
+    showChannel: String?,
+    onShowChannelConsumed: () -> Unit,
 ) {
     val channels by channelsFlow.collectAsStateWithLifecycle()
     var selected by remember { mutableStateOf<String?>(null) }
@@ -461,6 +543,20 @@ private fun AppScreen(
 
     LaunchedEffect(pendingChannel) {
         if (pendingChannel != null) showJoin = true
+    }
+
+    // A notification tap names the channel it was about. Held until the tab
+    // actually exists, because a cold start binds the service after the first
+    // composition and the map is empty for a frame or two. Consumed either way
+    // once channels arrive: if it is gone by then, the user left it, and
+    // silently reselecting it later would be worse than doing nothing.
+    LaunchedEffect(showChannel, channels.keys) {
+        if (showChannel == null || channels.isEmpty()) return@LaunchedEffect
+        if (channels.containsKey(showChannel)) {
+            selected = showChannel
+            showJoin = false
+        }
+        onShowChannelConsumed()
     }
 
     if (showJoin || ordered.isEmpty()) {

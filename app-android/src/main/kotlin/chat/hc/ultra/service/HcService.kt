@@ -10,6 +10,7 @@ import chat.hc.core.session.Credentials
 import chat.hc.core.session.ModAction
 import chat.hc.core.session.SessionManager
 import chat.hc.ultra.data.KeystoreTokenStore
+import chat.hc.ultra.ui.NotifyPrefs
 import chat.hc.ultra.ui.ServerPrefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -36,11 +37,36 @@ class HcService : Service() {
         private set
     private lateinit var notifications: ChatNotifications
 
+    /**
+     * Whether an Activity is bound and on screen.
+     *
+     * While it is, the channel being read never alerts — the message is already
+     * in front of the user — and whether the *other* open tabs still do is
+     * [NotifyPrefs.otherChannels].
+     *
+     * Tracked explicitly rather than inferred from [SessionManager.activeChannel]
+     * being non-null, which is also null while the join sheet is up with no
+     * channel selected — a state that is very much "in the app".
+     */
+    var uiForeground: Boolean = false
+
     inner class LocalBinder : Binder() {
         val service: HcService get() = this@HcService
     }
 
     override fun onBind(intent: Intent?): IBinder = LocalBinder()
+
+    /**
+     * The channel the user is looking at, or null if none is.
+     *
+     * Reaching a conversation spends its alerts, whichever way you got there —
+     * through the notification, the tab strip, or by returning to an app that
+     * was already on it.
+     */
+    fun showing(channel: String?) {
+        sessions.activeChannel = channel
+        channel?.let { notifications.clearAlerts(it) }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -56,14 +82,32 @@ class HcService : Service() {
             // an echo against the few hundred messages we keep.
             customIdFactory = { Random.nextLong(0, 2_176_782_336L).toString(36).padStart(6, '0') },
         )
+        // Channels are registered in HcApp, which has already run by now.
         notifications = ChatNotifications(this)
-        notifications.ensureChannel()
 
         // The notification is the app's background presence: it shows which
         // channels are connected and how much is unread, and carries the
         // direct-reply action.
         scope.launch {
             sessions.channels.collect { notifications.update(it) }
+        }
+
+        // Mentions and whispers, the two things said *to* the user rather than
+        // near them. Preferences are read per alert rather than cached: they
+        // change from the settings sheet in another process component, and a
+        // SharedPreferences read is far cheaper than the wiring to observe it.
+        scope.launch {
+            val prefs = NotifyPrefs(this@HcService)
+            sessions.alerts.collect { alert ->
+                if (!prefs.wants(alert.kind)) return@collect
+                if (uiForeground) {
+                    // The channel on screen never alerts: the message is
+                    // already in front of the user.
+                    if (alert.channel == sessions.activeChannel) return@collect
+                    if (!prefs.otherChannels) return@collect
+                }
+                notifications.alert(alert)
+            }
         }
     }
 
@@ -80,6 +124,7 @@ class HcService : Service() {
 
             ACTION_LEAVE -> {
                 val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
+                notifications.clearAlerts(channel)
                 scope.launch {
                     sessions.leave(channel)
                     if (sessions.channels.value.isEmpty()) stopSelf()
@@ -89,6 +134,10 @@ class HcService : Service() {
             ACTION_SEND -> {
                 val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
                 val text = intent.getStringExtra(EXTRA_TEXT) ?: return START_STICKY
+                // Answering is dealing with it. This is what dismisses the
+                // notification after a direct reply from the shade, which would
+                // otherwise sit there having visibly been replied to already.
+                notifications.clearAlerts(channel)
                 scope.launch { sessions.sendChat(channel, text) }
             }
 
@@ -128,6 +177,9 @@ class HcService : Service() {
 
     override fun onDestroy() {
         Log.i(TAG, "service destroyed")
+        // The sockets are going with us, so a "reply" action on any surviving
+        // alert would silently do nothing.
+        notifications.clearAllAlerts()
         scope.launch { sessions.stopAll() }
         net.close()
         scope.cancel()

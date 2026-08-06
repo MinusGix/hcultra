@@ -101,6 +101,27 @@ sealed interface SessionEvent {
 }
 
 /**
+ * Something said *to you*, as opposed to something said near you.
+ *
+ * Separate from [SessionEvent] on purpose. Events describe what the socket did
+ * and every one of them is worth recording in the transcript; an alert is the
+ * much smaller set worth interrupting someone for, and the platform layer wants
+ * exactly that set without having to re-derive it. What to do with one — post a
+ * notification, buzz, or nothing at all because the user is already looking at
+ * the channel — is not this layer's call.
+ */
+data class Alert(
+    val channel: String,
+    val kind: Kind,
+    /** Who said it. */
+    val nick: String,
+    val text: String,
+    val at: Long,
+) {
+    enum class Kind { Mention, Whisper }
+}
+
+/**
  * Reconnect backoff.
  *
  * Deliberately not aggressive: `join` costs 3 against a threshold of 25 with a

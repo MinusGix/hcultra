@@ -423,6 +423,11 @@ of context.
 ## Still unverified
 
 - direct-reply from the notification (`ReplyReceiver`) — hard to trigger from adb
+- mention and whisper alerts on-device: that they buzz at all (the `VIBRATE`
+  permission and the channels' own vibration patterns), that they stay silent
+  while the app is foregrounded, and that opening the channel clears them.
+  Everything except the buzz is drivable from `probe/fakeserver.mjs`; the
+  vibration itself needs a real phone, since the emulator has no motor
 - moderation against the *real* server: the level gating and wire shapes were
   exercised against the fake server, since we hold no moderator rights on live
 - doze / screen-off survival over a long period

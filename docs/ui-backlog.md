@@ -490,3 +490,76 @@ Two judgement calls worth recording:
 
 Collapsed shows the newest line with the channel summary as sub-text; expanded
 shows three, with Reply and Disconnect unchanged.
+
+### Mentions and whispers now alert
+
+Reported as "vibrate on mention doesn't work". It never had: there was no
+mention detection anywhere in the app, and the only notification that had ever
+been posted was the ongoing one, which is silenced three separate ways on
+purpose. A `messages` channel was created at `IMPORTANCE_DEFAULT` and never
+posted to.
+
+What alerts is now exactly the set of messages addressed to *you*: `@yournick`
+in a joined channel, and any whisper you receive. Ordinary channel traffic stays
+silent — in a busy room it is constant, and a client that buzzes for all of it
+gets its notifications turned off within a day, taking the mentions with them.
+
+Detection is `@nick` only (`core`, `Mentions.kt`, with tests). Deliberately not
+the bare nick — "has anyone seen bob" is *about* bob rather than to him — and
+deliberately not the trip: a trip identifies you but nobody types one to get
+your attention, so it could only ever produce false positives from people
+quoting a transcript. Both edges of the match are checked, for different
+reasons: `@bobby` must not reach bob, and `ops@bob.example` is an address rather
+than a summons. Matching is case-insensitive, since hack.chat nicks are unique
+without regard to case and people capitalise at the start of a sentence.
+
+Emotes are included. `/me pokes @you` is someone talking to you; the third
+person is a grammatical choice, not a quieter one.
+
+**The channel you are reading never alerts.** `HcService.uiForeground` is set
+from the Activity's onStart/onStop, and while it is true an alert for the
+visible tab is dropped: the message is already in front of you, and buzzing the
+phone in your hand for it is absurd. Tracked explicitly rather than inferred
+from `activeChannel != null`, which is also null while the join sheet is up with
+no channel selected, and that state is very much "in the app".
+
+The *other* open tabs are a separate question, and a third switch. On by
+default: several open channels is the normal way to use this app, and being
+called in one of them is no less worth knowing about because you happen to be
+reading another — the tab's unread badge says a message arrived, not that it was
+addressed to you. Turning it off is the "I am busy in this conversation"
+setting.
+
+**Reaching the channel spends the alert**, by whatever route. Notification tap,
+tab strip, or simply returning to an app that was already on that channel — all
+of them go through `HcService.showing(channel)`, which clears it. Replying from
+the shade clears it too: answering is dealing with it, and a notification that
+sits there having visibly been replied to is its own small annoyance.
+
+Three platform details worth recording, all of which are ways this silently
+fails to buzz:
+
+- **`android.permission.VIBRATE` is required.** It is a normal permission with
+  no runtime prompt, and without it the system drops a notification channel's
+  vibration on the floor without complaint.
+- **A channel's importance and vibration are fixed at creation.** They cannot be
+  raised later — the system reads any such change as the app overriding the
+  user. The dead `messages` channel therefore could not be reused and is
+  deleted; `mentions` and `whispers` are created fresh at `IMPORTANCE_HIGH`.
+  Two channels, not one, so the pair can be tuned apart from system settings:
+  silencing whispers overnight while keeping mentions is a real preference and
+  only the platform can express it. Their vibration patterns differ so the two
+  are distinguishable from a pocket — two short taps against one long one.
+- **Sound and vibration are therefore not ours to offer in Settings.** The
+  in-app switches control *whether* we notify, and nothing else; a "vibrate"
+  switch next to them would be a lie. Each row links out to the system's own
+  screen for that exact channel instead. Channels are registered in `HcApp`
+  rather than the service so that link works before the service has ever run.
+
+Notification ids are derived from the channel name rather than handed out in
+sequence. A notification outlives the process that posted it, and a counter
+would restart with the process — so the id that used to mean `?one` could come
+back meaning `?two` and overwrite it. For the same reason, opening a channel
+cancels its ids whether or not this process remembers posting them.
+
+All three switches default on, under Settings → Notifications.
