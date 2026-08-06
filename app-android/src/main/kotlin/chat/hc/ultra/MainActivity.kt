@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -490,7 +491,11 @@ private fun AppScreen(
     onShowChannelConsumed: () -> Unit,
 ) {
     val channels by channelsFlow.collectAsStateWithLifecycle()
-    var selected by remember { mutableStateOf<String?>(null) }
+    // Saveable: the connection outlives the Activity by design, so a rotation
+    // or a recreate must not silently move the user to the first tab. It did,
+    // and since only the channel on screen is marked read, the tab they were
+    // actually reading kept its unread count.
+    var selected by rememberSaveable { mutableStateOf<String?>(null) }
     // A join we asked for that the service has not created yet. Without this,
     // the validity check below races the service and snaps the selection back
     // to the first tab the instant you join a new channel.

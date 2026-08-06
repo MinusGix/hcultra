@@ -102,6 +102,20 @@ class ChatNotifications(private val context: Context) {
 
         val recent = recentLines(channels)
 
+        // Tapping this opens the channel the unread is *in*, not whichever tab
+        // happened to be selected last. Only the channel on screen is ever
+        // marked read, so landing anywhere else left the count the user just
+        // tapped sitting exactly where it was — which is what it looked like:
+        // opening the app did nothing.
+        //
+        // The newest one when several are unread. The rest keep their counts,
+        // which is right: their tabs are still carrying unread messages, and
+        // the tab strip says so.
+        val unreadChannel = channels.values
+            .filter { it.unread > 0 }
+            .maxByOrNull { ui -> ui.messages.lastOrNull()?.at ?: 0L }
+            ?.channel
+
         val builder = NotificationCompat.Builder(context, CHANNEL_ONGOING)
             .setSmallIcon(chat.hc.ultra.R.drawable.ic_notification)
             .setContentTitle(title)
@@ -123,7 +137,7 @@ class ChatNotifications(private val context: Context) {
             // "hide sensitive content" setting for what to reveal when locked,
             // which is the user's decision to make rather than ours.
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setContentIntent(openApp())
+            .setContentIntent(openApp(unreadChannel))
 
         if (recent.isNotEmpty()) {
             builder.setStyle(

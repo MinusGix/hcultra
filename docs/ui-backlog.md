@@ -563,3 +563,34 @@ back meaning `?two` and overwrite it. For the same reason, opening a channel
 cancels its ids whether or not this process remembers posting them.
 
 All three switches default on, under Settings → Notifications.
+
+### Opening the app from the notification left the channel unread
+
+**Observed:** tap the ongoing notification, the app opens, the unread count is
+still there.
+
+**Cause:** two halves, both of which reduce to landing on the wrong tab.
+
+Only the channel actually on screen is ever marked read —
+`SessionManager.activeChannel`'s setter is the one place `unread` is zeroed, and
+it zeroes exactly one channel. That is correct in itself; unread in a tab you
+are not reading is real. But the ongoing notification's count is
+`sumOf { it.unread }` across *every* channel, while its content intent named no
+channel at all, so a tap opened whichever tab happened to be selected and left
+the count that prompted the tap sitting exactly where it was.
+
+The second half made that likely rather than occasional: `selected` was held in
+`remember`, so any Activity recreation — a rotation, or the system reclaiming
+the Activity while the service kept the sockets — reset it to null and the
+validity effect fell back to `ordered.firstOrNull()`. Coming back to the app
+therefore tended to land on the *first* channel regardless of where you had
+been, which is also the wrong one to mark read.
+
+**Fixed:** the ongoing notification now deep-links to the channel its unread is
+in, through the same `EXTRA_SHOW_CHANNEL` path the mention alerts use — the
+newest one when several are unread. And `selected` is `rememberSaveable`, so a
+recreate keeps you where you were.
+
+The remaining channels keep their counts on purpose. They are still carrying
+messages nobody has read, and the tab strip is where that belongs; marking
+everything read because the user opened the app once would be the opposite bug.
