@@ -56,11 +56,10 @@ Three things the shell sets that a hand-rolled SDK on NixOS will not:
    Both are pinned in `flake.nix`, and **an AGP bump means re-checking both.**
 
 The emulator is a separate shell, `nix develop .#emulator`, because it costs a
-system image per platform version. Paths in the section below become
-`$ANDROID_HOME/emulator/emulator` and `$ANDROID_HOME/cmdline-tools/…`; the
-`system-images;android-37.1;google_apis;x86_64` package is what the shell
-provides, in place of the API 36 image originally used. `ANDROID_USER_HOME`
-still points at `~/.android`, so AVDs survive outside the store.
+system image per platform version — both of `platformVersions`, so roughly 4.4 GB
+of images plus a 330 MB emulator. `ANDROID_USER_HOME` still points at `~/.android`,
+so AVDs survive outside the store. See the Emulator section below for the exact
+package names, which are not the ones you would guess.
 
 ## Foreground service type
 
@@ -104,25 +103,53 @@ noise. The prompt is not yet wired into onboarding.
 
 ## Emulator
 
-AVD `hcultra` (`system-images;android-36;google_apis;x86_64`, pixel_6). KVM on
-this machine is world-accessible, so no group changes were needed.
+Everything here runs inside `nix develop .#emulator`. Rebuilt from scratch on
+2026-08-11; the paths below are the ones that work, and three earlier ones that
+did not are called out because each looks right and fails differently.
+
+Create the AVD:
 
 ```sh
-/opt/android-sdk/emulator/emulator -avd hcultra -no-window -no-audio \
+echo "no" | $ANDROID_HOME/cmdline-tools/22.0/bin/avdmanager create avd \
+    -n hcultra -k "system-images;android-37.1;google_apis_ps16k;x86_64" \
+    -d pixel_6 --force
+```
+
+Three traps, all hit:
+
+1. **The 37.1 image is `google_apis_ps16k`, not `google_apis`.** It is the 16K
+   page-size variant, and it is the only 37.1 flavour androidenv provides. The
+   plain name fails with `Package path is not valid`, which does at least list
+   the real ones. 37.0 *is* plain `google_apis` — the two versions differ.
+2. **cmdline-tools is `22.0`, not `latest`.** The store SDK has no `latest`
+   symlink, so `cmdline-tools/latest/bin/avdmanager` is a bare
+   `No such file or directory`.
+3. **Do not use `$ANDROID_HOME/tools/bin/avdmanager`.** An earlier note here
+   recommended it over cmdline-tools; it cannot run on JDK 21 at all, dying with
+   `ClassNotFoundException: javax.xml.bind.annotation.XmlSchema` — JAXB, dropped
+   from the JDK in 11. The shell pins JDK 21, so this is permanent.
+
+Creation also prints `Could not load devices from …/devices.xml` twice. It is
+noise from the device-profile lookup; the AVD is created regardless. Check
+`~/.android/avd/hcultra.avd/config.ini` for `image.sysdir.1` if in doubt.
+
+Then boot it. KVM on this machine is world-accessible, so no group changes were
+needed.
+
+```sh
+$ANDROID_HOME/emulator/emulator -avd hcultra -no-window -no-audio \
     -no-boot-anim -gpu swiftshader_indirect -no-snapshot-save &
 adb wait-for-device
 ```
 
-Two gotchas: `avdmanager` needs `ANDROID_SDK_ROOT` set explicitly, and the
-*newer* cmdline-tools failed to resolve system images where the SDK-bundled one
-succeeded — so create AVDs with `/opt/android-sdk/cmdline-tools/latest/bin/avdmanager`.
+`avdmanager` reads `ANDROID_SDK_ROOT`, not `ANDROID_HOME`; the shell sets both.
 
 ### Watching it, on Wayland
 
 Dropping `-no-window` to actually watch the app needs `QT_QPA_PLATFORM=xcb`:
 
 ```sh
-QT_QPA_PLATFORM=xcb /opt/android-sdk/emulator/emulator -avd hcultra -no-audio \
+QT_QPA_PLATFORM=xcb $ANDROID_HOME/emulator/emulator -avd hcultra -no-audio \
     -no-boot-anim -gpu swiftshader_indirect -no-snapshot-save &
 ```
 
