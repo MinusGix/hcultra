@@ -47,16 +47,6 @@ data class ChatMessage(
     val serverId: Long? = null,
     val isMine: Boolean = false,
     val delivery: Delivery = Delivery.Sent,
-    /**
-     * False only between an `append`/`prepend` update and the `complete` that
-     * ends it — a bot mid-sentence.
-     *
-     * Not inferred from the message carrying a customId: every client that
-     * reconciles its own echo sends one (this one included), and the server
-     * only treats it as "editable for five minutes". Reading it as "still
-     * streaming" put a trailing ellipsis on every ordinary message.
-     */
-    val streamComplete: Boolean = true,
 )
 
 /**
@@ -82,9 +72,19 @@ class ChannelBuffer(private val capacity: Int = 500) {
     fun add(message: ChatMessage): ChatMessage {
         val stamped = message.copy(localId = nextId++)
         messages.addLast(stamped)
-        stamped.customId?.let { byCustomId[it] = stamped.localId }
+        // A message still waiting for its echo keeps the mapping: customIds are
+        // only unique per user, and losing ours to someone else's collision
+        // would leave our own send unreconcilable and duplicated on arrival.
+        stamped.customId?.let { id ->
+            if (!isAwaitingEcho(byCustomId[id])) byCustomId[id] = stamped.localId
+        }
         trim()
         return stamped
+    }
+
+    private fun isAwaitingEcho(localId: Long?): Boolean {
+        if (localId == null) return false
+        return messages.any { it.localId == localId && it.delivery == Delivery.Sending }
     }
 
     /**
@@ -111,7 +111,11 @@ class ChannelBuffer(private val capacity: Int = 500) {
      * this is our own echo: reconcile rather than duplicate.
      */
     fun applyChat(frame: Inbound.Chat, myUserid: Long?): ChatMessage {
-        val pendingId = frame.customId?.let { byCustomId[it] }
+        // Only ours can reconcile ours: customIds are six characters and unique
+        // per user only, so someone else's chat carrying the same one is a
+        // different message that happens to collide.
+        val mine = myUserid == null || frame.userid == myUserid
+        val pendingId = frame.customId?.takeIf { mine }?.let { byCustomId[it] }
         if (pendingId != null) {
             val idx = messages.indexOfFirst { it.localId == pendingId }
             // Accept the echo for an already-downgraded message too: a slow
@@ -158,22 +162,27 @@ class ChannelBuffer(private val capacity: Int = 500) {
      * the target may have aged out of the ring, and a partial edit applied to
      * the wrong message is worse than a dropped one.
      *
-     * A growing edit is what marks a message as still streaming — a message is
-     * only known to be mid-stream once more of it actually arrives. `overwrite`
-     * leaves the flag alone: it is equally the one-shot edit a bot makes to a
-     * finished message, and inferring a stream from it would strand that
-     * message with an ellipsis it never sheds.
+     * The edit is scoped to the sender, as the server scopes it: a customId is
+     * at most six characters and is only unique per user, so an unscoped match
+     * would let one user's stream rewrite a message someone else sent.
+     *
+     * Mid-stream is deliberately not tracked. A stream has no reliable end —
+     * `complete` is optional in practice, since the reference client discards
+     * that frame's text and many bots never send one — so any "still typing"
+     * state we latched would outlive the stream it described. The text arriving
+     * is the signal.
      */
     fun applyUpdate(frame: Inbound.UpdateMessage): ChatMessage? {
         val localId = byCustomId[frame.customId] ?: return null
         val idx = messages.indexOfFirst { it.localId == localId }
         if (idx < 0) return null
         val current = messages[idx]
+        if (frame.userid != 0L && current.userid != 0L && frame.userid != current.userid) return null
         val updated = when (frame.updateMode) {
             UpdateMode.Overwrite -> current.copy(text = frame.text)
-            UpdateMode.Append -> current.copy(text = current.text + frame.text, streamComplete = false)
-            UpdateMode.Prepend -> current.copy(text = frame.text + current.text, streamComplete = false)
-            UpdateMode.Complete -> current.copy(text = current.text + frame.text, streamComplete = true)
+            UpdateMode.Append -> current.copy(text = current.text + frame.text)
+            UpdateMode.Prepend -> current.copy(text = frame.text + current.text)
+            UpdateMode.Complete -> current.copy(text = current.text + frame.text)
             UpdateMode.Unknown -> return null
         }
         messages[idx] = updated
@@ -223,7 +232,9 @@ class ChannelBuffer(private val capacity: Int = 500) {
     private fun trim() {
         while (messages.size > capacity) {
             val dropped = messages.removeFirst()
-            dropped.customId?.let { byCustomId.remove(it) }
+            // Only if it is still *this* message's mapping: a colliding customId
+            // may have left it pointing at a message that is still on screen.
+            dropped.customId?.let { if (byCustomId[it] == dropped.localId) byCustomId.remove(it) }
         }
     }
 }

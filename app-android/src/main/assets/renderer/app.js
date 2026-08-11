@@ -133,7 +133,7 @@
   // Signature of everything that affects rendering, so an unchanged message is
   // never re-rendered (re-running KaTeX on every frame is expensive).
   function signature(m) {
-    return [m.text, m.delivery, m.nick, m.streamComplete, m.kind, m.color, m.level,
+    return [m.text, m.delivery, m.nick, m.kind, m.color, m.level,
             m.trip, m.flair].join(' ');
   }
 
@@ -212,7 +212,11 @@
     // Deliberately not "failed": it may well have been delivered, and we cannot
     // tell, so the label must not push the user into a duplicate resend.
     else if (m.delivery === 'Unconfirmed') flag = '<span class="flag unconfirmed">unconfirmed</span>';
-    if (m.streamComplete === false) flag += '<span class="flag streaming">\u2026</span>';
+    // No "still typing" marker for a message being streamed by a bot. Nothing
+    // obliges a bot to close the stream \u2014 the reference client discards the
+    // text of a `complete` frame, so many never send one \u2014 and a marker that
+    // can outlive the thing it describes is worse than no marker: the text
+    // arriving is already the visible signal that more is coming.
 
     /*
      * Join and leave carry the nick structurally and no text at all, so the

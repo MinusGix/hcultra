@@ -27,7 +27,6 @@ internal data class WireMessage(
     val level: Int = 0,
     val delivery: String,
     val isMine: Boolean,
-    val streamComplete: Boolean,
 )
 
 object RendererBridge {
@@ -49,7 +48,6 @@ object RendererBridge {
                 level = it.level,
                 delivery = it.delivery.name,
                 isMine = it.isMine,
-                streamComplete = it.streamComplete,
             )
         },
     )

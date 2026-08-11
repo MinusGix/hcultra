@@ -116,7 +116,6 @@ class ChannelBufferTest {
 
         b.applyUpdate(Inbound.UpdateMessage(mode = "append", text = "+A", customId = "s1"))
         assertEquals("base+A", b.snapshot().single().text)
-        assertFalse(b.snapshot().single().streamComplete, "a growing message is mid-stream")
 
         b.applyUpdate(Inbound.UpdateMessage(mode = "prepend", text = "P-", customId = "s1"))
         assertEquals("P-base+A", b.snapshot().single().text)
@@ -126,29 +125,32 @@ class ChannelBufferTest {
 
         b.applyUpdate(Inbound.UpdateMessage(mode = "complete", text = "!", customId = "s1"))
         assertEquals("new!", b.snapshot().single().text)
-        assertTrue(b.snapshot().single().streamComplete)
     }
 
     /**
-     * Every client that reconciles its own echo puts a customId on the wire, so
-     * reading one as "a bot is still typing" marked ordinary messages — from
-     * this very app — as incomplete, and the renderer trailed each one with an
-     * ellipsis that never went away.
+     * A customId is six characters and unique per *user*, so an unscoped match
+     * lets one sender's edit rewrite someone else's message. The server scopes
+     * the edit by userid; so must we.
      */
     @Test
-    fun aCustomIdAloneDoesNotMeanStreaming() {
+    fun anUpdateOnlyEditsItsOwnSendersMessage() {
         val b = ChannelBuffer()
-        b.applyChat(chat("hello", customId = "abc123"), myUserid = 1L)
-        assertTrue(b.snapshot().single().streamComplete)
+        b.add(ChatMessage(0, MessageKind.Chat, userid = 7L, text = "mine", customId = "s1"))
+        assertNull(b.applyUpdate(Inbound.UpdateMessage(mode = "append", text = "!", customId = "s1", userid = 9L)))
+        assertEquals("mine", b.snapshot().single().text)
     }
 
-    /** A bot editing a finished message must not strand it mid-stream. */
+    /** Same customId, different sender: a collision, not our echo. */
     @Test
-    fun aLoneOverwriteLeavesTheMessageComplete() {
+    fun someoneElsesCustomIdDoesNotReconcileOurPending() {
         val b = ChannelBuffer()
-        b.add(ChatMessage(0, MessageKind.Chat, text = "base", customId = "s1"))
-        b.applyUpdate(Inbound.UpdateMessage(mode = "overwrite", text = "edited", customId = "s1"))
-        assertTrue(b.snapshot().single().streamComplete)
+        b.addPending("mine", "abc123", "me", 1L, 100L)
+        b.applyChat(chat("theirs", customId = "abc123", userid = 9L, nick = "other"), myUserid = 1L)
+        assertEquals(2, b.size)
+        assertEquals(Delivery.Sending, b.snapshot().first().delivery, "our message is still waiting for its own echo")
+        assertNotNull(b.applyChat(chat("mine", customId = "abc123", userid = 1L, nick = "me"), myUserid = 1L))
+        assertEquals(2, b.size, "our own echo still reconciles, despite the collision")
+        assertEquals(Delivery.Sent, b.snapshot().first().delivery)
     }
 
     /** Applying a partial edit to the wrong message is worse than dropping it. */
