@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -173,7 +174,6 @@ class MainActivity : ComponentActivity() {
             var schemeName by remember { mutableStateOf(themePrefs.scheme) }
             var highlightOverride by remember { mutableStateOf(themePrefs.highlightOverride) }
             var nickLayout by remember { mutableStateOf(themePrefs.nickLayout) }
-            var confirmClose by remember { mutableStateOf(themePrefs.confirmClose) }
             var notifyMentions by remember { mutableStateOf(notifyPrefs.mentions) }
             var notifyWhispers by remember { mutableStateOf(notifyPrefs.whispers) }
             var notifyOtherChannels by remember { mutableStateOf(notifyPrefs.otherChannels) }
@@ -247,11 +247,6 @@ class MainActivity : ComponentActivity() {
                                 nickLayout = it
                                 themePrefs.nickLayout = it
                             },
-                            confirmClose = confirmClose,
-                            onConfirmCloseChanged = {
-                                confirmClose = it
-                                themePrefs.confirmClose = it
-                            },
                             notifyMentions = notifyMentions,
                             onNotifyMentionsChanged = {
                                 notifyMentions = it
@@ -276,11 +271,7 @@ class MainActivity : ComponentActivity() {
                         onJoin = { channel, nick, pass -> startJoin(channel, nick, pass) },
                         onSend = { channel, text -> startSend(channel, text) },
                         onLeave = { channel -> startLeave(channel) },
-                        confirmClose = confirmClose,
-                        onStopAskingToClose = {
-                            confirmClose = false
-                            themePrefs.confirmClose = false
-                        },
+                        onUndoLeave = { channel -> startUndoLeave(channel) },
                         onModerate = { channel, action, target ->
                             startModerate(channel, action, target)
                         },
@@ -405,6 +396,16 @@ class MainActivity : ComponentActivity() {
         if (activeChannel == channel) activeChannel = null
     }
 
+    private fun startUndoLeave(channel: String) {
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, HcService::class.java).apply {
+                action = HcService.ACTION_UNDO_LEAVE
+                putExtra(HcService.EXTRA_CHANNEL, channel)
+            },
+        )
+    }
+
     /**
      * Paints the window itself from the scheme, so the frame that appears
      * before Compose has drawn anything is already the right colour.
@@ -468,9 +469,7 @@ private fun AppScreen(
     onJoin: (String, String, String?) -> Unit,
     onSend: (String, String) -> Unit,
     onLeave: (String) -> Unit,
-    /** Whether closing a tab asks first; see [ThemePrefs.confirmClose]. */
-    confirmClose: Boolean,
-    onStopAskingToClose: () -> Unit,
+    onUndoLeave: (String) -> Unit,
     onModerate: (String, ModAction, User) -> Unit,
     onActiveChanged: (String?) -> Unit,
     /** Who you have been on this server, most recent first. */
@@ -506,20 +505,24 @@ private fun AppScreen(
     // question: tapping another tab's count closed the roster you were looking
     // at instead of showing that tab's.
     var openRoster by remember { mutableStateOf<String?>(null) }
-    // A close waiting on confirmation. Held by channel rather than a boolean so
-    // the dialog can name what it is about to discard.
-    var pendingClose by remember { mutableStateOf<String?>(null) }
     // One draft per channel: switching tabs must not eat what you were typing.
     // Held as a TextFieldValue rather than a String so a mention can be dropped
     // at the cursor instead of always at the end.
     val drafts = remember { mutableStateMapOf<String, TextFieldValue>() }
 
-    val ordered = channels.values.toList()
+    // A closing channel is hidden the instant it is closed, but stays in the map
+    // — and on the wire — until its grace period runs out. Everything the tab
+    // strip and the selection logic do is in terms of the visible ones.
+    val ordered = channels.values.filterNot { it.closing }
+    val closing = channels.values.firstOrNull { it.closing }?.channel
 
     // Keep the selection valid as channels come and go, and tell the service
     // which one is on screen so its messages never count as unread.
-    LaunchedEffect(channels.keys, selected, awaitingJoin) {
-        val keys = channels.keys
+    LaunchedEffect(channels.keys, closing, selected, awaitingJoin) {
+        // Visible keys, not every key: a channel being closed must fall out of
+        // the selection immediately, or closing the tab you are reading leaves
+        // its transcript on screen for the whole grace period.
+        val keys = ordered.mapTo(LinkedHashSet()) { it.channel }
         if (awaitingJoin != null && keys.contains(awaitingJoin)) {
             selected = awaitingJoin
             awaitingJoin = null
@@ -543,7 +546,7 @@ private fun AppScreen(
         if (openRoster != null && openRoster != selected) openRoster = null
     }
 
-    val active = selected?.let { channels[it] }
+    val active = selected?.let { channels[it] }?.takeIf { !it.closing }
 
     val mention: (String) -> Unit = { nick ->
         active?.channel?.let { channel ->
@@ -608,21 +611,10 @@ private fun AppScreen(
             },
             onForget = onForget,
             onCancel = { showJoin = false; onPendingConsumed() },
+            closing = closing,
+            onUndoLeave = onUndoLeave,
         )
         if (ordered.isEmpty()) return
-    }
-
-    pendingClose?.let { channel ->
-        CloseChannelDialog(
-            channel = channel,
-            unread = channels[channel]?.unread ?: 0,
-            onConfirm = { stopAsking ->
-                if (stopAsking) onStopAskingToClose()
-                onLeave(channel)
-                pendingClose = null
-            },
-            onDismiss = { pendingClose = null },
-        )
     }
 
     Scaffold { padding ->
@@ -639,13 +631,21 @@ private fun AppScreen(
                 channels = ordered,
                 active = selected,
                 onSelect = { selected = it },
-                onClose = { if (confirmClose) pendingClose = it else onLeave(it) },
+                onClose = { onLeave(it) },
                 onAdd = { showJoin = true },
                 onShowRoster = { channel -> openRoster = channel.takeIf { it != openRoster } },
                 rosterOpenFor = openRoster,
                 onOpenSettings = onOpenThemes,
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
             )
+
+            closing?.let { channel ->
+                UndoCloseBar(
+                    channel = channel,
+                    onUndo = { onUndoLeave(channel) },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+            }
 
             if (active != null) {
                 // Only when something is wrong. "connected" and "resumed" are
@@ -732,57 +732,52 @@ private fun AppScreen(
 }
 
 /**
- * Confirms a close, and offers to stop asking.
+ * The take-back offered after closing a channel.
  *
- * The offer belongs here rather than only in Settings: someone who finds the
- * prompt unnecessary discovers that at the moment it interrupts them, and
- * making them go hunting for the switch is its own small insult.
+ * This replaces a confirmation dialog, and is better than one for this action
+ * specifically. The dialog interrupted every close to ask about the rare
+ * mistake, which is why it grew a "don't ask again" — and that switch removed
+ * the only guard on an action whose cost is unrecoverable, since hack.chat
+ * keeps no history to re-fetch. An undo charges the common case nothing and
+ * still catches the mistake.
+ *
+ * The channel is not actually left until this disappears, so taking it back
+ * emits no protocol traffic at all: no `onlineRemove`/`onlineAdd` pair, and the
+ * transcript is still in memory where it always was.
  */
 @Composable
-private fun CloseChannelDialog(
+private fun UndoCloseBar(
     channel: String,
-    unread: Int,
-    onConfirm: (stopAsking: Boolean) -> Unit,
-    onDismiss: () -> Unit,
+    onUndo: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    var stopAsking by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Close ?$channel?") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    buildString {
-                        append("You will leave the channel and its history will be discarded — ")
-                        append("hack.chat keeps none, so it cannot be fetched again.")
-                        if (unread > 0) {
-                            append(" There ")
-                            append(if (unread == 1) "is 1 unread message." else "are $unread unread messages.")
-                        }
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { stopAsking = !stopAsking }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Checkbox(checked = stopAsking, onCheckedChange = { stopAsking = it })
-                    Text("Don't ask again", style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(stopAsking) }) {
-                Text("Close", color = MaterialTheme.colorScheme.error)
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "Closed ?$channel",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = "Undo",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onUndo)
+                // Room to actually hit it. The lesson from the roster count:
+                // a target this important should not be glyph-sized.
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+        )
+    }
 }
 
 @Composable
@@ -796,6 +791,14 @@ private fun JoinSheet(
     onResumeLast: (List<ChannelIdentity>) -> Unit,
     onForget: (ChannelIdentity) -> Unit,
     onCancel: () -> Unit,
+    /**
+     * A channel closed moments ago, if any. Offered here as well as on the main
+     * screen because closing your *last* channel lands you on this sheet — and
+     * that is exactly the close most worth taking back, since it is the one that
+     * leaves nothing on screen to undo it from.
+     */
+    closing: String? = null,
+    onUndoLeave: (String) -> Unit = {},
 ) {
     // Prefilled from the most recent identity, but the *channel* drives the nick
     // from there on: people are routinely a different person in each channel, so
@@ -866,6 +869,9 @@ private fun JoinSheet(
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(onClick = onOpenSettings) { Text("Settings") }
+            }
+            closing?.let { channel ->
+                UndoCloseBar(channel = channel, onUndo = { onUndoLeave(channel) })
             }
             Column(modifier = Modifier.weight(1f, fill = false)) { body() }
             Button(onClick = submit, enabled = canSubmit) { Text("Connect") }

@@ -29,6 +29,12 @@ data class ChannelUi(
     val messages: List<ChatMessage> = emptyList(),
     val roster: List<chat.hc.core.protocol.User> = emptyList(),
     val unread: Int = 0,
+    /**
+     * Closed by the user, but not yet actually left — see [SessionManager.beginLeave].
+     * The socket is still up and the history is still here; the UI hides it and
+     * offers to take it back.
+     */
+    val closing: Boolean = false,
 )
 
 /**
@@ -54,6 +60,12 @@ class SessionManager(
      * to be longer than a bad connection's round trip.
      */
     private val echoTimeoutMillis: Long = 10_000,
+    /**
+     * How long a closed channel stays live and recoverable. Long enough to
+     * notice the tab is gone and reach the undo, short enough that a channel
+     * the user meant to leave is not still receiving on their behalf.
+     */
+    private val closeGraceMillis: Long = 8_000,
     private val now: () -> Long,
     /** Random enough to correlate our echo; not security-sensitive. */
     private val customIdFactory: () -> String,
@@ -72,6 +84,8 @@ class SessionManager(
     private val sessions = LinkedHashMap<String, ChannelSession>()
     private val buffers = LinkedHashMap<String, ChannelBuffer>()
     private val jobs = LinkedHashMap<String, Job>()
+    /** Pending [beginLeave] grace periods. Presence here means "closing". */
+    private val closeTimers = LinkedHashMap<String, Job>()
     private val lock = Mutex()
 
     private val _channels = MutableStateFlow<Map<String, ChannelUi>>(emptyMap())
@@ -111,6 +125,14 @@ class SessionManager(
      */
     suspend fun join(channel: String, credentials: Credentials) {
         lock.withLock {
+            // Joining a channel on its way out calls off the departure. Without
+            // this, re-joining one you just closed with the same identity hits
+            // the no-op below and leaves it hidden, waiting to disappear.
+            closeTimers.remove(channel)?.let { timer ->
+                timer.cancel()
+                mutate(channel) { ui -> ui.copy(closing = false) }
+            }
+
             val existing = sessions[channel]
             if (existing != null) {
                 if (existing.credentials == credentials) return
@@ -168,20 +190,68 @@ class SessionManager(
         serverUrl = url
     }
 
+    /**
+     * Hides a channel and starts the clock on actually leaving it.
+     *
+     * Deferred rather than undone, because the two are not equivalent here: the
+     * server keeps no history, so a leave-then-rejoin cannot restore the
+     * transcript, and it costs the whole channel an `onlineRemove`/`onlineAdd`
+     * pair — the same peer-visible noise `upstream-asks.md` exists to complain
+     * about. Waiting instead means an undo emits nothing at all: as far as the
+     * channel is concerned the user never left.
+     *
+     * Idempotent, so a second close of a channel already closing does not
+     * restart its grace period.
+     */
+    suspend fun beginLeave(channel: String) {
+        lock.withLock {
+            if (channel !in sessions || channel in closeTimers) return
+            mutate(channel) { it.copy(closing = true) }
+            closeTimers[channel] = scope.launch {
+                delay(closeGraceMillis)
+                // Taken after the delay, not before, so the timer does not hold
+                // the lock for the whole grace period. An undo that lands while
+                // this is waiting cancels the job, and the guard covers the
+                // sliver where it lands after the wait but before the lock.
+                lock.withLock {
+                    if (channel in closeTimers) commitLeave(channel)
+                }
+            }
+        }
+    }
+
+    /** Takes back a [beginLeave] while its grace period is still running. */
+    suspend fun undoLeave(channel: String) {
+        lock.withLock {
+            val timer = closeTimers.remove(channel) ?: return
+            timer.cancel()
+            mutate(channel) { it.copy(closing = false) }
+        }
+    }
+
+    /** Leaves now, without waiting out the grace period. */
     suspend fun leave(channel: String) {
         lock.withLock {
-            sessions.remove(channel)?.stop()
-            jobs.remove(channel)?.cancel()
-            buffers.remove(channel)
-            _channels.update { it - channel }
+            closeTimers.remove(channel)?.cancel()
+            commitLeave(channel)
         }
+    }
+
+    /** Caller holds [lock]. */
+    private suspend fun commitLeave(channel: String) {
+        closeTimers.remove(channel)
+        sessions.remove(channel)?.stop()
+        jobs.remove(channel)?.cancel()
+        buffers.remove(channel)
+        _channels.update { it - channel }
     }
 
     suspend fun stopAll() {
         lock.withLock {
+            closeTimers.values.forEach { it.cancel() }
             sessions.values.forEach { it.stop() }
             jobs.values.forEach { it.cancel() }
-            sessions.clear(); jobs.clear(); buffers.clear()
+            sessions.clear(); jobs.clear(); buffers.clear(); closeTimers.clear()
             _channels.update { emptyMap() }
         }
     }

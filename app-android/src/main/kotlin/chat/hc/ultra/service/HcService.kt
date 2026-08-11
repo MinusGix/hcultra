@@ -89,7 +89,20 @@ class HcService : Service() {
         // channels are connected and how much is unread, and carries the
         // direct-reply action.
         scope.launch {
-            sessions.channels.collect { notifications.update(it) }
+            // The map is empty before the first join too, and that must not be
+            // read as "the last channel just left".
+            var everJoined = false
+            sessions.channels.collect { channels ->
+                // A closing channel is already gone as far as the user is
+                // concerned; it should not be listed, and its unread should not
+                // be counted, while it waits out its grace period.
+                notifications.update(channels.filterValues { !it.closing })
+                if (channels.isNotEmpty()) everJoined = true
+                // The last channel leaving for real is what stops the service.
+                // Checked here rather than at ACTION_LEAVE because the leave now
+                // completes on a timer, long after the intent was handled.
+                else if (everJoined) stopSelf()
+            }
         }
 
         // Mentions and whispers, the two things said *to* the user rather than
@@ -100,6 +113,9 @@ class HcService : Service() {
             val prefs = NotifyPrefs(this@HcService)
             sessions.alerts.collect { alert ->
                 if (!prefs.wants(alert.kind)) return@collect
+                // A channel the user has closed does not get to buzz them on its
+                // way out, even though its socket is briefly still live.
+                if (sessions.channels.value[alert.channel]?.closing == true) return@collect
                 if (uiForeground) {
                     // The channel on screen never alerts: the message is
                     // already in front of the user.
@@ -112,7 +128,10 @@ class HcService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(ChatNotifications.ONGOING_ID, notifications.build(sessions.channels.value))
+        startForeground(
+            ChatNotifications.ONGOING_ID,
+            notifications.build(sessions.channels.value.filterValues { !it.closing }),
+        )
 
         when (intent?.action) {
             ACTION_JOIN -> {
@@ -125,10 +144,16 @@ class HcService : Service() {
             ACTION_LEAVE -> {
                 val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
                 notifications.clearAlerts(channel)
-                scope.launch {
-                    sessions.leave(channel)
-                    if (sessions.channels.value.isEmpty()) stopSelf()
-                }
+                // Deferred: the socket stays up for the grace period so an undo
+                // costs the channel nothing. stopSelf is not called here — the
+                // channel is still in the map, and the collector below handles
+                // the shutdown once the leave actually commits.
+                scope.launch { sessions.beginLeave(channel) }
+            }
+
+            ACTION_UNDO_LEAVE -> {
+                val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
+                scope.launch { sessions.undoLeave(channel) }
             }
 
             ACTION_SEND -> {
@@ -191,6 +216,7 @@ class HcService : Service() {
 
         const val ACTION_JOIN = "chat.hc.ultra.JOIN"
         const val ACTION_LEAVE = "chat.hc.ultra.LEAVE"
+        const val ACTION_UNDO_LEAVE = "chat.hc.ultra.UNDO_LEAVE"
         const val ACTION_SEND = "chat.hc.ultra.SEND"
         const val ACTION_STOP = "chat.hc.ultra.STOP"
         const val ACTION_SET_SERVER = "chat.hc.ultra.SET_SERVER"
