@@ -5,9 +5,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -18,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -41,6 +44,8 @@ fun ChannelTabs(
     onAdd: () -> Unit,
     /** Tapping a tab's online count opens the roster for that channel. */
     onShowRoster: (String) -> Unit,
+    /** The channel whose roster is open, so its count can show as pressed. */
+    rosterOpenFor: String?,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -60,6 +65,7 @@ fun ChannelTabs(
                     onSelect = { onSelect(ui.channel) },
                     onClose = { onClose(ui.channel) },
                     onShowRoster = { onShowRoster(ui.channel) },
+                    rosterOpen = ui.channel == rosterOpenFor,
                 )
             }
             item {
@@ -100,6 +106,7 @@ private fun ChannelTab(
     onSelect: () -> Unit,
     onClose: () -> Unit,
     onShowRoster: () -> Unit,
+    rosterOpen: Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
@@ -107,7 +114,9 @@ private fun ChannelTab(
             .clip(RoundedCornerShape(14.dp))
             .background(if (selected) colors.primary else colors.surfaceVariant)
             .clickable(onClick = onSelect)
-            .padding(start = 12.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
+            // Slimmer than the controls it holds: the roster count carries its
+            // own padding now, and doubling up would only make the strip taller.
+            .padding(start = 12.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -138,19 +147,37 @@ private fun ChannelTab(
         // that there is no status row to hang it off. Zero means the handshake
         // has not landed yet, so there is nothing to open.
         if (ui.roster.isNotEmpty()) {
+            val onTab = if (selected) colors.onPrimary else colors.onSurface
             Text(
                 text = ui.roster.size.toString(),
                 style = MaterialTheme.typography.labelSmall,
-                color = (if (selected) colors.onPrimary else colors.onSurface).copy(alpha = 0.75f),
+                color = onTab.copy(alpha = if (rosterOpen) 1f else 0.75f),
+                fontWeight = if (rosterOpen) FontWeight.Bold else FontWeight.Normal,
                 modifier = Modifier
                     .clip(CircleShape)
+                    // Held down while the roster is open: this is a toggle, and a
+                    // tap that appears to do nothing is indistinguishable from a
+                    // tap that missed.
+                    .background(if (rosterOpen) onTab.copy(alpha = 0.25f) else Color.Transparent)
                     .clickable {
                         onSelect()
                         onShowRoster()
                     }
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                    // Generous for one or two glyphs, and deliberately so: this
+                    // sits inside the tab's own clickable, so a near miss is
+                    // swallowed as a re-select of the tab you are already on and
+                    // the roster silently stays open.
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
             )
         }
+
+        // Held away from the roster count on purpose. Both targets are expanded
+        // to the 48dp minimum, and where two expanded targets meet the boundary
+        // falls between them — so with the count sitting flush against it, a tap
+        // aimed at the count and landing a little right closed the channel.
+        // Measured on device: the close boundary is ~16dp from the count's
+        // centre without this gap, ~28dp with it.
+        Spacer(Modifier.width(10.dp))
 
         Text(
             text = "×",

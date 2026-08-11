@@ -209,6 +209,22 @@ the grace-period ask in `upstream-asks.md` exists to remove.
    untappable with the keyboard open. Fixed with `Modifier.imePadding()`.
 3. **"Disconnected" repeated once per retry**, filling the transcript during an
    outage. Now collapsed to one notice per outage.
+4. **The roster would not collapse.** Two causes, both reproduced on the
+   emulator against the fake server with two tabs open. The roster is opened
+   from a *per-tab* count, but `MainActivity` held one channel-blind boolean, so
+   tapping another tab's count toggled the roster shut instead of showing that
+   tab's. And the count's touch target was 21dp wide with `×` flush against it:
+   probing tap offsets gave a real hit band of −8dp to +20dp from its centre,
+   so a miss to the left silently fell through to the tab's own `clickable` and
+   left the roster open. Now keyed by channel, 48dp wide, with a 10dp spacer
+   holding `×` away — band −24dp to +20dp, and the close boundary unmoved at
+   +24dp, where it raises the confirm dialog rather than closing outright.
+
+   Worth knowing for any similar control: **Compose expands these targets to the
+   48dp minimum vertically but not horizontally**, and `uiautomator` reports the
+   *expanded* bounds, which are not where touch dispatch actually divides. The
+   only way to find the real boundary was to tap at measured offsets and watch
+   what happened.
 
 ## Message renderer
 

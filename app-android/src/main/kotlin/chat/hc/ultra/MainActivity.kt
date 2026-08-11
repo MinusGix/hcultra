@@ -501,7 +501,11 @@ private fun AppScreen(
     // to the first tab the instant you join a new channel.
     var awaitingJoin by remember { mutableStateOf<String?>(null) }
     var showJoin by remember { mutableStateOf(false) }
-    var showUsers by remember { mutableStateOf(false) }
+    // Which channel's roster is open, rather than a bare "is it open" — the way
+    // in is a per-tab count, so a channel-blind toggle answered the wrong
+    // question: tapping another tab's count closed the roster you were looking
+    // at instead of showing that tab's.
+    var openRoster by remember { mutableStateOf<String?>(null) }
     // A close waiting on confirmation. Held by channel rather than a boolean so
     // the dialog can name what it is about to discard.
     var pendingClose by remember { mutableStateOf<String?>(null) }
@@ -528,6 +532,15 @@ private fun AppScreen(
         }
         if (valid != selected) selected = valid
         onActiveChanged(valid?.takeIf { keys.contains(it) })
+    }
+
+    // A roster only shows for the channel on screen, so leaving that channel has
+    // to forget it too. Otherwise the state says "alpha's roster is open" while
+    // nothing is on screen, and tapping alpha's count closes the invisible one
+    // instead of showing it — a tap that does nothing, which is the exact
+    // complaint this set of changes exists to fix.
+    LaunchedEffect(selected) {
+        if (openRoster != null && openRoster != selected) openRoster = null
     }
 
     val active = selected?.let { channels[it] }
@@ -628,7 +641,8 @@ private fun AppScreen(
                 onSelect = { selected = it },
                 onClose = { if (confirmClose) pendingClose = it else onLeave(it) },
                 onAdd = { showJoin = true },
-                onShowRoster = { showUsers = !showUsers },
+                onShowRoster = { channel -> openRoster = channel.takeIf { it != openRoster } },
+                rosterOpenFor = openRoster,
                 onOpenSettings = onOpenThemes,
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
             )
@@ -647,7 +661,7 @@ private fun AppScreen(
                     )
                 }
 
-                if (showUsers) {
+                if (openRoster == active.channel) {
                     UserList(
                         users = active.roster,
                         modActionsFor = { target ->
@@ -660,7 +674,7 @@ private fun AppScreen(
                             // The server's /w strips a leading @, so this works
                             // whether or not the nick was mentioned first.
                             drafts[active.channel] = fieldValue("/w $nick ")
-                            showUsers = false
+                            openRoster = null
                         },
                         onMention = { nick -> mention(nick) },
                         modifier = Modifier.padding(horizontal = 12.dp),
