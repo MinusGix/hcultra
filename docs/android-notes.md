@@ -11,7 +11,7 @@ Verified working on Linux, 2026-08-04:
 | AGP | 9.3.1 |
 | Kotlin | 2.4.10 |
 | Ktor | 3.5.2 |
-| compileSdk | 37 (`platforms;android-37.1`) |
+| compileSdk | 37 (`platforms;android-37.1` for the app, `android-37.0` for `:core`) |
 | minSdk | 26 |
 
 Three toolchain traps, all hit and resolved:
@@ -33,6 +33,34 @@ Note the SDK package naming changed: platforms are now minor-versioned
 (`android-37.1`), and the cmdline-tools shipped in `/opt/android-sdk` were too
 old to parse the current repository XML (v4). A newer cmdline-tools was needed
 just to *see* the package.
+
+## Nix
+
+`flake.nix` provides the whole toolchain: `nix develop` gives JDK 21, the SDK,
+and Node for `probe/`. Gradle itself is deliberately *not* in the shell — the
+committed wrapper pins 9.6.1, and a second `gradle` on the PATH is how people
+end up building with the wrong one.
+
+Three things the shell sets that a hand-rolled SDK on NixOS will not:
+
+1. **`aapt2FromMavenOverride`.** AGP downloads a prebuilt `aapt2` from Maven,
+   linked against an FHS loader that does not exist, so every Android build
+   fails with a bare ENOENT. The shell points it at the SDK's patched copy via
+   `GRADLE_OPTS`.
+2. **`ANDROID_SDK_ROOT` as well as `ANDROID_HOME`.** `avdmanager` reads only the
+   former.
+3. **Both platforms, and AGP's own build-tools version.** The store SDK is
+   read-only, so anything AGP resolves but does not find is a hard failure
+   ("The SDK directory is not writable") rather than a download — which is how
+   the `36.0.0` build-tools pin and the `android-37.0` platform were discovered.
+   Both are pinned in `flake.nix`, and **an AGP bump means re-checking both.**
+
+The emulator is a separate shell, `nix develop .#emulator`, because it costs a
+system image per platform version. Paths in the section below become
+`$ANDROID_HOME/emulator/emulator` and `$ANDROID_HOME/cmdline-tools/…`; the
+`system-images;android-37.1;google_apis;x86_64` package is what the shell
+provides, in place of the API 36 image originally used. `ANDROID_USER_HOME`
+still points at `~/.android`, so AVDs survive outside the store.
 
 ## Foreground service type
 

@@ -68,12 +68,16 @@ gh attestation verify hcultra-*.apk --repo MinusGix/hcultra
 
 ## Building it yourself
 
-Needs JDK 21 and an Android SDK with platform 37.1.
+Needs JDK 21 and an Android SDK with platforms 37.0 and 37.1.
 
 ```sh
 ./gradlew :core:jvmTest              # protocol tests, no network
 ./gradlew :app-android:assembleDebug # APK in app-android/build/outputs/apk/debug/
 ```
+
+On Nix, `nix develop` supplies both, already configured — see
+`docs/android-notes.md § Nix`. Everywhere else, install them yourself; the
+Gradle wrapper is committed, so nothing else is needed.
 
 `docs/releasing.md` covers signing and how a release is cut.
 

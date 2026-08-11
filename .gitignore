@@ -20,6 +20,11 @@ probe/.governor.json
 # `ws` for probe/fakeserver.mjs; installed with --no-save, see probe/README.
 node_modules/
 
+# Nix
+result
+result-*
+.direnv/
+
 # Editors / OS
 .idea/
 *.iml
