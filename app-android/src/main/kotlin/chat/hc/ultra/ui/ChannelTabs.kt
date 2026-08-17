@@ -42,7 +42,7 @@ fun ChannelTabs(
     onSelect: (String) -> Unit,
     onClose: (String) -> Unit,
     onAdd: () -> Unit,
-    /** Tapping a tab's online count opens the roster for that channel. */
+    /** Tapping the channel you are on — or any tab's online count — opens its roster. */
     onShowRoster: (String) -> Unit,
     /** The channel whose roster is open, so its count can show as pressed. */
     rosterOpenFor: String?,
@@ -113,7 +113,23 @@ private fun ChannelTab(
         modifier = Modifier
             .clip(RoundedCornerShape(14.dp))
             .background(if (selected) colors.primary else colors.surfaceVariant)
-            .clickable(onClick = onSelect)
+            /*
+             * The channel you are already on is the way into its roster.
+             *
+             * The count beside it did that and only that, and people did not
+             * find it: a small number reads as a label, not a control, and there
+             * is nothing else on screen suggesting the user list exists. The
+             * channel name is the obvious thing to press when you want to know
+             * about the channel.
+             *
+             * Selecting a *different* tab stays a selection and nothing more.
+             * Switching channel should not also throw a roster over the
+             * conversation you switched to in order to read.
+             */
+            .clickable(
+                onClickLabel = if (selected) "Show who is here" else "Switch to this channel",
+                onClick = { if (selected) onShowRoster() else onSelect() },
+            )
             // Slimmer than the controls it holds: the roster count carries its
             // own padding now, and doubling up would only make the strip taller.
             .padding(start = 12.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
@@ -143,9 +159,10 @@ private fun ChannelTab(
             )
         }
 
-        // How many people are here, per tab — and the way into the roster, now
-        // that there is no status row to hang it off. Zero means the handshake
-        // has not landed yet, so there is nothing to open.
+        // How many people are here, per tab. Still a way into the roster, and
+        // for a tab you are *not* on it is the only one that skips a step —
+        // select and open in a single tap. Zero means the handshake has not
+        // landed yet, so there is nothing to open.
         if (ui.roster.isNotEmpty()) {
             val onTab = if (selected) colors.onPrimary else colors.onSurface
             Text(
@@ -163,10 +180,10 @@ private fun ChannelTab(
                         onSelect()
                         onShowRoster()
                     }
-                    // Generous for one or two glyphs, and deliberately so: this
-                    // sits inside the tab's own clickable, so a near miss is
-                    // swallowed as a re-select of the tab you are already on and
-                    // the roster silently stays open.
+                    // Generous for one or two glyphs. This sits inside the tab's
+                    // own clickable, so a near miss falls through to it — which
+                    // on the selected tab now toggles the roster too, meaning the
+                    // miss does what was intended instead of silently nothing.
                     .padding(horizontal = 8.dp, vertical = 6.dp),
             )
         }

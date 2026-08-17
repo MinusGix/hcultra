@@ -191,6 +191,9 @@ Against live hack.chat, with an independent Node observer
   channel restored by token (state reported `resumed`, i.e. `restored=true`)
 - network loss → `Reconnecting (attempt 1)` → restore-by-token on recovery, and
   the app logged "Reconnected." (only emitted when `restored=true`)
+- the roster from the tab body: tapping the selected channel opens it and taps
+  again to close, tapping the other tab only switches, and `×` still closes the
+  channel rather than being swallowed by the tab's new action
 - join/left notify, against `--mode demo` (which churns a peer in and out every
   five seconds): with it off the existing lines disappear, no new ones arrive
   over several more cycles, and the user list still shows that peer coming and
@@ -234,6 +237,14 @@ the grace-period ask in `upstream-asks.md` exists to remove.
    *expanded* bounds, which are not where touch dispatch actually divides. The
    only way to find the real boundary was to tap at measured offsets and watch
    what happened.
+
+   Since then the tab body opens the roster too, for the channel you are already
+   on — users reported not finding the user list at all, a count being a label
+   to look at rather than a control to press. That also turns the near miss
+   above into a hit: a tap aimed at the count and landing left of it now falls
+   through to the tab and does the same thing. Tapping a tab you are *not* on
+   still only selects it; switching channel should not fling a roster over the
+   conversation you switched to in order to read.
 5. **`vh` measured zero in the renderer.** Images capped at `max-height: 55vh`
    came out as 20px thumbnails — the cap resolved to 0, leaving the `min-height`
    floor beneath it to size them. The cap is in px now. Any length in this
