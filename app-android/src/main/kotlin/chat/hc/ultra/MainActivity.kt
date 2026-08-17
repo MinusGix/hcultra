@@ -279,6 +279,7 @@ class MainActivity : ComponentActivity() {
                                 notifyPrefs.otherChannels = it
                             },
                             onOpenSystemNotifications = { openNotificationSettings(it) },
+                            onOpenLink = { url -> openExternal(url) },
                             onDismiss = { showThemes = false },
                         )
                     }

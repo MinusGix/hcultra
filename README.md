@@ -36,6 +36,11 @@ uploaded by hand — and carries a signed attestation saying so:
 gh attestation verify hcultra-*.apk --repo MinusGix/hcultra
 ```
 
+Since sideloading means nothing tells you a new version exists, **Settings →
+About** names the version you are running and will ask GitHub whether there is a
+newer one. Only when you press it: there is no check on launch and nothing in
+the background.
+
 ## What it does
 
 - **Stays connected in the background.** A foreground service owns the socket,

@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,18 +31,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
 import chat.hc.core.session.Servers
+import chat.hc.ultra.data.REPO_URL
+import chat.hc.ultra.data.UpdateStatus
+import chat.hc.ultra.data.checkForUpdate
+import chat.hc.ultra.data.installedVersion
 import chat.hc.ultra.service.ChatNotifications
+import kotlinx.coroutines.launch
 
 /**
  * Settings: server endpoint, then theming.
@@ -78,6 +86,8 @@ fun ThemeSheet(
     onNotifyOtherChannelsChanged: (Boolean) -> Unit,
     /** Opens the system's own settings for one notification channel id. */
     onOpenSystemNotifications: (String) -> Unit,
+    /** Hands a URL to the browser, through the same http/https check links use. */
+    onOpenLink: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -239,8 +249,104 @@ fun ThemeSheet(
                     )
                 }
             }
+
+            About(onOpenLink = onOpenLink)
         }
     }
+}
+
+/**
+ * Which version this is, where it came from, and whether there is a newer one.
+ *
+ * At the bottom because it is the section you go looking for rather than the
+ * one you pass through. The update check runs when it is pressed and at no
+ * other time — see [checkForUpdate].
+ */
+@Composable
+private fun About(onOpenLink: (String) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val version = remember(context) { installedVersion(context) }
+    var checking by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<UpdateStatus?>(null) }
+
+    Text(
+        "About",
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.padding(top = 20.dp),
+    )
+    Text(
+        "hcultra $version",
+        style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+    Text(
+        "An unofficial client. hack.chat is by Andrew Belt and contributors.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Row(
+        Modifier.padding(top = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(
+            enabled = !checking,
+            onClick = {
+                checking = true
+                status = null
+                scope.launch {
+                    status = checkForUpdate(context)
+                    checking = false
+                }
+            },
+        ) { Text(if (checking) "Checking…" else "Check for updates") }
+
+        TextButton(onClick = { onOpenLink(REPO_URL) }) { Text("Source on GitHub") }
+    }
+
+    // Nothing at all until the button has been pressed: a blank line here says
+    // "not checked", which is the truth and is also the resting state.
+    when (val result = status) {
+        null -> Unit
+
+        UpdateStatus.UpToDate -> Text(
+            "Up to date.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        is UpdateStatus.Available -> Column {
+            Text(
+                "${result.release.tag} is available.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            // No in-app download: an APK this app fetched and handed to the
+            // installer would be an update path with no signature check of its
+            // own in front of it. The release page is where the attested build
+            // is, and Android does the verifying from there.
+            TextButton(
+                onClick = { onOpenLink(result.release.url) },
+                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+            ) { Text("Open the release page") }
+        }
+
+        is UpdateStatus.Failed -> Text(
+            result.reason + ".",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+
+    Text(
+        "Checking asks GitHub for the latest release, and sends nothing else. " +
+            "It happens only when you press the button.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp),
+    )
 }
 
 /**
