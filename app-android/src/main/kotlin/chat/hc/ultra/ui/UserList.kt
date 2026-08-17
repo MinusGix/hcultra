@@ -68,11 +68,13 @@ fun UserList(
         )
     }
 
-    // Moderators and admins first, then alphabetically — the same ordering the
-    // level colours imply, so the list does not reshuffle as people talk.
-    val sorted = users.sortedWith(
-        compareByDescending<User> { it.level }.thenBy { it.nick.lowercase() }
-    )
+    // Server order, untouched: whoever `onlineSet` listed, then arrivals as they
+    // arrived — the same order the site's list is in, and the same order the
+    // "Users online" line in the transcript gives. Sorting by level and name
+    // read as tidier and was worse: it put people somewhere other than where
+    // both of the other two places had just shown them, for a rank that the
+    // colours already say. Position here means "has been here longest", which is
+    // at least something the list is in a position to know.
 
     Column(
         modifier = modifier
@@ -92,7 +94,7 @@ fun UserList(
             modifier = Modifier.heightIn(max = 220.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            items(sorted, key = { it.userid }) { user ->
+            items(users, key = { it.userid }) { user ->
                 UserRow(
                     user = user,
                     onClick = { onMention(user.nick) },
