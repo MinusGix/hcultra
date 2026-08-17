@@ -191,6 +191,10 @@ Against live hack.chat, with an independent Node observer
   channel restored by token (state reported `resumed`, i.e. `restored=true`)
 - network loss → `Reconnecting (attempt 1)` → restore-by-token on recovery, and
   the app logged "Reconnected." (only emitted when `restored=true`)
+- join/left notify, against `--mode demo` (which churns a peer in and out every
+  five seconds): with it off the existing lines disappear, no new ones arrive
+  over several more cycles, and the user list still shows that peer coming and
+  going — presence is a different question from arrival
 - images, against `fakeserver.mjs --mode normal`: an `i.ytimg.com` URL renders
   as a link with the setting off, as a full-width picture with it on, and back
   to a link when it is turned off again — each without a reconnect or a reload,

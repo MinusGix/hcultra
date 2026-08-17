@@ -66,6 +66,22 @@ class SessionManager(
      * the user meant to leave is not still receiving on their behalf.
      */
     private val closeGraceMillis: Long = 8_000,
+    /**
+     * Whether someone arriving or leaving is worth a line in the transcript —
+     * the site's "Join/left notify", on by default there and here.
+     *
+     * A supplier rather than a value: it is a user setting, changed from the
+     * settings sheet while this manager is alive in the service, and each event
+     * should honour what it says now. Read per event, as [chat.hc.core.session.Alert]
+     * preferences are.
+     *
+     * Consulted *before* the buffer rather than at render time, which the site
+     * has no need to do: the buffer is bounded and holds the only copy of the
+     * conversation there is, so a busy channel's join spam would evict real
+     * messages the server cannot re-serve. The roster is unaffected either way —
+     * who is here is a different question from who just arrived.
+     */
+    private val showJoinLeave: () -> Boolean = { true },
     private val now: () -> Long,
     /** Random enough to correlate our echo; not security-sensitive. */
     private val customIdFactory: () -> String,
@@ -400,11 +416,11 @@ class SessionManager(
                 ChatMessage(0, MessageKind.Warning, text = event.frame.text, at = event.frame.time ?: now())
             )
 
-            is SessionEvent.UserJoined -> buffer.add(
+            is SessionEvent.UserJoined -> if (showJoinLeave()) buffer.add(
                 ChatMessage(0, MessageKind.Join, event.user.nick, event.user.userid, at = now())
             )
 
-            is SessionEvent.UserLeft -> buffer.add(
+            is SessionEvent.UserLeft -> if (showJoinLeave()) buffer.add(
                 ChatMessage(0, MessageKind.Leave, event.nick, event.userid, at = now())
             )
 

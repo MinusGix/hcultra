@@ -68,6 +68,8 @@ fun ThemeSheet(
     onNickLayoutSelected: (NickLayout) -> Unit,
     allowImages: Boolean,
     onAllowImagesChanged: (Boolean) -> Unit,
+    joinLeave: Boolean,
+    onJoinLeaveChanged: (Boolean) -> Unit,
     notifyMentions: Boolean,
     onNotifyMentionsChanged: (Boolean) -> Unit,
     notifyWhispers: Boolean,
@@ -116,9 +118,21 @@ fun ThemeSheet(
             }
 
             Text(
-                "Images",
+                "Transcript",
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(top = 16.dp),
+            )
+            ToggleRow(
+                title = "Show joins and leaves",
+                // Why it is worth more than the site's version of the same
+                // switch: there, hiding them only tidies the view. Here they
+                // occupy the buffer that holds the only copy of the
+                // conversation, so a busy channel spends it on arrivals.
+                subtitle = "The site's \"Join/left notify\". Off, a busy channel keeps more " +
+                    "of what was actually said — nothing here is re-fetchable. The user " +
+                    "list still tracks who is present.",
+                checked = joinLeave,
+                onChanged = onJoinLeaveChanged,
             )
             ToggleRow(
                 title = "Show images in the transcript",

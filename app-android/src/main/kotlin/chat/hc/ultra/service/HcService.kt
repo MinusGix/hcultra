@@ -12,6 +12,7 @@ import chat.hc.core.session.SessionManager
 import chat.hc.ultra.data.KeystoreTokenStore
 import chat.hc.ultra.ui.NotifyPrefs
 import chat.hc.ultra.ui.ServerPrefs
+import chat.hc.ultra.ui.ThemePrefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -71,11 +72,16 @@ class HcService : Service() {
     override fun onCreate() {
         super.onCreate()
         net = ManagedTransport.create()
+        // Read per event rather than captured: the settings sheet writes it in
+        // the Activity while this manager lives on in the service, and a
+        // SharedPreferences read is cheaper than the wiring to observe one.
+        val display = ThemePrefs(this)
         sessions = SessionManager(
             scope = scope,
             initialUrl = ServerPrefs(this).url,
             transport = net.transport,
             tokenStore = KeystoreTokenStore(this),
+            showJoinLeave = { display.joinLeave },
             now = { System.currentTimeMillis() },
             // Must be <= 6 chars: chat.js drops a longer customId silently and
             // charges 13 rate-limit points of 25. 36^6 is ample for correlating

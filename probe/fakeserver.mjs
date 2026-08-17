@@ -11,7 +11,9 @@
  *   drop    — accept the handshake, then close the socket after N seconds
  *   demo    — like normal, plus a short scripted exchange from the other users
  *             in the roster, so the transcript is populated for screenshots and
- *             for eyeballing rendering changes. Nothing depends on it.
+ *             for eyeballing rendering changes. Nothing depends on it. Also
+ *             churns a peer in and out every five seconds, which is the only
+ *             way to see join/leave handling on demand.
  *   restore — honour session tokens, reinstating the identity they were issued
  *             for. This is the one the real server does and the fake one could
  *             not: a restore *overrides* the join that would have followed, so
@@ -97,6 +99,7 @@ console.log(`  emulator: use 10.0.2.2:${port}`);
 
 wss.on('connection', (ws) => {
   const state = { userid: nextUserid++, nick: null, channel: null, trip: '' };
+  let churn = null;
   const send = (obj) => ws.send(JSON.stringify({ ...obj, time: Date.now() }));
   const log = (m) => console.log(`  [${state.nick ?? '?'}] ${m}`);
 
@@ -174,6 +177,27 @@ wss.on('connection', (ws) => {
             id: Math.floor(Math.random() * 999999),
           }), after);
         }
+
+        /*
+         * A peer arriving and leaving, on a loop.
+         *
+         * The real server only produces these when somebody else actually comes
+         * and goes, which is not something a test can ask it for — and the
+         * "join/left notify" setting is precisely a claim about what happens
+         * next, so it needs events that keep arriving after the setting is
+         * changed rather than a single scripted pair.
+         */
+        let present = false;
+        churn = setInterval(() => {
+          present = !present;
+          send({
+            cmd: present ? 'onlineAdd' : 'onlineRemove',
+            nick: 'wanderer',
+            userid: 4244,
+            channel: p.channel,
+            ...(present ? { level: 100, trip: '', flair: flairFor(100) } : {}),
+          });
+        }, 5000);
       }
 
       if (mode === 'drop') {
@@ -208,5 +232,8 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => log('disconnected'));
+  ws.on('close', () => {
+    if (churn) clearInterval(churn);
+    log('disconnected');
+  });
 });

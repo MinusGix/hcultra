@@ -99,7 +99,13 @@ class ServerPrefs(context: Context) {
     }
 }
 
-/** Persisted theme choice. Plain prefs: nothing here is sensitive. */
+/**
+ * How the transcript is presented: colours, layout, and what it shows at all.
+ *
+ * Plain prefs — nothing here is sensitive — and read from the service as well
+ * as the Activity, since some of it decides what is worth keeping rather than
+ * only how it looks.
+ */
 class ThemePrefs(context: Context) {
     private val prefs = context.getSharedPreferences("hc_theme", Context.MODE_PRIVATE)
 
@@ -135,10 +141,24 @@ class ThemePrefs(context: Context) {
         get() = prefs.getBoolean(KEY_IMAGES, false)
         set(value) = prefs.edit().putBoolean(KEY_IMAGES, value).apply()
 
+    /**
+     * Whether someone arriving or leaving gets a line in the transcript — the
+     * site's "Join/left notify", on by default there and here.
+     *
+     * Suppression happens in the service, before the message is buffered, so
+     * turning this off also keeps a busy channel's join spam from evicting real
+     * messages: history lives only in memory and the server cannot re-serve it.
+     * The user list is unaffected.
+     */
+    var joinLeave: Boolean
+        get() = prefs.getBoolean(KEY_JOIN_LEAVE, true)
+        set(value) = prefs.edit().putBoolean(KEY_JOIN_LEAVE, value).apply()
+
     private companion object {
         const val KEY_SCHEME = "scheme"
         const val KEY_HIGHLIGHT = "highlight"
         const val KEY_LAYOUT = "nick_layout"
         const val KEY_IMAGES = "allow_images"
+        const val KEY_JOIN_LEAVE = "join_leave"
     }
 }

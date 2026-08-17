@@ -72,6 +72,7 @@ import chat.hc.ultra.data.ChannelIdentity
 import chat.hc.core.session.ModAction
 import chat.hc.core.session.Moderation
 import chat.hc.core.session.SessionState
+import chat.hc.core.store.MessageKind
 import chat.hc.ultra.service.HcService
 import chat.hc.ultra.ui.ChannelTabs
 import chat.hc.ultra.ui.MessageWebView
@@ -175,6 +176,7 @@ class MainActivity : ComponentActivity() {
             var highlightOverride by remember { mutableStateOf(themePrefs.highlightOverride) }
             var nickLayout by remember { mutableStateOf(themePrefs.nickLayout) }
             var allowImages by remember { mutableStateOf(themePrefs.allowImages) }
+            var joinLeave by remember { mutableStateOf(themePrefs.joinLeave) }
             var notifyMentions by remember { mutableStateOf(notifyPrefs.mentions) }
             var notifyWhispers by remember { mutableStateOf(notifyPrefs.whispers) }
             var notifyOtherChannels by remember { mutableStateOf(notifyPrefs.otherChannels) }
@@ -253,6 +255,14 @@ class MainActivity : ComponentActivity() {
                                 allowImages = it
                                 themePrefs.allowImages = it
                             },
+                            joinLeave = joinLeave,
+                            onJoinLeaveChanged = {
+                                joinLeave = it
+                                // The service reads the pref itself, per event;
+                                // this only decides what the transcript shows of
+                                // what is already buffered.
+                                themePrefs.joinLeave = it
+                            },
                             notifyMentions = notifyMentions,
                             onNotifyMentionsChanged = {
                                 notifyMentions = it
@@ -298,6 +308,7 @@ class MainActivity : ComponentActivity() {
                         highlight = highlight,
                         nickLayout = nickLayout,
                         allowImages = allowImages,
+                        joinLeave = joinLeave,
                         onOpenThemes = { showThemes = true },
                         pendingChannel = pendingChannel,
                         onPendingConsumed = { pendingChannel = null },
@@ -490,6 +501,13 @@ private fun AppScreen(
     nickLayout: NickLayout,
     /** Embed whitelisted images in the transcript rather than linking them. */
     allowImages: Boolean,
+    /**
+     * Show arrivals and departures. New ones stop being buffered at all when
+     * this is off — the service owns that — so this only governs the ones
+     * already held, which would otherwise sit there until they scrolled out and
+     * make the switch look like it had not worked.
+     */
+    joinLeave: Boolean,
     onOpenThemes: () -> Unit,
     /** A tapped `?channel` link pre-fills the join form rather than joining blind. */
     pendingChannel: String?,
@@ -690,8 +708,15 @@ private fun AppScreen(
                     )
                 }
 
+                val visible = remember(active.messages, joinLeave) {
+                    if (joinLeave) active.messages
+                    else active.messages.filterNot {
+                        it.kind == MessageKind.Join || it.kind == MessageKind.Leave
+                    }
+                }
+
                 MessageWebView(
-                    messages = active.messages,
+                    messages = visible,
                     scheme = scheme.name,
                     highlight = highlight,
                     layout = nickLayout,
