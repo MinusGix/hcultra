@@ -191,6 +191,11 @@ Against live hack.chat, with an independent Node observer
   channel restored by token (state reported `resumed`, i.e. `restored=true`)
 - network loss → `Reconnecting (attempt 1)` → restore-by-token on recovery, and
   the app logged "Reconnected." (only emitted when `restored=true`)
+- images, against `fakeserver.mjs --mode normal`: an `i.ytimg.com` URL renders
+  as a link with the setting off, as a full-width picture with it on, and back
+  to a link when it is turned off again — each without a reconnect or a reload,
+  since the page rebuilds in place. An `example.com` image stays a link with
+  the setting **on**, which is the whitelist doing its job.
 
 That last one also confirmed the core finding from the wrong side of the glass:
 the observer saw **`LEAVE` then `JOIN`** across the outage. Exactly the noise
@@ -225,6 +230,17 @@ the grace-period ask in `upstream-asks.md` exists to remove.
    *expanded* bounds, which are not where touch dispatch actually divides. The
    only way to find the real boundary was to tap at measured offsets and watch
    what happened.
+5. **`vh` measured zero in the renderer.** Images capped at `max-height: 55vh`
+   came out as 20px thumbnails — the cap resolved to 0, leaving the `min-height`
+   floor beneath it to size them. The cap is in px now. Any length in this
+   stylesheet that depends on a viewport height is suspect for the same reason;
+   px and `em` are not.
+
+   `uiautomator` is what settles this kind of question: the WebView exposes its
+   content as accessibility nodes, so an `<img>` appears as
+   `class="android.widget.Image"` with real bounds, and `content-desc` carries
+   its alt text. That is also how the whitelist was checked — a blocked image is
+   not a small `Image` node, it is a `View` with the URL as its text.
 
 ## Message renderer
 
@@ -249,10 +265,24 @@ Hardening, because every message is untrusted input from a public channel:
   interpreted as markup.
 - The payload crosses via `RendererBridge.renderCall()` in core as a JSON
   *string literal* parsed inside the page — never interpolated as JavaScript.
-- The WebView has file access, content access, DOM storage and **all network
-  loads** disabled. It only ever loads bundled assets.
+- The WebView has file access, content access and DOM storage disabled, and
+  network loads blocked outright unless the user has turned images on.
 - Links never navigate the WebView; taps are handed to native, which opens
   http/https only.
+
+Images are the one exception to "bundled assets only", and are off by default
+as they are on the site. With them on, `blockNetworkLoads` has to come down —
+so a `WebViewClient` becomes the actual gate, refusing every request that is
+neither a bundled asset nor an https image from `ImageHosts`, hack.chat's own
+whitelist (imgur, Discord, gyazo, postimg, ibb, ytimg). The list exists twice
+by necessity — in `core` for the gate, in `app.js` to decide whether to emit an
+`<img>` at all — and a mismatch fails closed. Host matching is deliberately
+hand-rolled and tested: `https://i.imgur.com@evil.test/x.png` has host
+`evil.test`, and a prefix check would read it the other way round.
+
+The cost being opted into is that fetching an image tells the host serving it
+that you are here, and it was a stranger in the channel who chose which host
+that is. Hence the default, `referrerpolicy="no-referrer"`, and https only.
 
 `RendererBridge` lives in `core/` rather than the app module so iOS can reuse
 the same payload and the same asset bundle, with only the WKWebView host

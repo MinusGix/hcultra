@@ -144,6 +144,34 @@ html, body {
 
 a { text-decoration: none; }
 
+/*
+ * Embedded images (off unless the user turns them on).
+ *
+ * The site caps them at 50% width, which is a desktop measure — half of a phone
+ * is a thumbnail. Full width and a fixed height cap instead: big enough to see,
+ * bounded so one image cannot fill the screen and push the conversation out of
+ * it. Tapping opens the original externally, which is the escape hatch for
+ * anything taller.
+ *
+ * The cap is in px, not `vh`. `55vh` measured 0 in this WebView — the page is
+ * scrolled by the document rather than a sized viewport, and an image capped at
+ * zero fell back to `min-height` below, rendering every picture as a 20px
+ * thumbnail. px has no such dependency.
+ */
+.text img {
+  display: block;
+  max-width: 100%;
+  max-height: 400px;
+  width: auto;
+  height: auto;
+  margin: 4px 0 2px;
+  border-radius: 6px;
+  /* Something to look at while it loads, and a floor under a broken one, so
+     the row does not collapse to nothing. */
+  min-height: 1em;
+  background: rgba(127, 127, 127, 0.12);
+}
+
 /* currentColor keeps these legible on any scheme without picking a colour. */
 code {
   background: rgba(127, 127, 127, 0.16);

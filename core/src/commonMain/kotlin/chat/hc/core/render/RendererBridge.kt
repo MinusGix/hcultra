@@ -76,6 +76,15 @@ object RendererBridge {
     }
 
     /**
+     * Turns inline images on or off.
+     *
+     * The renderer rebuilds the transcript when this changes: whether a message
+     * shows an image is not part of the message, so the render diff would
+     * otherwise leave everything already on screen as it was.
+     */
+    fun allowImagesCall(allow: Boolean): String = "HC.setAllowImages($allow);"
+
+    /**
      * Switches how a message's nick and trip sit relative to its text.
      *
      * A class on the document rather than three different DOM shapes: the

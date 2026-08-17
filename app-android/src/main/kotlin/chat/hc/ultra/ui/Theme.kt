@@ -123,9 +123,22 @@ class ThemePrefs(context: Context) {
         get() = NickLayout.from(prefs.getString(KEY_LAYOUT, null))
         set(value) = prefs.edit().putString(KEY_LAYOUT, value.name).apply()
 
+    /**
+     * Whether `![](…)` images embed inline instead of showing as a link.
+     *
+     * Off by default, as on the site. Fetching an image tells the host serving
+     * it that you are here, and the person who chose the URL picked which host
+     * that is; that is a thing to opt into rather than out of. Only hack.chat's
+     * own [chat.hc.core.render.ImageHosts] can be embedded either way.
+     */
+    var allowImages: Boolean
+        get() = prefs.getBoolean(KEY_IMAGES, false)
+        set(value) = prefs.edit().putBoolean(KEY_IMAGES, value).apply()
+
     private companion object {
         const val KEY_SCHEME = "scheme"
         const val KEY_HIGHLIGHT = "highlight"
         const val KEY_LAYOUT = "nick_layout"
+        const val KEY_IMAGES = "allow_images"
     }
 }

@@ -66,6 +66,8 @@ fun ThemeSheet(
     onHighlightSelected: (String?) -> Unit,
     nickLayout: NickLayout,
     onNickLayoutSelected: (NickLayout) -> Unit,
+    allowImages: Boolean,
+    onAllowImagesChanged: (Boolean) -> Unit,
     notifyMentions: Boolean,
     onNotifyMentionsChanged: (Boolean) -> Unit,
     notifyWhispers: Boolean,
@@ -112,6 +114,23 @@ fun ThemeSheet(
                     )
                 }
             }
+
+            Text(
+                "Images",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(top = 16.dp),
+            )
+            ToggleRow(
+                title = "Show images in the transcript",
+                // The honest cost, since that is what the choice is about: an
+                // embedded image is a request to somebody else's server, made
+                // because a stranger in the channel wrote the URL.
+                subtitle = "From the same few hosts the site allows — imgur, Discord, " +
+                    "gyazo, postimg, ibb, ytimg. Loading one tells that host you are here; " +
+                    "anything else stays a link either way.",
+                checked = allowImages,
+                onChanged = onAllowImagesChanged,
+            )
 
             Text(
                 "Notifications",

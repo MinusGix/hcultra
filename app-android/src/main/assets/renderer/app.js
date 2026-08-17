@@ -39,6 +39,10 @@
   function esc(s) { return Remarkable.utils.escapeHtml(String(s == null ? '' : s)); }
 
   // Images are links unless the user opts in, matching the site's default.
+  //
+  // The same list lives in core as `ImageHosts`, which is what the WebView's
+  // request interceptor enforces; this copy only decides whether an <img> is
+  // written at all. Change both together.
   var allowImages = false;
   var imgHostWhitelist = [
     'i.imgur.com', 'imgur.com', 'share.lyka.pro', 'cdn.discordapp.com',
@@ -107,6 +111,7 @@
   var log = document.getElementById('log');
   var nodes = Object.create(null);   // localId -> {el, sig}
   var pinned = true;                 // stick to bottom unless the user scrolls up
+  var shown = [];                    // last snapshot, for a settings-driven rebuild
 
   function atBottom() {
     return (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 40);
@@ -119,6 +124,14 @@
       post('onPinnedChanged', String(b));
     }
   }, { passive: true });
+
+  // An image finishes loading well after the message holding it was inserted,
+  // and it grows the page as it lands. Without this the transcript slides out
+  // from under a reader who was sitting at the bottom — which is where the
+  // reader of a chat log normally is. Capture phase: `load` does not bubble.
+  document.addEventListener('load', function (e) {
+    if (pinned && e.target && e.target.tagName === 'IMG') scrollToBottom();
+  }, true);
 
   function post(fn, arg) {
     if (window.HcBridge && window.HcBridge[fn]) {
@@ -239,6 +252,7 @@
   // cheap, and it means native never has to track what the DOM already has.
   function apply(messages) {
     var wasPinned = pinned || atBottom();
+    shown = messages;
     var seen = Object.create(null);
     var prev = null;
 
@@ -310,6 +324,7 @@
     clear: function () {
       log.innerHTML = '';
       nodes = Object.create(null);
+      shown = [];
     },
     setKatex: setKatex,
     /** One class on <body>; the three layouts are pure CSS over stable markup. */
@@ -322,7 +337,22 @@
       if (scheme) setHref('scheme', 'schemes/' + scheme + '.css');
       if (hljsTheme) setHref('hljs-theme', 'vendor/hljs/styles/' + hljsTheme + '.min.css');
     },
-    setAllowImages: function (on) { allowImages = !!on; },
+    /*
+     * Whether whitelisted images embed or stay links.
+     *
+     * Rebuilds what is already on screen, because the render diff keys on the
+     * message alone: without this, turning images on would only affect messages
+     * that arrived afterwards, and turning them off would leave the ones
+     * already showing.
+     */
+    setAllowImages: function (on) {
+      on = !!on;
+      if (on === allowImages) return;
+      allowImages = on;
+      var messages = shown;
+      HC.clear();
+      apply(messages);
+    },
     scrollToBottom: function () { pinned = true; scrollToBottom(); }
   };
 

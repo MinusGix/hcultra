@@ -174,6 +174,7 @@ class MainActivity : ComponentActivity() {
             var schemeName by remember { mutableStateOf(themePrefs.scheme) }
             var highlightOverride by remember { mutableStateOf(themePrefs.highlightOverride) }
             var nickLayout by remember { mutableStateOf(themePrefs.nickLayout) }
+            var allowImages by remember { mutableStateOf(themePrefs.allowImages) }
             var notifyMentions by remember { mutableStateOf(notifyPrefs.mentions) }
             var notifyWhispers by remember { mutableStateOf(notifyPrefs.whispers) }
             var notifyOtherChannels by remember { mutableStateOf(notifyPrefs.otherChannels) }
@@ -247,6 +248,11 @@ class MainActivity : ComponentActivity() {
                                 nickLayout = it
                                 themePrefs.nickLayout = it
                             },
+                            allowImages = allowImages,
+                            onAllowImagesChanged = {
+                                allowImages = it
+                                themePrefs.allowImages = it
+                            },
                             notifyMentions = notifyMentions,
                             onNotifyMentionsChanged = {
                                 notifyMentions = it
@@ -291,6 +297,7 @@ class MainActivity : ComponentActivity() {
                         scheme = scheme,
                         highlight = highlight,
                         nickLayout = nickLayout,
+                        allowImages = allowImages,
                         onOpenThemes = { showThemes = true },
                         pendingChannel = pendingChannel,
                         onPendingConsumed = { pendingChannel = null },
@@ -481,6 +488,8 @@ private fun AppScreen(
     scheme: Scheme,
     highlight: String,
     nickLayout: NickLayout,
+    /** Embed whitelisted images in the transcript rather than linking them. */
+    allowImages: Boolean,
     onOpenThemes: () -> Unit,
     /** A tapped `?channel` link pre-fills the join form rather than joining blind. */
     pendingChannel: String?,
@@ -686,6 +695,7 @@ private fun AppScreen(
                     scheme = scheme.name,
                     highlight = highlight,
                     layout = nickLayout,
+                    allowImages = allowImages,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     callbacks = webCallbacks,
                 )
