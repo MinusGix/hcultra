@@ -75,6 +75,22 @@ will never capture a token. Tokens are JWT, `expiresIn: '7 days'`, and a fresh
 one is issued on **both** join and restore — so reconnecting at least weekly
 rolls the window forward indefinitely.
 
+### The MOTD answers `join`, and only `join`
+
+A cold join is answered `onlineSet`, then `info` id **1304** carrying the MOTD,
+then the trailing `session` token. A socket that presents a stored token is
+answered `onlineSet` and its token and **nothing else** — no `info` at all — and
+there is no command that asks for the MOTD.
+
+So a client that resumes whenever it holds a token (this one does; the token
+rolls forward on every restore) is sent the MOTD exactly once per channel and
+identity, ever. Combined with an ephemeral buffer that is the same as never:
+the one copy dies with the process that received it. `MotdStore` exists for
+this — the text is remembered and replayed on a restored connection.
+
+Also worth noting for the restore path: `onlineSet` may arrive **before** the
+`session` reply on a restoring socket, the opposite of the cold-join order.
+
 ## 5. Rate limiting bounds our reconnect policy
 
 `RateLimiter`: keyed by **remote address** (shared across all our sockets),

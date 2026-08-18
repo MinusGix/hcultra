@@ -594,3 +594,38 @@ recreate keeps you where you were.
 The remaining channels keep their counts on purpose. They are still carrying
 messages nobody has read, and the tab strip is where that belongs; marking
 everything read because the user opened the app once would be the opposite bug.
+
+### The MOTD never showed
+
+**Observed:** the server's message of the day — currently a link to an EFF
+petition — is not in the transcript.
+
+**Cause:** not ours to render. Probed against live: the MOTD is an `info` frame
+with id 1304, and the server sends it in reply to `join` and to nothing else. A
+socket that presents a stored token gets `onlineSet`, a fresh token, and no
+`info` at all, and no command asks for one. This client restores whenever it
+holds a token — which, since a restore reissues the token, is every connection
+after the first for as long as the app is used weekly. The scrollback is
+ephemeral by default, so the single copy received on the first-ever join died
+with that process. Everything downstream of the frame was already correct: it
+reaches the buffer and renders as any other `Info` line, which is why it appears
+once and looks like it works.
+
+**Fixed:** `MotdStore` — the text is remembered per server (plain preferences on
+Android: it is broadcast to everyone who connects, unlike a token) and replayed
+into the transcript on a restored connection, below the "Users online" line,
+which is where a cold join puts it. Skipped when that exact line is already in
+the buffer, which is what keeps a mid-session reconnect from repeating it: an
+outage leaves the transcript intact, so only a genuinely empty one — a fresh
+launch — shows it again.
+
+Two things it deliberately does not do. It does not cold-join to fetch a current
+MOTD: that is peer-visible leave/join noise on every launch, which is the exact
+thing the foreground service exists to avoid, in exchange for a line that
+changes perhaps twice a year. And it shows the remembered text even if the
+server has since changed it — a stale MOTD being strictly better than the silence
+that was there before, and self-correcting the next time anything cold-joins.
+
+Verified on the emulator against live: cold join into a fresh channel shows it;
+`force-stop` and resume — a token restore, "Reconnected." and no `join` on the
+wire — shows it again, in the same position.

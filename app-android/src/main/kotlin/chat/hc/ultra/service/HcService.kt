@@ -10,6 +10,7 @@ import chat.hc.core.session.Credentials
 import chat.hc.core.session.ModAction
 import chat.hc.core.session.SessionManager
 import chat.hc.ultra.data.KeystoreTokenStore
+import chat.hc.ultra.data.MotdPrefs
 import chat.hc.ultra.ui.NotifyPrefs
 import chat.hc.ultra.ui.ServerPrefs
 import chat.hc.ultra.ui.ThemePrefs
@@ -81,6 +82,7 @@ class HcService : Service() {
             initialUrl = ServerPrefs(this).url,
             transport = net.transport,
             tokenStore = KeystoreTokenStore(this),
+            motdStore = MotdPrefs(this),
             showJoinLeave = { display.joinLeave },
             now = { System.currentTimeMillis() },
             // Must be <= 6 chars: chat.js drops a longer customId silently and

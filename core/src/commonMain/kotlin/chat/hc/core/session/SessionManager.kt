@@ -2,6 +2,7 @@ package chat.hc.core.session
 
 import chat.hc.core.net.RateGovernor
 import chat.hc.core.net.Transport
+import chat.hc.core.protocol.ErrorId
 import chat.hc.core.protocol.Outbound
 import chat.hc.core.store.ChannelBuffer
 import chat.hc.core.store.ChatMessage
@@ -53,6 +54,12 @@ class SessionManager(
     initialUrl: String = Servers.DEFAULT_URL,
     private val transport: Transport,
     private val tokenStore: TokenStore = InMemoryTokenStore(),
+    /**
+     * Where the server's MOTD is remembered between connections. Persistent on
+     * Android: a restored session is never sent one, and the in-memory default
+     * would be empty exactly when it is needed — on a fresh launch.
+     */
+    private val motdStore: MotdStore = InMemoryMotdStore(),
     private val bufferCapacity: Int = 500,
     /**
      * How long to wait for the server to echo our own message before marking it
@@ -408,9 +415,15 @@ class SessionManager(
                 }
             }
 
-            is SessionEvent.Notice -> buffer.add(
-                ChatMessage(0, MessageKind.Info, text = event.frame.text, at = event.frame.time ?: now())
-            )
+            is SessionEvent.Notice -> {
+                // Kept because we will not be sent it again: the MOTD answers a
+                // `join`, and every connection after the first restores a token
+                // instead. See the Resumed branch, which replays it.
+                if (event.frame.id == ErrorId.MOTD) motdStore.save(serverUrl, event.frame.text)
+                buffer.add(
+                    ChatMessage(0, MessageKind.Info, text = event.frame.text, at = event.frame.time ?: now())
+                )
+            }
 
             is SessionEvent.Warning -> buffer.add(
                 ChatMessage(0, MessageKind.Warning, text = event.frame.text, at = event.frame.time ?: now())
@@ -453,6 +466,12 @@ class SessionManager(
                         )
                     }
                 }
+
+                // A restored socket is sent no MOTD, so the remembered one goes
+                // here — below the roster line, which is where a cold join puts
+                // it, since that arrives on `join` and this is emitted once the
+                // handshake returns.
+                if (!event.silent && event.restored) replayMotd(buffer)
             }
 
             // One notice per outage, not one per retry: a long outage produces a
@@ -496,6 +515,22 @@ class SessionManager(
         _alerts.tryEmit(
             Alert(session.channel, Alert.Kind.Mention, nick = from, text = text, at = at)
         )
+    }
+
+    /**
+     * Shows the remembered MOTD on a connection that was not sent one.
+     *
+     * Skipped when the transcript already shows it, which is what keeps a
+     * reconnect from repeating it: an outage leaves the buffer intact, so only
+     * a genuinely empty one — a fresh launch — sees the line again. In a
+     * channel busy enough to evict it from a bounded buffer it can reappear,
+     * which is the same thing that would happen to any other old message and
+     * the honest answer to "is it still there".
+     */
+    private suspend fun replayMotd(buffer: ChannelBuffer) {
+        val motd = motdStore.load(serverUrl)?.takeIf { it.isNotBlank() } ?: return
+        if (buffer.snapshot().any { it.kind == MessageKind.Info && it.text == motd }) return
+        buffer.add(ChatMessage(0, MessageKind.Info, text = motd, at = now()))
     }
 
     private fun publish(channel: String) {

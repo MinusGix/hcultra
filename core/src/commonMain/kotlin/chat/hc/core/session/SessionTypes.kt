@@ -50,6 +50,32 @@ class InMemoryTokenStore : TokenStore {
     }
 }
 
+/**
+ * The server's message of the day, remembered across connections.
+ *
+ * The MOTD is sent only in reply to `join` — a socket that presents a stored
+ * token gets `onlineSet` and nothing else — so a client that resumes silently,
+ * which is most of what this one does, would never see it after the first cold
+ * join. Remembering the text is the only way to show it at all: there is no
+ * command that asks for it.
+ *
+ * Keyed by server alone. It belongs to the server rather than to any channel:
+ * the same text is delivered whichever channel you join. Not sensitive — it is
+ * broadcast to everyone who connects — so plain preferences are fine, unlike
+ * [TokenStore].
+ */
+interface MotdStore {
+    suspend fun load(server: String): String?
+    suspend fun save(server: String, text: String)
+}
+
+/** In-memory store; the default for tests. */
+class InMemoryMotdStore : MotdStore {
+    private val motds = mutableMapOf<String, String>()
+    override suspend fun load(server: String): String? = motds[server]
+    override suspend fun save(server: String, text: String) { motds[server] = text }
+}
+
 sealed interface SessionState {
     data object Idle : SessionState
     data object Connecting : SessionState
