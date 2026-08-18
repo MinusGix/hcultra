@@ -31,6 +31,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -42,6 +43,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +61,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -75,6 +78,7 @@ import chat.hc.core.session.SessionState
 import chat.hc.core.store.MessageKind
 import chat.hc.ultra.service.HcService
 import chat.hc.ultra.ui.ChannelTabs
+import chat.hc.ultra.ui.BASE_TEXT_SP
 import chat.hc.ultra.ui.MessageWebView
 import chat.hc.ultra.ui.NotifyPrefs
 import chat.hc.ultra.ui.RendererCallbacks
@@ -176,6 +180,7 @@ class MainActivity : ComponentActivity() {
             var highlightOverride by remember { mutableStateOf(themePrefs.highlightOverride) }
             var nickLayout by remember { mutableStateOf(themePrefs.nickLayout) }
             var allowImages by remember { mutableStateOf(themePrefs.allowImages) }
+            var fontScale by remember { mutableFloatStateOf(themePrefs.fontScale) }
             var joinLeave by remember { mutableStateOf(themePrefs.joinLeave) }
             var notifyMentions by remember { mutableStateOf(notifyPrefs.mentions) }
             var notifyWhispers by remember { mutableStateOf(notifyPrefs.whispers) }
@@ -250,6 +255,11 @@ class MainActivity : ComponentActivity() {
                                 nickLayout = it
                                 themePrefs.nickLayout = it
                             },
+                            fontScale = fontScale,
+                            onFontScaleChanged = {
+                                fontScale = it
+                                themePrefs.fontScale = it
+                            },
                             allowImages = allowImages,
                             onAllowImagesChanged = {
                                 allowImages = it
@@ -308,6 +318,7 @@ class MainActivity : ComponentActivity() {
                         scheme = scheme,
                         highlight = highlight,
                         nickLayout = nickLayout,
+                        fontScale = fontScale,
                         allowImages = allowImages,
                         joinLeave = joinLeave,
                         onOpenThemes = { showThemes = true },
@@ -500,6 +511,12 @@ private fun AppScreen(
     scheme: Scheme,
     highlight: String,
     nickLayout: NickLayout,
+    /**
+     * Transcript text size, as a multiplier on the renderer's base. The
+     * composer follows it: what you are about to say should be as readable as
+     * what has already been said.
+     */
+    fontScale: Float,
     /** Embed whitelisted images in the transcript rather than linking them. */
     allowImages: Boolean,
     /**
@@ -722,6 +739,7 @@ private fun AppScreen(
                     highlight = highlight,
                     layout = nickLayout,
                     allowImages = allowImages,
+                    fontScale = fontScale,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     callbacks = webCallbacks,
                 )
@@ -740,7 +758,19 @@ private fun AppScreen(
                     onValueChange = { drafts[active.channel] = it },
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = { Text("Message") },
-                    maxLines = 5,
+                    // The transcript's size, in the field that feeds it. A
+                    // setting that made the conversation readable and left what
+                    // you type at 15sp would have solved half the problem for
+                    // whoever asked for it.
+                    textStyle = LocalTextStyle.current.copy(
+                        fontSize = (BASE_TEXT_SP * fontScale).sp,
+                        lineHeight = (BASE_TEXT_SP * fontScale * 1.45f).sp,
+                    ),
+                    // Five lines of doubled text is most of a phone screen with
+                    // the keyboard up — the composer would push the transcript
+                    // it belongs to off the top. Fewer, taller lines instead;
+                    // the field scrolls either way, so nothing is unreachable.
+                    maxLines = if (fontScale > 1.3f) 3 else 5,
                     trailingIcon = {
                         Text(
                             text = "➤",

@@ -85,6 +85,16 @@ object RendererBridge {
     fun allowImagesCall(allow: Boolean): String = "HC.setAllowImages($allow);"
 
     /**
+     * Scales the transcript's text.
+     *
+     * One number, written to the page's root font size; the stylesheet keeps
+     * every other size in `em`, so paddings, gutters and the code font follow
+     * it rather than needing a call each. Snapped on the way out, because the
+     * page has no ladder of its own and would honour whatever it was handed.
+     */
+    fun fontScaleCall(scale: Float): String = "HC.setFontScale(${FontScale.snap(scale)});"
+
+    /**
      * Switches how a message's nick and trip sit relative to its text.
      *
      * A class on the document rather than three different DOM shapes: the

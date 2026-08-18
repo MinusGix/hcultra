@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyRow
@@ -38,8 +39,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import chat.hc.core.render.FontScale
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
@@ -74,6 +82,9 @@ fun ThemeSheet(
     onHighlightSelected: (String?) -> Unit,
     nickLayout: NickLayout,
     onNickLayoutSelected: (NickLayout) -> Unit,
+    /** Transcript text size, as a multiplier; always a rung of [FontScale.STEPS]. */
+    fontScale: Float,
+    onFontScaleChanged: (Float) -> Unit,
     allowImages: Boolean,
     onAllowImagesChanged: (Boolean) -> Unit,
     joinLeave: Boolean,
@@ -98,6 +109,8 @@ fun ThemeSheet(
                 .verticalScroll(rememberScrollState()),
         ) {
             ServerSetting(currentServer, onServerChanged)
+
+            FontSizeSetting(fontScale, onFontScaleChanged)
 
             Text(
                 "Message layout",
@@ -395,6 +408,136 @@ private fun ToggleRow(
             }
         }
         Switch(checked = checked, onCheckedChange = onChanged)
+    }
+}
+
+/**
+ * How big the transcript's text is: two buttons, the size they are moving, and
+ * a line of chat at that size.
+ *
+ * A step pair rather than a slider. The values worth having are a short ladder
+ * ([FontScale.STEPS]) and a slider over eight rungs is a worse way to pick one
+ * of eight things — harder to hit, harder to hit again, and impossible to
+ * operate by voice or switch access. Two buttons are a target each.
+ *
+ * The sample matters more here than it looks. The sheet covers the transcript
+ * it is resizing, so without a preview the only way to see the effect of a tap
+ * is to dismiss the sheet, look, and open it again for every rung.
+ */
+@Composable
+private fun FontSizeSetting(scale: Float, onChanged: (Float) -> Unit) {
+    Text(
+        "Text size",
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.padding(top = 16.dp),
+    )
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        StepButton(
+            glyph = "A-",
+            label = "Smaller text",
+            enabled = FontScale.canShrink(scale),
+            onClick = { onChanged(FontScale.smaller(scale)) },
+        )
+        StepButton(
+            glyph = "A+",
+            label = "Larger text",
+            enabled = FontScale.canGrow(scale),
+            onClick = { onChanged(FontScale.larger(scale)) },
+        )
+        Text(
+            text = FontScale.percentLabel(scale),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 4.dp)
+                // The buttons change this number and nothing else the screen
+                // reader would announce, so without a live region a blind user
+                // pressing "Larger text" is told nothing at all.
+                .semantics {
+                    liveRegion = LiveRegionMode.Polite
+                    contentDescription = "Text size ${FontScale.percentLabel(scale)}"
+                },
+        )
+        TextButton(
+            onClick = { onChanged(FontScale.DEFAULT) },
+            enabled = scale != FontScale.DEFAULT,
+        ) { Text("Reset") }
+    }
+    FontSizeSample(scale)
+}
+
+/**
+ * One button of the pair.
+ *
+ * Sized rather than left to wrap its glyph: a two-character button is a small
+ * target, and 48dp is the floor below which a control stops being reliably
+ * hittable. `sizeIn` and not `size`, so the button still grows if the system
+ * font scale makes the glyph itself larger than the minimum.
+ */
+@Composable
+private fun StepButton(
+    glyph: String,
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val tint =
+        if (enabled) MaterialTheme.colorScheme.onSurface
+        // Disabled, not absent: the pair keeps its shape at both ends of the
+        // ladder, so the button that still works does not move under the finger
+        // that was about to press it.
+        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+
+    Box(
+        Modifier
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            // Role, so a screen reader says "button" rather than reading a
+            // stray "A-" and leaving the user to guess what it is.
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(glyph, style = MaterialTheme.typography.bodyLarge, color = tint)
+    }
+}
+
+/**
+ * A line of chat at the chosen size.
+ *
+ * Deliberately shaped like a message — a nick in the scheme's accent, then
+ * text — because the question being answered is "can I read the transcript",
+ * not "how big is 130%". The 15sp base is the renderer stylesheet's own
+ * `--hc-base`, so the sample and the transcript step together.
+ */
+@Composable
+private fun FontSizeSample(scale: Float) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = "hcultra",
+            fontSize = (BASE_TEXT_SP * scale).sp,
+            lineHeight = (BASE_TEXT_SP * scale * 1.45f).sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            text = "this is how the transcript will read",
+            fontSize = (BASE_TEXT_SP * scale).sp,
+            lineHeight = (BASE_TEXT_SP * scale * 1.45f).sp,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 

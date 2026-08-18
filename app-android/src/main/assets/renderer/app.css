@@ -7,15 +7,34 @@
  * overflow, delivery flags) — never a rule that would fight a scheme.
  */
 
+/*
+ * The one absolute text size in the file.
+ *
+ * `HC.setFontScale` multiplies it — by writing `font-size: calc(var(--hc-base)
+ * * n)` on this element and nothing else — so the base itself stays here where
+ * the rest of the stylesheet can see it. Every other size below is in `em`, and
+ * therefore moves with it: a reader who needs larger text gets a larger
+ * transcript rather than large text in a layout still built for small.
+ */
+html {
+  --hc-base: 15px;
+  font-size: var(--hc-base);
+}
+
 html, body {
   margin: 0;
   padding: 0;
-  font: 15px/1.45 -apple-system, Roboto, "Segoe UI", sans-serif;
+  font-family: -apple-system, Roboto, "Segoe UI", sans-serif;
+  line-height: 1.45;
   overflow-wrap: break-word;
   word-break: break-word;
 }
 
-#log { padding: 8px 10px 16px; }
+body { font-size: 1rem; }
+
+/* `em`, like everything else: at 200% the text should not be crowding
+   the edge of the screen it was comfortably clear of at 100%. */
+#log { padding: 0.53em 0.66em 1.06em; }
 
 /* Schemes style .message with a left border, as on the site. */
 .message {
@@ -50,6 +69,14 @@ html, body {
 }
 .layout-gutter .head {
   flex: 0 0 7.5em;
+  /*
+   * The column is in `em` so it tracks the font — but only up to a point. At
+   * the top of the text-size ladder 7.5em is over half a phone's width, and a
+   * name column wider than the messages beside it stops being a gutter. The cap
+   * does nothing at ordinary sizes (7.5em is around 27vw at the base size) and
+   * only engages where the alternative is a two-word-wide conversation.
+   */
+  max-width: 38vw;
   text-align: right;
   /* A flex item will not shrink below its min-content width unless told to, so
      without this a long nick widens the gutter and misaligns every other line.
@@ -110,7 +137,7 @@ html, body {
 }
 .kind-whisper .text, .kind-whispersent .text { font-style: italic; }
 .wtag {
-  font-size: 12px;
+  font-size: 0.8em;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   opacity: 0.6;
@@ -125,7 +152,7 @@ html, body {
 }
 [data-nick]:active { opacity: 0.55; }
 
-.kind-info .text, .kind-join .text, .kind-leave .text { font-size: 14px; }
+.kind-info .text, .kind-join .text, .kind-leave .text { font-size: 0.93em; }
 .kind-join .text::before { content: "→ "; }
 .kind-leave .text::before { content: "← "; }
 
@@ -161,7 +188,10 @@ a { text-decoration: none; }
 .text img {
   display: block;
   max-width: 100%;
-  max-height: 400px;
+  /* 26.6em is the 400px this was, at the base size. In `em` it keeps its
+     relationship to the text: at 200% an image that stayed 400px tall would be
+     a thumbnail beside the message describing it. */
+  max-height: 26.6em;
   width: auto;
   height: auto;
   margin: 4px 0 2px;
@@ -178,7 +208,7 @@ code {
   padding: 1px 4px;
   border-radius: 3px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 13px;
+  font-size: 0.87em;
 }
 
 /* Wide content scrolls inside its own box; the page must never scroll
@@ -197,7 +227,7 @@ pre code { background: none; padding: 0; }
 table { border-collapse: collapse; margin: 6px 0; display: block; overflow-x: auto; }
 th, td { border: 1px solid rgba(127, 127, 127, 0.5); padding: 3px 7px; }
 
-.flag { font-size: 12px; opacity: 0.7; margin-left: 6px; }
+.flag { font-size: 0.8em; opacity: 0.7; margin-left: 6px; }
 .flag.unconfirmed { font-style: italic; }
 .message:has(.flag.unconfirmed) .text { opacity: 0.75; }
 .message:has(.flag.pending) .text { opacity: 0.6; }

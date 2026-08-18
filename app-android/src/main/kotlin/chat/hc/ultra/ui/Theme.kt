@@ -6,6 +6,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import chat.hc.core.render.FontScale
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
@@ -86,6 +87,15 @@ private fun Color.darken(amount: Float) = Color(
 private fun Color.isLight(): Boolean =
     (0.2126f * red + 0.7152f * green + 0.0722f * blue) > 0.5f
 
+/**
+ * The renderer stylesheet's `--hc-base`, in the unit Compose measures text in.
+ *
+ * Native text that is meant to match the transcript — the composer, the size
+ * sample in settings — starts here and multiplies by the same scale the page
+ * does, so the two halves cannot drift apart by a point or two.
+ */
+const val BASE_TEXT_SP = 15f
+
 /** Persisted server endpoint. Plain prefs: an address is not a secret. */
 class ServerPrefs(context: Context) {
     private val prefs = context.getSharedPreferences("hc_server", Context.MODE_PRIVATE)
@@ -154,11 +164,25 @@ class ThemePrefs(context: Context) {
         get() = prefs.getBoolean(KEY_JOIN_LEAVE, true)
         set(value) = prefs.edit().putBoolean(KEY_JOIN_LEAVE, value).apply()
 
+    /**
+     * How large the transcript's text is, as a multiplier on the renderer's
+     * base size.
+     *
+     * Snapped on the way out rather than trusted: the stored value is only ever
+     * a rung of [FontScale.STEPS], and reading it that way means a file left by
+     * a build with a different ladder still lands somewhere the buttons can
+     * move away from.
+     */
+    var fontScale: Float
+        get() = FontScale.snap(prefs.getFloat(KEY_FONT_SCALE, FontScale.DEFAULT))
+        set(value) = prefs.edit().putFloat(KEY_FONT_SCALE, FontScale.snap(value)).apply()
+
     private companion object {
         const val KEY_SCHEME = "scheme"
         const val KEY_HIGHLIGHT = "highlight"
         const val KEY_LAYOUT = "nick_layout"
         const val KEY_IMAGES = "allow_images"
         const val KEY_JOIN_LEAVE = "join_leave"
+        const val KEY_FONT_SCALE = "font_scale"
     }
 }

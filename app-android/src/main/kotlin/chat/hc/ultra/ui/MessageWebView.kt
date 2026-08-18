@@ -70,6 +70,7 @@ private class RendererState {
     var appliedTheme: String? = null
     var appliedLayout: String? = null
     var appliedImages: String? = null
+    var appliedFontScale: String? = null
 
     /**
      * Read by the request gate, which outlives any single recomposition — the
@@ -152,6 +153,8 @@ fun MessageWebView(
     layout: NickLayout,
     /** Embed images from hack.chat's whitelisted hosts rather than link them. */
     allowImages: Boolean,
+    /** Multiplier on the page's base text size; see [chat.hc.core.render.FontScale]. */
+    fontScale: Float,
     modifier: Modifier = Modifier,
     callbacks: RendererCallbacks = RendererCallbacks(),
 ) {
@@ -188,6 +191,7 @@ fun MessageWebView(
                             state.ready = true
                             state.appliedTheme?.let { evaluateJavascript(it, null) }
                             state.appliedLayout?.let { evaluateJavascript(it, null) }
+                            state.appliedFontScale?.let { evaluateJavascript(it, null) }
                             // Before the messages: the page rebuilds the
                             // transcript when this changes, and there is nothing
                             // to rebuild yet.
@@ -211,6 +215,11 @@ fun MessageWebView(
             if (state.appliedLayout != layoutCall) {
                 state.appliedLayout = layoutCall
                 if (state.ready) webView.evaluateJavascript(layoutCall, null)
+            }
+            val fontCall = RendererBridge.fontScaleCall(fontScale)
+            if (state.appliedFontScale != fontCall) {
+                state.appliedFontScale = fontCall
+                if (state.ready) webView.evaluateJavascript(fontCall, null)
             }
             val imagesCall = RendererBridge.allowImagesCall(allowImages)
             if (state.appliedImages != imagesCall) {

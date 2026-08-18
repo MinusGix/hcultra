@@ -333,6 +333,27 @@
       document.body.className = String(cssClass || 'layout-inline');
       if (wasPinned) scrollToBottom();
     },
+    /*
+     * The transcript's text size, as a multiplier on the stylesheet's base.
+     *
+     * Written to the root element and nowhere else: app.css sizes everything
+     * else in `em`, so one number moves the padding and the gutter along with
+     * the letters. `calc` over the stylesheet's own `--hc-base` rather than a
+     * pixel count computed here, so the base stays a single fact living in one
+     * file.
+     *
+     * Growing the text moves everything below the fold further below it, which
+     * for a chat log means away from the newest message. So a reader sitting at
+     * the bottom is put back there afterwards — the same courtesy an arriving
+     * image gets, and for the same reason.
+     */
+    setFontScale: function (scale) {
+      scale = Number(scale);
+      if (!isFinite(scale) || scale <= 0) return;
+      var wasPinned = pinned || atBottom();
+      document.documentElement.style.fontSize = 'calc(var(--hc-base) * ' + scale + ')';
+      if (wasPinned) scrollToBottom();
+    },
     setTheme: function (scheme, hljsTheme) {
       if (scheme) setHref('scheme', 'schemes/' + scheme + '.css');
       if (hljsTheme) setHref('hljs-theme', 'vendor/hljs/styles/' + hljsTheme + '.min.css');

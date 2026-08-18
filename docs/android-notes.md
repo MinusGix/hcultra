@@ -338,6 +338,34 @@ Note this supersedes `prefers-color-scheme`: the app follows the user's chosen
 hack.chat scheme rather than the system light/dark setting. Following the
 system as a *default* for first run is still open.
 
+### Text size
+
+Settings → Text size steps the transcript along a fixed eight-rung ladder,
+0.8× to 2× (`core`'s `FontScale`). A ladder rather than a slider because two
+buttons are two targets, and because the ends have to be walls: `FontScale.snap`
+puts any stored value — an older ladder's, a hand-edited one — back on a rung
+the buttons can move away from, so no value can leave a reader stuck at a size
+they cannot read.
+
+It travels as `HC.setFontScale(n)`, which writes `font-size: calc(var(--hc-base)
+* n)` on the root element and nothing else. That works because `app.css` sizes
+everything else in `em` — padding, the code font, join lines, whisper tags, the
+image cap — so one number moves the whole page rather than leaving big text in a
+layout still built for small. `--hc-base` (15px) stays in the stylesheet as the
+single fact both halves refer to; the settings sample reuses it as `15.sp`.
+
+Two things are bounded rather than proportional. The gutter layout's name column
+is `7.5em` but capped at `38vw`, since at 2× it would otherwise take more than
+half a phone's width and leave the messages a couple of words wide; the cap does
+nothing at ordinary sizes. And the composer, which follows the same scale — what
+you are typing should be as readable as what you are reading — drops from five
+lines to three above 1.3×, so it cannot push the transcript off the top of the
+screen with the keyboard up.
+
+Verified headless across all three layouts at 0.8×, 1× and 2×: every size moves
+together, nothing scrolls sideways, and a non-numeric scale is ignored rather
+than applied.
+
 ## Multi-channel
 
 One socket per channel, so a tab really is a distinct connection — and it can be
