@@ -23,7 +23,14 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # `packages: ''` because the action otherwise runs `sdkmanager tools` by
+      # default, and `tools` — the obsolete SDK Tools package — was withdrawn
+      # from Google's repository, so the install now fails with "Failed to find
+      # package 'tools'". Nothing here wanted it: the next step asks for the
+      # platform and build-tools this build actually uses.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
       # compileSdk 37.1 is a minor-versioned platform and newer than the runner
       # image ships, so ask for it explicitly rather than relying on AGP's
