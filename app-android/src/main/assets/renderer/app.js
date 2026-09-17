@@ -108,19 +108,50 @@
   }
 
   // --- DOM -----------------------------------------------------------------
-  var log = document.getElementById('log');
-  var nodes = Object.create(null);   // localId -> {el, sig}
-  var pinned = true;                 // stick to bottom unless the user scrolls up
-  var shown = [];                    // last snapshot, for a settings-driven rebuild
+  /*
+   * One container per channel, exactly one of them visible.
+   *
+   * Native keeps a matching record of what each container holds and sends only
+   * what changed (see TranscriptSync), so switching channels is a `hidden`
+   * toggle: nothing re-parses, images stay decoded where they are, and each
+   * channel keeps the place you were reading it at.
+   *
+   * It used to be a single container keyed by message id, which collided across
+   * channels — every id starts at 1 in its own — so a swap rewrote every row
+   * whose text happened to differ. That was 250 rows of markdown, KaTeX and
+   * highlight.js, and every image destroyed and rebuilt, for one tab tap.
+   */
+  var logRoot = document.getElementById('log');
+  var channels = Object.create(null);  // name -> {el, nodes, scrollY, pinned}
+  var current = null;
+
+  function channelState(name) {
+    var c = channels[name];
+    if (!c) {
+      var el = document.createElement('div');
+      el.className = 'channel';
+      el.hidden = true;
+      logRoot.appendChild(el);
+      c = channels[name] = {
+        el: el,
+        nodes: Object.create(null),  // localId -> element
+        scrollY: 0,
+        pinned: true,                // stick to bottom unless the reader scrolls up
+      };
+    }
+    return c;
+  }
 
   function atBottom() {
     return (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 40);
   }
 
   window.addEventListener('scroll', function () {
+    var c = channels[current];
+    if (!c) return;
     var b = atBottom();
-    if (b !== pinned) {
-      pinned = b;
+    if (b !== c.pinned) {
+      c.pinned = b;
       post('onPinnedChanged', String(b));
     }
   }, { passive: true });
@@ -130,7 +161,8 @@
   // from under a reader who was sitting at the bottom — which is where the
   // reader of a chat log normally is. Capture phase: `load` does not bubble.
   document.addEventListener('load', function (e) {
-    if (pinned && e.target && e.target.tagName === 'IMG') scrollToBottom();
+    var c = channels[current];
+    if (c && c.pinned && e.target && e.target.tagName === 'IMG') scrollToBottom();
   }, true);
 
   function post(fn, arg) {
@@ -141,13 +173,6 @@
 
   function scrollToBottom() {
     window.scrollTo(0, document.body.scrollHeight);
-  }
-
-  // Signature of everything that affects rendering, so an unchanged message is
-  // never re-rendered (re-running KaTeX on every frame is expensive).
-  function signature(m) {
-    return [m.text, m.delivery, m.nick, m.kind, m.color, m.level,
-            m.trip, m.flair].join(' ');
   }
 
   function build(m) {
@@ -248,46 +273,72 @@
     row.innerHTML = head + '<span class="text">' + body + '</span>' + flag;
   }
 
-  // Full-snapshot diff. The buffer is bounded (a few hundred), so this stays
-  // cheap, and it means native never has to track what the DOM already has.
-  function apply(messages) {
-    var wasPinned = pinned || atBottom();
-    shown = messages;
+  /*
+   * Bring one channel's container in line with a patch from native.
+   *
+   * `order` is every id in transcript order; `upsert` carries bodies only for
+   * rows that are new or have changed. Everything else is left exactly as it
+   * is — which is the point: an arriving message touches one row, and a channel
+   * switch usually touches none.
+   *
+   * Native is the authority on what changed. The page deliberately keeps no
+   * signature of its own: two sides guessing at the same question is how they
+   * come to disagree.
+   */
+  function applyPatch(name, patch) {
+    var c = channelState(name);
+    if (patch.full) {
+      c.el.innerHTML = '';
+      c.nodes = Object.create(null);
+    }
+
+    var isCurrent = name === current;
+    // Only the visible container can be measured; a background one keeps the
+    // flag it had, which is what puts a reader back where they were.
+    var wasPinned = isCurrent ? (c.pinned || atBottom()) : c.pinned;
+
+    var bodies = Object.create(null);
+    var upsert = patch.upsert || [];
+    for (var i = 0; i < upsert.length; i++) {
+      bodies[String(upsert[i].localId)] = upsert[i];
+    }
+
+    var order = patch.order || [];
     var seen = Object.create(null);
     var prev = null;
 
-    for (var i = 0; i < messages.length; i++) {
-      var m = messages[i];
-      var id = String(m.localId);
+    for (var j = 0; j < order.length; j++) {
+      var id = String(order[j]);
       seen[id] = true;
-      var entry = nodes[id];
-      var sig = signature(m);
+      var m = bodies[id];
+      var el = c.nodes[id];
 
-      if (!entry) {
-        var el = build(m);
-        // Insert in order rather than always appending: an edited older
-        // message must not jump to the end.
-        if (prev && prev.nextSibling) log.insertBefore(el, prev.nextSibling);
-        else log.appendChild(el);
-        nodes[id] = { el: el, sig: sig };
-        prev = el;
-      } else {
-        if (entry.sig !== sig) {
-          fill(entry.el, m);
-          entry.sig = sig;
-        }
-        prev = entry.el;
+      if (!el) {
+        // Native sends a body for anything we are not already holding, so this
+        // only trips if the two have drifted. Skipping beats an empty row.
+        if (!m) continue;
+        el = build(m);
+        c.nodes[id] = el;
+      } else if (m) {
+        fill(el, m);
       }
+
+      // Put it where `order` says. insertBefore(el, null) appends, and a node
+      // already in place is left alone rather than moved through the DOM.
+      var want = prev ? prev.nextSibling : c.el.firstChild;
+      if (el !== want) c.el.insertBefore(el, want);
+      prev = el;
     }
 
-    for (var key in nodes) {
+    for (var key in c.nodes) {
       if (!seen[key]) {
-        if (nodes[key].el.parentNode) nodes[key].el.parentNode.removeChild(nodes[key].el);
-        delete nodes[key];
+        var gone = c.nodes[key];
+        if (gone.parentNode) gone.parentNode.removeChild(gone);
+        delete c.nodes[key];
       }
     }
 
-    if (wasPinned) scrollToBottom();
+    if (isCurrent && wasPinned) scrollToBottom();
   }
 
   document.addEventListener('click', function (e) {
@@ -316,20 +367,56 @@
 
   // --- native API ----------------------------------------------------------
   window.HC = {
-    render: function (json) {
-      var msgs;
-      try { msgs = JSON.parse(json); } catch (e) { return; }
-      apply(msgs);
+    /** Apply native's patch to one channel, visible or not. */
+    apply: function (channel, json) {
+      var patch;
+      try { patch = JSON.parse(json); } catch (e) { return; }
+      applyPatch(String(channel), patch);
     },
-    clear: function () {
-      log.innerHTML = '';
-      nodes = Object.create(null);
-      shown = [];
+
+    /*
+     * Bring a channel to the front.
+     *
+     * The whole saving: no rendering happens here, only two `hidden` flags and
+     * a scroll position. Everything this channel had drawn is still drawn.
+     */
+    show: function (channel) {
+      channel = String(channel);
+      var next = channelState(channel);
+      if (current === channel) return;
+      var previous = channels[current];
+      if (previous) {
+        // Read before hiding: once it is hidden the document collapses to the
+        // next container's height and both of these measure that instead.
+        previous.pinned = previous.pinned || atBottom();
+        previous.scrollY = window.scrollY;
+        previous.el.hidden = true;
+      }
+      current = channel;
+      next.el.hidden = false;
+      // A reader who was at the bottom wants the bottom, which is not the same
+      // offset it was: the channel they are arriving at is a different length.
+      if (next.pinned) scrollToBottom();
+      else window.scrollTo(0, next.scrollY);
     },
+
+    /** Drop a channel's DOM. Native evicts to keep retained transcripts bounded. */
+    evict: function (channel) {
+      channel = String(channel);
+      // Never the one on screen; native does not ask, and this is the cheap
+      // guard that keeps a bug there from blanking the transcript.
+      if (channel === current) return;
+      var c = channels[channel];
+      if (!c) return;
+      if (c.el.parentNode) c.el.parentNode.removeChild(c.el);
+      delete channels[channel];
+    },
+
     setKatex: setKatex,
     /** One class on <body>; the three layouts are pure CSS over stable markup. */
     setLayout: function (cssClass) {
-      var wasPinned = pinned || atBottom();
+      var c = channels[current];
+      var wasPinned = c ? (c.pinned || atBottom()) : true;
       document.body.className = String(cssClass || 'layout-inline');
       if (wasPinned) scrollToBottom();
     },
@@ -350,7 +437,8 @@
     setFontScale: function (scale) {
       scale = Number(scale);
       if (!isFinite(scale) || scale <= 0) return;
-      var wasPinned = pinned || atBottom();
+      var c = channels[current];
+      var wasPinned = c ? (c.pinned || atBottom()) : true;
       document.documentElement.style.fontSize = 'calc(var(--hc-base) * ' + scale + ')';
       if (wasPinned) scrollToBottom();
     },
@@ -370,11 +458,23 @@
       on = !!on;
       if (on === allowImages) return;
       allowImages = on;
-      var messages = shown;
-      HC.clear();
-      apply(messages);
+      // Whether a message shows an image is not part of the message, so every
+      // container is now stale — including the ones nobody is looking at.
+      // Dropped rather than redrawn here: native resets its own record next to
+      // this call and pushes the visible channel back in full, which keeps one
+      // side authoritative rather than two agreeing by luck.
+      for (var name in channels) {
+        var c = channels[name];
+        if (c.el.parentNode) c.el.parentNode.removeChild(c.el);
+      }
+      channels = Object.create(null);
+      current = null;
     },
-    scrollToBottom: function () { pinned = true; scrollToBottom(); }
+    scrollToBottom: function () {
+      var c = channels[current];
+      if (c) c.pinned = true;
+      scrollToBottom();
+    }
   };
 
   post('onReady', '');

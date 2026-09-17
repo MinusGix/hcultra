@@ -210,6 +210,18 @@ Against live hack.chat, with an independent Node observer
   destination — and the echo comes back as `You invited victim to ?yy76kuou`.
   Long-pressing your own row opens nothing, which is the intended shape of a
   menu with nothing in it.
+- per-channel transcripts, against a 250-message burst in each of two channels
+  (KaTeX, code and image messages throughout). Measured with the same
+  instrumentation before and after, timing to the second animation frame:
+  swapping tabs went from a 50.5KB payload and 162ms of JS — 250 of 257 rows
+  re-rendered — at 197ms to frame, to no payload and no rendering at all, 91ms
+  to frame. A message arriving in a 257-message channel went from shipping
+  50,544 bytes to 1,163. The ~85ms that remains is laying out the rows as they
+  become visible, which is inherent to keeping them in the DOM; only windowing
+  would touch it. Also checked by hand: scroll position is kept per channel
+  across a swap (identical screenshots, to the pixel), and toggling images
+  rebuilds both the visible channel and the one that was not — the same
+  full-rebuild path an evicted channel takes on return.
 - images, against `fakeserver.mjs --mode normal`: an `i.ytimg.com` URL renders
   as a link with the setting off, as a full-width picture with it on, and back
   to a link when it is turned off again — each without a reconnect or a reload,

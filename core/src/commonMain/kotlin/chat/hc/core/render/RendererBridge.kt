@@ -29,41 +29,77 @@ internal data class WireMessage(
     val isMine: Boolean,
 )
 
+/**
+ * One channel's transcript, as far as the page needs to know.
+ *
+ * [order] is every id in transcript order and [upsert] carries bodies only for
+ * the rows that are new or have changed — which is the whole point: ids are a
+ * few bytes each, while a row with maths and a code block is not. The page
+ * rebuilds ordering and removals from [order] alone and trusts [upsert] for the
+ * rest, because [TranscriptSync] is what knows the difference.
+ *
+ * [full] means the page must clear this channel before applying: it is how a
+ * channel it has never held, or has dropped, gets rebuilt from nothing.
+ */
+@Serializable
+internal data class WirePatch(
+    val full: Boolean,
+    val order: List<Long>,
+    val upsert: List<WireMessage>,
+)
+
 object RendererBridge {
 
     private val json = Json { encodeDefaults = true }
 
+    private fun wire(m: ChatMessage) = WireMessage(
+        localId = m.localId,
+        kind = m.kind.name,
+        nick = m.nick,
+        text = m.text,
+        trip = m.trip?.takeIf(String::isNotBlank),
+        color = m.color,
+        flair = m.flair?.takeIf(String::isNotBlank),
+        level = m.level,
+        delivery = m.delivery.name,
+        isMine = m.isMine,
+    )
+
     /** The message list as a JSON array. */
     fun encode(messages: List<ChatMessage>): String = json.encodeToString(
         ListSerializer(WireMessage.serializer()),
-        messages.map {
-            WireMessage(
-                localId = it.localId,
-                kind = it.kind.name,
-                nick = it.nick,
-                text = it.text,
-                trip = it.trip?.takeIf(String::isNotBlank),
-                color = it.color,
-                flair = it.flair?.takeIf(String::isNotBlank),
-                level = it.level,
-                delivery = it.delivery.name,
-                isMine = it.isMine,
-            )
-        },
+        messages.map(::wire),
     )
 
     /**
-     * A complete `HC.render(...)` statement, safe to hand to `evaluateJavascript`.
+     * A complete `HC.apply(...)` statement, safe to hand to `evaluateJavascript`.
      *
-     * The payload is passed as a JSON *string literal* and parsed inside the
+     * Both arguments are passed as JSON *string literals* and parsed inside the
      * page rather than interpolated as code. Message text is fully untrusted —
      * anyone in a channel can send anything — so it must never be able to
-     * terminate the enclosing expression.
+     * terminate the enclosing expression. The channel name goes the same way:
+     * it is server-supplied too.
      */
-    fun renderCall(messages: List<ChatMessage>): String {
-        val payload = json.encodeToString(String.serializer(), encode(messages))
-        return "HC.render($payload);"
+    fun applyCall(
+        channel: String,
+        full: Boolean,
+        order: List<Long>,
+        upsert: List<ChatMessage>,
+    ): String {
+        val patch = json.encodeToString(
+            WirePatch.serializer(),
+            WirePatch(full = full, order = order, upsert = upsert.map(::wire)),
+        )
+        return "HC.apply(${quote(channel)}, ${quote(patch)});"
     }
+
+    /** Brings a channel's container to the front; the page renders nothing new. */
+    fun showCall(channel: String): String = "HC.show(${quote(channel)});"
+
+    /** Drops a channel's DOM. Paired with [TranscriptSync] forgetting it. */
+    fun evictCall(channel: String): String = "HC.evict(${quote(channel)});"
+
+    private fun quote(s: String): String = json.encodeToString(String.serializer(), s)
 
     /**
      * Switches the hack.chat colour scheme and highlight.js theme, both of

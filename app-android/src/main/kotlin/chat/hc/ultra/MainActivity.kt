@@ -762,6 +762,7 @@ private fun AppScreen(
                 }
 
                 MessageWebView(
+                    channel = active.channel,
                     messages = visible,
                     scheme = scheme.name,
                     highlight = highlight,

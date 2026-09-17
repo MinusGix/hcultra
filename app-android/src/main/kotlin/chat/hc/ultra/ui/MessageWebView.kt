@@ -17,6 +17,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import chat.hc.core.render.ImageHosts
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.RendererBridge
+import chat.hc.core.render.TranscriptSync
 import chat.hc.core.store.ChatMessage
 
 /**
@@ -65,7 +66,25 @@ private class Bridge(
 
 private class RendererState {
     var ready = false
-    var pending: String? = null
+
+    /**
+     * What the page is holding, and therefore what it still needs telling.
+     *
+     * Kept here rather than recreated per recomposition: it *is* the record of
+     * the page's DOM, so losing it would have us patching rows the page no
+     * longer has. Reset — never dropped — whenever that DOM goes away.
+     */
+    val sync = TranscriptSync()
+
+    /**
+     * The last thing asked for, replayed once the page is ready.
+     *
+     * The channel and its messages rather than the calls they produced: the
+     * calls are computed against [sync], and on a reload [sync] is reset first,
+     * so calls built before then would describe a page that no longer exists.
+     */
+    var lastChannel: String? = null
+    var lastMessages: List<ChatMessage> = emptyList()
     /** Replayed on reload so a WebView recreation keeps the chosen theme. */
     var appliedTheme: String? = null
     var appliedLayout: String? = null
@@ -147,6 +166,8 @@ private fun WebView.applyNetworkPolicy(allowImages: Boolean) {
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun MessageWebView(
+    /** Which channel [messages] belongs to; the page keeps one container each. */
+    channel: String,
     messages: List<ChatMessage>,
     scheme: String,
     highlight: String,
@@ -192,12 +213,19 @@ fun MessageWebView(
                             state.appliedTheme?.let { evaluateJavascript(it, null) }
                             state.appliedLayout?.let { evaluateJavascript(it, null) }
                             state.appliedFontScale?.let { evaluateJavascript(it, null) }
-                            // Before the messages: the page rebuilds the
-                            // transcript when this changes, and there is nothing
-                            // to rebuild yet.
+                            // Before the messages: the page drops every
+                            // container when this changes, and there is nothing
+                            // to drop yet.
                             state.appliedImages?.let { evaluateJavascript(it, null) }
-                            state.pending?.let { evaluateJavascript(it, null) }
-                            state.pending = null
+                            // A fresh page holds nothing, whatever we last
+                            // believed — this is a first load or a reload, and
+                            // the second is exactly the case where a stale
+                            // record would have us patching rows that are gone.
+                            state.sync.reset()
+                            state.lastChannel?.let { ch ->
+                                state.sync.update(ch, state.lastMessages)
+                                    .forEach { evaluateJavascript(it, null) }
+                            }
                         }
                     }),
                     "HcBridge",
@@ -224,14 +252,26 @@ fun MessageWebView(
             val imagesCall = RendererBridge.allowImagesCall(allowImages)
             if (state.appliedImages != imagesCall) {
                 state.appliedImages = imagesCall
-                // The gate first: the page rebuilds on this call and the images
-                // it writes are requested immediately.
+                // The gate first: the images the page writes are requested the
+                // moment it redraws, and it must not do that through a closed
+                // network policy.
                 state.allowImages = allowImages
                 webView.applyNetworkPolicy(allowImages)
                 if (state.ready) webView.evaluateJavascript(imagesCall, null)
+                // The page answers that call by dropping every container, since
+                // whether a message shows an image is not part of the message.
+                // Both sides forget together or neither does.
+                state.sync.reset()
             }
-            val call = RendererBridge.renderCall(messages)
-            if (state.ready) webView.evaluateJavascript(call, null) else state.pending = call
+
+            // Held for the reload path, which recomputes from these rather than
+            // from calls built against a record that reset() has since cleared.
+            state.lastChannel = channel
+            state.lastMessages = messages
+            if (state.ready) {
+                state.sync.update(channel, messages)
+                    .forEach { webView.evaluateJavascript(it, null) }
+            }
         },
     )
 }
