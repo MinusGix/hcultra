@@ -144,7 +144,13 @@ data class Alert(
     val text: String,
     val at: Long,
 ) {
-    enum class Kind { Mention, Whisper }
+    /**
+     * Each is something aimed at one person. An invite belongs here for the
+     * same reason a whisper does — it names you — and is worth its own kind
+     * rather than folding into [Whisper] because it routes to its own
+     * notification channel, so it can be silenced on its own.
+     */
+    enum class Kind { Mention, Whisper, Invite }
 }
 
 /**

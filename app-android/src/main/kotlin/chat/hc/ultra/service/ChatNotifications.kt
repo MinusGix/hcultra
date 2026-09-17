@@ -43,14 +43,15 @@ class ChatNotifications(private val context: Context) {
             setShowBadge(false)
         }
 
-        // Two channels rather than one so the two can be tuned apart in system
-        // settings — silencing whispers overnight while keeping mentions, or the
-        // reverse, is a real preference and only the platform can express it.
+        // One channel per kind, rather than one for all of them, so they can be
+        // tuned apart in system settings — silencing whispers overnight while
+        // keeping mentions, or the reverse, is a real preference and only the
+        // platform can express it.
         //
         // HIGH, and vibrating: these fire only for messages addressed to the
         // user by name, which is the case where a buzz is the whole point. The
-        // patterns differ so the two are distinguishable from a pocket: two
-        // short taps for a mention, one long one for a whisper.
+        // patterns differ so they are distinguishable from a pocket: two short
+        // taps for a mention, one long one for a whisper, three for an invite.
         val mentions = NotificationChannel(
             CHANNEL_MENTIONS,
             "Mentions",
@@ -70,9 +71,20 @@ class ChatNotifications(private val context: Context) {
             vibrationPattern = longArrayOf(0, 400)
         }
 
+        val invites = NotificationChannel(
+            CHANNEL_INVITES,
+            "Invites",
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = "Someone invited you to another channel."
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 140, 100, 140, 100, 140)
+        }
+
         manager.createNotificationChannel(ongoing)
         manager.createNotificationChannel(mentions)
         manager.createNotificationChannel(whispers)
+        manager.createNotificationChannel(invites)
 
         // A channel's importance and vibration are fixed at creation and cannot
         // be raised later — the system treats any change as the app overriding
@@ -199,6 +211,10 @@ class ChatNotifications(private val context: Context) {
                 when (alert.kind) {
                     Alert.Kind.Mention -> "?${alert.channel}"
                     Alert.Kind.Whisper -> "Whisper · ?${alert.channel}"
+                    // The channel named here is where the invite was *sent*,
+                    // not the one being offered: it is the thread this belongs
+                    // to, and the offer itself is in the line below it.
+                    Alert.Kind.Invite -> "Invite · ?${alert.channel}"
                 }
             )
             // True even for whispers: the conversation happened inside a
@@ -258,6 +274,7 @@ class ChatNotifications(private val context: Context) {
     private fun channelIdFor(kind: Alert.Kind) = when (kind) {
         Alert.Kind.Mention -> CHANNEL_MENTIONS
         Alert.Kind.Whisper -> CHANNEL_WHISPERS
+        Alert.Kind.Invite -> CHANNEL_INVITES
     }
 
     /**
@@ -268,9 +285,14 @@ class ChatNotifications(private val context: Context) {
      * counter would restart with them, so the id that used to mean `?one` could
      * come back meaning `?two` and overwrite it. The offset keeps the whole
      * range clear of [ONGOING_ID], which must never be replaced by an alert.
+     *
+     * The separator is a NUL so that no channel name can collide with a kind
+     * suffix, and it is written as an escape rather than embedded literally:
+     * one raw NUL byte is enough to make the whole file "binary" to grep, which
+     * silently hides it from every search.
      */
     private fun idFor(key: Key): Int =
-        ALERT_ID_BASE + ("${key.channel} ${key.kind.name}".hashCode() and 0xFFFFFF)
+        ALERT_ID_BASE + ("${key.channel}\u0000${key.kind.name}".hashCode() and 0xFFFFFF)
 
     /**
      * The last few messages worth glancing at, oldest first.
@@ -371,6 +393,7 @@ class ChatNotifications(private val context: Context) {
         const val CHANNEL_ONGOING = "connection"
         const val CHANNEL_MENTIONS = "mentions"
         const val CHANNEL_WHISPERS = "whispers"
+        const val CHANNEL_INVITES = "invites"
         const val KEY_REPLY = "reply_text"
 
         /** Created but never posted to by builds before mention alerts existed. */

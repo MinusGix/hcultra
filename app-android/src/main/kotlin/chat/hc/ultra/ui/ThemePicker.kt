@@ -93,6 +93,8 @@ fun ThemeSheet(
     onNotifyMentionsChanged: (Boolean) -> Unit,
     notifyWhispers: Boolean,
     onNotifyWhispersChanged: (Boolean) -> Unit,
+    notifyInvites: Boolean,
+    onNotifyInvitesChanged: (Boolean) -> Unit,
     notifyOtherChannels: Boolean,
     onNotifyOtherChannelsChanged: (Boolean) -> Unit,
     /** Opens the system's own settings for one notification channel id. */
@@ -190,6 +192,13 @@ fun ThemeSheet(
                 checked = notifyWhispers,
                 onChanged = onNotifyWhispersChanged,
                 onTune = { onOpenSystemNotifications(ChatNotifications.CHANNEL_WHISPERS) },
+            )
+            ToggleRow(
+                title = "Invites",
+                subtitle = "Someone asking you into another channel.",
+                checked = notifyInvites,
+                onChanged = onNotifyInvitesChanged,
+                onTune = { onOpenSystemNotifications(ChatNotifications.CHANNEL_INVITES) },
             )
             ToggleRow(
                 title = "Other channels while the app is open",

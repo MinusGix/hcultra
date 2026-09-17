@@ -495,7 +495,57 @@ class SessionManager(
                 }
             }
 
-            is SessionEvent.Invited, is SessionEvent.UnknownFrame -> Unit
+            // Shaped like a whisper, and for the same reason: `invite.js`
+            // sends the *identical* frame to the target and to the inviter, so
+            // direction is only knowable from `from`, and both ends are userids
+            // that have to be resolved against the roster while the sender is
+            // still in it.
+            is SessionEvent.Invited -> {
+                val who = WhisperResolver.resolve(
+                    from = event.frame.from,
+                    to = event.frame.to,
+                    myUserid = session.userid,
+                    lookupNick = { id -> session.roster.firstOrNull { it.userid == id }?.nick },
+                )
+                val at = event.frame.time ?: now()
+
+                // Info, which is the kind the site uses for this: a v1 socket
+                // is sent the same event *as* an `info` frame, so rendering it
+                // any other way would make the two clients disagree about
+                // something they are both told.
+                buffer.add(
+                    ChatMessage(
+                        localId = 0,
+                        kind = MessageKind.Info,
+                        text = InviteNotice.line(who.outgoing, who.nick, event.frame.inviteChannel),
+                        at = at,
+                    )
+                )
+
+                // Our own invite comes back to us too; it must not mark the
+                // channel unread or buzz us about what we just did.
+                if (!who.outgoing) {
+                    if (channel != activeChannel) {
+                        mutate(channel) { ui -> ui.copy(unread = ui.unread + 1) }
+                    }
+                    // No mention test, as with a whisper: an invite is sent to
+                    // one person and we are that person. The site notifies on
+                    // one as well (`client.js` tests `type === 'invite'`), and
+                    // it is more time-sensitive than most things said to you —
+                    // it points at where the conversation is moving.
+                    _alerts.tryEmit(
+                        Alert(
+                            channel = channel,
+                            kind = Alert.Kind.Invite,
+                            nick = who.nick,
+                            text = InviteNotice.alert(event.frame.inviteChannel),
+                            at = at,
+                        )
+                    )
+                }
+            }
+
+            is SessionEvent.UnknownFrame -> Unit
         }
         publish(channel)
     }

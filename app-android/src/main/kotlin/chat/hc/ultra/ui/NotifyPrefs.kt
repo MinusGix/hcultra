@@ -13,10 +13,10 @@ import chat.hc.core.session.Alert
  * and would leave two controls disagreeing about the same thing. Settings links
  * out to the real ones instead.
  *
- * All default on. A mention and a whisper are the two things in a hack.chat
- * channel that are addressed to you specifically, and someone who installs a
- * chat client is asking to hear about those; ordinary channel traffic stays
- * silent, which is what makes these safe to default on.
+ * All default on. A mention, a whisper and an invite are the three things in a
+ * hack.chat channel that are addressed to you specifically, and someone who
+ * installs a chat client is asking to hear about those; ordinary channel
+ * traffic stays silent, which is what makes these safe to default on.
  */
 class NotifyPrefs(context: Context) {
     private val prefs = context.getSharedPreferences("hc_notify", Context.MODE_PRIVATE)
@@ -32,7 +32,19 @@ class NotifyPrefs(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_WHISPERS, value).apply()
 
     /**
-     * Whether the two above still fire for a channel you are *not* looking at
+     * An invite to another channel.
+     *
+     * Kept apart from [whispers] rather than folded into it: an invite points
+     * somewhere else, so missing one costs you a conversation you were meant to
+     * be in, and someone who silences whispers has not said anything about
+     * that.
+     */
+    var invites: Boolean
+        get() = prefs.getBoolean(KEY_INVITES, true)
+        set(value) = prefs.edit().putBoolean(KEY_INVITES, value).apply()
+
+    /**
+     * Whether the three above still fire for a channel you are *not* looking at
      * while the app is open.
      *
      * On by default. Several open tabs is the normal way to use this app, and
@@ -51,11 +63,13 @@ class NotifyPrefs(context: Context) {
     fun wants(kind: Alert.Kind): Boolean = when (kind) {
         Alert.Kind.Mention -> mentions
         Alert.Kind.Whisper -> whispers
+        Alert.Kind.Invite -> invites
     }
 
     private companion object {
         const val KEY_MENTIONS = "mentions"
         const val KEY_WHISPERS = "whispers"
+        const val KEY_INVITES = "invites"
         const val KEY_OTHER_CHANNELS = "other_channels"
     }
 }

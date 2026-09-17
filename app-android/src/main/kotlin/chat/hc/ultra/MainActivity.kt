@@ -184,6 +184,7 @@ class MainActivity : ComponentActivity() {
             var joinLeave by remember { mutableStateOf(themePrefs.joinLeave) }
             var notifyMentions by remember { mutableStateOf(notifyPrefs.mentions) }
             var notifyWhispers by remember { mutableStateOf(notifyPrefs.whispers) }
+            var notifyInvites by remember { mutableStateOf(notifyPrefs.invites) }
             var notifyOtherChannels by remember { mutableStateOf(notifyPrefs.otherChannels) }
             var showThemes by remember { mutableStateOf(false) }
             var pendingChannel by remember { mutableStateOf<String?>(null) }
@@ -282,6 +283,11 @@ class MainActivity : ComponentActivity() {
                             onNotifyWhispersChanged = {
                                 notifyWhispers = it
                                 notifyPrefs.whispers = it
+                            },
+                            notifyInvites = notifyInvites,
+                            onNotifyInvitesChanged = {
+                                notifyInvites = it
+                                notifyPrefs.invites = it
                             },
                             notifyOtherChannels = notifyOtherChannels,
                             onNotifyOtherChannelsChanged = {

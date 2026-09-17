@@ -76,3 +76,44 @@ object WhisperResolver {
         return Resolved(outgoing, otherId, nick)
     }
 }
+
+/**
+ * How an invite reads.
+ *
+ * A v2 socket is sent `cmd:'invite'` with no prose in it — only `from`, `to`
+ * and `inviteChannel` — so the sentence has to be composed here. The wording is
+ * the server's own: `_LegacyFunctions.js` spells it out for v1 clients, and
+ * reusing that text verbatim is what keeps this client and the site saying the
+ * same thing about the same event.
+ */
+object InviteNotice {
+
+    /**
+     * The transcript line.
+     *
+     * `?channel` is deliberately left literal rather than decorated: the
+     * renderer linkifies it exactly as it does in any other message, and that
+     * link is what makes the notice actionable — tapping it joins.
+     */
+    fun line(outgoing: Boolean, nick: String, inviteChannel: String): String =
+        if (outgoing) "You invited $nick to ${target(inviteChannel)}"
+        else "$nick invited you to ${target(inviteChannel)}"
+
+    /**
+     * The same news with the inviter left out, for an alert.
+     *
+     * A notification already shows who it came from — [Alert.nick] becomes the
+     * sender of the line — so repeating the nick inside the text reads as a
+     * stutter: "alice: alice invited you to ?x".
+     */
+    fun alert(inviteChannel: String): String = "invited you to ${target(inviteChannel)}"
+
+    /**
+     * A blank `inviteChannel` cannot come from a conforming server —
+     * `invite.js#getChannel` substitutes a random name when the payload omits
+     * one — but a bare `?` would linkify into a link to nowhere, so it is worth
+     * not emitting one.
+     */
+    private fun target(inviteChannel: String): String =
+        if (inviteChannel.isBlank()) "an unnamed channel" else "?$inviteChannel"
+}
