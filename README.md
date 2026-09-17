@@ -60,8 +60,9 @@ the background.
 <img src="docs/screenshots/notification.png" width="460" alt="The persistent notification showing recent messages, with Reply and Disconnect actions">
 </div>
 
-- **Whispers, the user list, and moderation** — kick, ban, muzzle — with each
-  action offered only when the server would actually accept it.
+- **Whispers, invites, the user list, and moderation** — kick, ban, muzzle —
+  from a long-press on anyone in the roster, with each action offered only when
+  the server would actually accept it.
 - **Point it at another server** if you run your own hack.chat.
 
 ### Not there yet

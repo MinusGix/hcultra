@@ -343,6 +343,36 @@ class SessionManager(
         return runCatching { session.send(frame) }.isSuccess
     }
 
+    /**
+     * Invites [target] somewhere, and lets the server say where.
+     *
+     * `to` is deliberately omitted, so `invite.js#getChannel` invents a fresh
+     * random channel instead of pointing at one of ours. That is what the site
+     * does and what an invite usually means — somewhere new, for the two of
+     * you. It also means the destination is never predicted here: the server
+     * sends the same `invite` frame to both of us naming it, so where we are
+     * going arrives through the ordinary receive path and is reported by
+     * exactly one piece of code.
+     *
+     * A userid, never a nick. `invite.js` requires a numeric `userid` from a v2
+     * socket and *silently drops* a nick-only payload — no reply at all, and
+     * the rate-limit points spent anyway (see probe/FINDINGS.md §2), which is
+     * the worst failure shape there is: indistinguishable from success.
+     *
+     * Re-checked rather than trusting the UI, as [moderate] is. Inviting
+     * yourself is legal server-side and merely useless, so the guard is against
+     * spending 2 rate-limit points of 25 on nothing rather than against a
+     * rejection.
+     */
+    suspend fun invite(channel: String, target: chat.hc.core.protocol.User): Boolean {
+        val session = sessions[channel] ?: return false
+        val me = me(channel) ?: return false
+        if (target.userid == me.userid) return false
+        return runCatching {
+            session.send(Outbound.Invite(channel = channel, userid = target.userid))
+        }.isSuccess
+    }
+
     private suspend fun onEvent(session: ChannelSession, event: SessionEvent) {
         val channel = event.channel
         val buffer = buffers[channel] ?: return

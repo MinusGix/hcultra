@@ -198,6 +198,18 @@ Against live hack.chat, with an independent Node observer
   five seconds): with it off the existing lines disappear, no new ones arrive
   over several more cycles, and the user list still shows that peer coming and
   going — presence is a different question from arrival
+- invites, both halves, against `--mode demo --level 999999`. Inbound: the
+  scripted `invite` frame renders as `victim invited you to ?quietcorner` with
+  the channel linkified, tapping it opens the join sheet prefilled, and with the
+  app backgrounded it posts on `channel=invites` at importance 4, titled
+  `Invite · ?beta` with the body `invited you to ?quietcorner` — the nick only
+  in the sender slot, never doubled into the text. Outbound: long-pressing a
+  roster row opens Whisper / Invite to a new channel / the mod actions, the
+  frame on the wire is `{"cmd":"invite","channel":"beta","userid":4242}` — a
+  numeric userid, an explicit channel and **no `to`**, so the server names the
+  destination — and the echo comes back as `You invited victim to ?yy76kuou`.
+  Long-pressing your own row opens nothing, which is the intended shape of a
+  menu with nothing in it.
 - images, against `fakeserver.mjs --mode normal`: an `i.ytimg.com` URL renders
   as a link with the setting off, as a full-width picture with it on, and back
   to a link when it is turned off again — each without a reconnect or a reload,

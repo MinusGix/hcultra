@@ -186,6 +186,20 @@ class HcService : Service() {
                 }
             }
 
+            // The target is re-resolved from the roster by userid rather than
+            // carried across the intent, for the same reason ACTION_MODERATE
+            // does it: the roster is the server's word on who is there, and the
+            // invite needs a numeric userid the server will actually match.
+            ACTION_INVITE -> {
+                val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
+                val userid = intent.getLongExtra(EXTRA_USERID, 0L)
+                scope.launch {
+                    val target = sessions.channels.value[channel]?.roster
+                        ?.firstOrNull { it.userid == userid } ?: return@launch
+                    sessions.invite(channel, target)
+                }
+            }
+
             ACTION_SET_SERVER -> {
                 val url = intent.getStringExtra(EXTRA_URL) ?: return START_STICKY
                 // Changing server disconnects every channel: the channels, the
@@ -229,6 +243,7 @@ class HcService : Service() {
         const val ACTION_STOP = "chat.hc.ultra.STOP"
         const val ACTION_SET_SERVER = "chat.hc.ultra.SET_SERVER"
         const val ACTION_MODERATE = "chat.hc.ultra.MODERATE"
+        const val ACTION_INVITE = "chat.hc.ultra.INVITE"
 
         const val EXTRA_CHANNEL = "channel"
         const val EXTRA_NICK = "nick"

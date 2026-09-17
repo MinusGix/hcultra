@@ -13,7 +13,8 @@
  *             in the roster, so the transcript is populated for screenshots and
  *             for eyeballing rendering changes. Nothing depends on it. Also
  *             churns a peer in and out every five seconds, which is the only
- *             way to see join/leave handling on demand.
+ *             way to see join/leave handling on demand, and sends one inbound
+ *             invite, which a client cannot produce for itself at all.
  *   restore — honour session tokens, reinstating the identity they were issued
  *             for. This is the one the real server does and the fake one could
  *             not: a restore *overrides* the join that would have followed, so
@@ -25,8 +26,11 @@
  * (999999 = moderator, 9999 = channel moderator). A second user is always
  * present in the roster to act as a target.
  *
- * Point the app at it via Settings → Server, e.g. `10.0.2.2:6060` from the
- * Android emulator (10.0.2.2 is the emulator's route to the host).
+ * Point the app at it via Settings → Server, e.g. `ws://10.0.2.2:6060` from the
+ * Android emulator (10.0.2.2 is the emulator's route to the host). The `ws://`
+ * is not optional: a bare host is normalised to `wss://`, and the handshake
+ * then fails against this plaintext server with a TLS record error rather than
+ * anything that names the cause.
  *
  * It implements only enough of the protocol for a client to join: the v2
  * handshake, onlineSet, the MOTD, and the session token that trails them.
@@ -95,7 +99,7 @@ const trips = new Map();
 const tripKey = (nick, channel) => `${nick}:${channel}`;
 
 console.log(`fake hack.chat on ws://0.0.0.0:${port}  mode=${mode}  level=${level}`);
-console.log(`  emulator: use 10.0.2.2:${port}`);
+console.log(`  emulator: use ws://10.0.2.2:${port}  (the ws:// is required)`);
 
 wss.on('connection', (ws) => {
   const state = { userid: nextUserid++, nick: null, channel: null, trip: '' };
@@ -179,6 +183,20 @@ wss.on('connection', (ws) => {
         }
 
         /*
+         * An invite *from* somebody else, which is the half no single client
+         * can produce for itself: sending one only ever shows the inviter's
+         * copy. `from` is a userid in the roster and `to` is us, so the client
+         * has to resolve the nick and work out the direction.
+         */
+        setTimeout(() => send({
+          cmd: 'invite',
+          channel: p.channel,
+          from: 4242,
+          to: state.userid,
+          inviteChannel: 'quietcorner',
+        }), 3600);
+
+        /*
          * A peer arriving and leaving, on a loop.
          *
          * The real server only produces these when somebody else actually comes
@@ -203,6 +221,38 @@ wss.on('connection', (ws) => {
       if (mode === 'drop') {
         setTimeout(() => { log('closing socket'); ws.close(); }, dropAfter);
       }
+      return;
+    }
+
+    /*
+     * Mirrors commands/core/invite.js, including the parts that make it easy to
+     * get wrong from a v2 client: a numeric `userid` and a string `channel` are
+     * both required, a nick-only payload is dropped in silence, and the channel
+     * invited *to* is invented here unless the payload names one. The frame the
+     * inviter gets back is byte-identical to the one the target gets, which is
+     * why a client cannot tell the direction from anything but `from`.
+     */
+    if (p.cmd === 'invite') {
+      if (typeof p.userid !== 'number' || typeof p.channel !== 'string') {
+        log(`dropping malformed invite in silence (real server does): ${JSON.stringify(p)}`);
+        return;
+      }
+      const target = onlineSet(state, state.channel).users
+        .find((u) => u.userid === p.userid);
+      if (!target) {
+        send({ cmd: 'warn', text: 'Could not find user in that channel', id: 12, channel: state.channel });
+        return;
+      }
+      const inviteChannel = typeof p.to === 'string' ? p.to : Math.random().toString(36).substr(2, 8);
+      log(`INVITE ${state.nick} -> ${target.nick} into ?${inviteChannel}`);
+      // Only the inviter's copy: the target is not a real socket here.
+      send({
+        cmd: 'invite',
+        channel: state.channel,
+        from: state.userid,
+        to: target.userid,
+        inviteChannel,
+      });
       return;
     }
 

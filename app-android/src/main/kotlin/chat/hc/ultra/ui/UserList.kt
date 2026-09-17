@@ -2,9 +2,9 @@ package chat.hc.ultra.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,6 +14,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -35,9 +37,17 @@ import chat.hc.core.session.ModAction
 /**
  * Channel roster.
  *
- * Tapping a user inserts an `@nick` mention; long-pressing starts a `/w`.
- * Those are the two reasons to reach for a roster on a phone, and neither is
- * worth a menu.
+ * Tapping a user inserts an `@nick` mention — the one action common enough to
+ * deserve the whole row and no confirmation. Everything else is behind a
+ * long-press: whisper, invite, and whichever moderation actions this user may
+ * actually take against that one.
+ *
+ * Long-press used to *be* whisper, on the grounds that two actions were not
+ * worth a menu. Three are. Inviting is available against everyone, so as a row
+ * label it would have repeated down every line in the channel saying nothing —
+ * unlike the moderation labels, which are gated and therefore rare. Folding
+ * those into the same menu is what keeps the rows readable, and it matches the
+ * site, whose own userlist opens a menu per person.
  */
 @Composable
 fun UserList(
@@ -45,6 +55,7 @@ fun UserList(
     onMention: (String) -> Unit,
     onWhisper: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onInvite: (User) -> Unit = {},
     /** Actions this user may take against a target; empty for ordinary users. */
     modActionsFor: (User) -> List<ModAction> = { emptyList() },
     onModerate: (ModAction, User) -> Unit = { _, _ -> },
@@ -98,7 +109,8 @@ fun UserList(
                 UserRow(
                     user = user,
                     onClick = { onMention(user.nick) },
-                    onLongClick = { onWhisper(user.nick) },
+                    onWhisper = { onWhisper(user.nick) },
+                    onInvite = { onInvite(user) },
                     modActions = modActionsFor(user),
                     onModAction = { action ->
                         // Destructive actions confirm; Unmuzzle is trivially
@@ -124,7 +136,8 @@ private fun describe(action: ModAction, nick: String): String = when (action) {
 private fun UserRow(
     user: User,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
+    onWhisper: () -> Unit,
+    onInvite: () -> Unit,
     modActions: List<ModAction>,
     onModAction: (ModAction) -> Unit,
 ) {
@@ -134,63 +147,103 @@ private fun UserRow(
         ?.let { runCatching { Color(android.graphics.Color.parseColor("#$it")) }.getOrNull() }
         ?: colors.onSurface
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            // Tap mentions, long-press starts a whisper — the two things you
-            // actually want a roster for on a phone.
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        // The server's own decoration, shown verbatim — `forceflair` allows any
-        // string of up to two characters, so this is not a fixed icon set. It is
-        // also the fastest read on who can actually moderate.
-        user.flair?.takeIf { it.isNotBlank() }?.let {
-            Text(text = it, style = MaterialTheme.typography.labelMedium)
-        }
-        badgeFor(user)?.let {
+    var menuOpen by remember { mutableStateOf(false) }
+
+    // Nothing worth offering against yourself. Whispering and inviting yourself
+    // are both legal server-side and both pointless, and `Moderation.available`
+    // refuses a self-target outright — so the menu would open with nothing in
+    // it. A long-press that does nothing beats a menu that says nothing.
+    val hasMenu = !user.isme
+
+    Box {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                // Tap mentions. It is by far the most common thing to want from
+                // a roster, so it keeps the whole row and costs one tap; the
+                // rarer actions are a long-press away in the menu below.
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = { if (hasMenu) menuOpen = true },
+                )
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            // The server's own decoration, shown verbatim — `forceflair` allows any
+            // string of up to two characters, so this is not a fixed icon set. It is
+            // also the fastest read on who can actually moderate.
+            user.flair?.takeIf { it.isNotBlank() }?.let {
+                Text(text = it, style = MaterialTheme.typography.labelMedium)
+            }
+            badgeFor(user)?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.primary,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
             Text(
-                text = it,
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.primary,
-                fontWeight = FontWeight.Bold,
+                text = user.nick,
+                style = MaterialTheme.typography.bodyMedium,
+                color = nickColor,
+                fontWeight = if (user.isme) FontWeight.Bold else FontWeight.Normal,
+                modifier = Modifier.weight(1f),
             )
-        }
-        Text(
-            text = user.nick,
-            style = MaterialTheme.typography.bodyMedium,
-            color = nickColor,
-            fontWeight = if (user.isme) FontWeight.Bold else FontWeight.Normal,
-            modifier = Modifier.weight(1f),
-        )
-        user.trip?.takeIf { it.isNotBlank() }?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.onSurfaceVariant.copy(alpha = 0.7f),
-            )
-        }
-        if (user.isme) {
-            Text(
-                text = "you",
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.onSurfaceVariant.copy(alpha = 0.6f),
-            )
+            user.trip?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant.copy(alpha = 0.7f),
+                )
+            }
+            if (user.isme) {
+                Text(
+                    text = "you",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant.copy(alpha = 0.6f),
+                )
+            }
         }
 
-        modActions.forEach { action ->
-            Text(
-                text = action.label,
-                style = MaterialTheme.typography.labelSmall,
-                color = if (action.destructive) colors.error else colors.primary,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable { onModAction(action) }
-                    .padding(horizontal = 6.dp, vertical = 3.dp),
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text("Whisper") },
+                onClick = {
+                    menuOpen = false
+                    onWhisper()
+                },
             )
+            // Says where, because "Invite" alone does not: the server invents a
+            // fresh channel for the two of you rather than pointing at this one,
+            // and somebody expecting the latter would be surprised by the line
+            // that comes back naming somewhere they have never been.
+            DropdownMenuItem(
+                text = { Text("Invite to a new channel") },
+                onClick = {
+                    menuOpen = false
+                    onInvite()
+                },
+            )
+            // Gated, so usually none of these. Destructive ones still route
+            // through the confirm dialog, which is where the target is named —
+            // the menu items themselves stay terse.
+            modActions.forEach { action ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = action.label,
+                            color = if (action.destructive) colors.error else colors.primary,
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onModAction(action)
+                    },
+                )
+            }
         }
     }
 }

@@ -308,6 +308,7 @@ class MainActivity : ComponentActivity() {
                         onModerate = { channel, action, target ->
                             startModerate(channel, action, target)
                         },
+                        onInvite = { channel, target -> startInvite(channel, target) },
                         onActiveChanged = { activeChannel = it },
                         recent = recent,
                         lastSession = lastSession,
@@ -421,6 +422,17 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private fun startInvite(channel: String, target: User) {
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, HcService::class.java).apply {
+                this.action = HcService.ACTION_INVITE
+                putExtra(HcService.EXTRA_CHANNEL, channel)
+                putExtra(HcService.EXTRA_USERID, target.userid)
+            },
+        )
+    }
+
     private fun startLeave(channel: String) {
         ContextCompat.startForegroundService(
             this,
@@ -507,6 +519,7 @@ private fun AppScreen(
     onLeave: (String) -> Unit,
     onUndoLeave: (String) -> Unit,
     onModerate: (String, ModAction, User) -> Unit,
+    onInvite: (String, User) -> Unit,
     onActiveChanged: (String?) -> Unit,
     /** Who you have been on this server, most recent first. */
     recent: List<ChannelIdentity>,
@@ -720,6 +733,15 @@ private fun AppScreen(
                         },
                         onModerate = { action, target ->
                             onModerate(active.channel, action, target)
+                        },
+                        onInvite = { target ->
+                            onInvite(active.channel, target)
+                            // Closed so the "You invited …" line the server
+                            // sends back is not left behind the roster panel:
+                            // that line naming the channel is the only
+                            // confirmation the invite went, and the only place
+                            // the destination appears.
+                            openRoster = null
                         },
                         onWhisper = { nick ->
                             // The server's /w strips a leading @, so this works

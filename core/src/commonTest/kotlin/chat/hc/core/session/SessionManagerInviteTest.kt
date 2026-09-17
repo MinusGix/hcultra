@@ -11,6 +11,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -155,6 +156,88 @@ class SessionManagerInviteTest {
         advanceUntilIdle()
 
         assertEquals(1, sessions.channels.value.getValue("testroom").unread)
+        sessions.stopAll()
+    }
+
+    // --- sending ----------------------------------------------------------
+
+    private fun Iterable<String>.invites() =
+        map { Json.parseToJsonElement(it).jsonObject }.filter {
+            it["cmd"]?.jsonPrimitive?.content == "invite"
+        }
+
+    /**
+     * A userid and an explicit channel, which is what a v2 socket must send. A
+     * nick-only payload is *silently dropped* — no reply, and the rate-limit
+     * points spent anyway — so getting this wrong looks exactly like success.
+     */
+    @Test
+    fun sendingAnInviteNamesTheTargetByUserid() = runTest {
+        val transport = FakeTransport().apply { scriptJoin() }
+        val sessions = manager(transport, this)
+        sessions.join("testroom", Credentials("alice"))
+        advanceUntilIdle()
+
+        val bob = sessions.channels.value.getValue("testroom").roster.first { it.nick == "bob" }
+        assertTrue(sessions.invite("testroom", bob), "the invite was not sent")
+        advanceUntilIdle()
+
+        val sent = transport.connections[0].sent.invites()
+        assertEquals(1, sent.size, "expected exactly one invite frame, got $sent")
+        assertEquals(7L, sent[0]["userid"]?.jsonPrimitive?.content?.toLong())
+        assertEquals("testroom", sent[0]["channel"]?.jsonPrimitive?.content)
+        sessions.stopAll()
+    }
+
+    /**
+     * No `to`, so `getChannel` invents one. Sending it — even as null — would
+     * be us choosing the destination, and the whole point is that the server
+     * names somewhere new and tells both of us through the invite it echoes.
+     */
+    @Test
+    fun sendingAnInviteLetsTheServerNameTheChannel() = runTest {
+        val transport = FakeTransport().apply { scriptJoin() }
+        val sessions = manager(transport, this)
+        sessions.join("testroom", Credentials("alice"))
+        advanceUntilIdle()
+
+        val bob = sessions.channels.value.getValue("testroom").roster.first { it.nick == "bob" }
+        sessions.invite("testroom", bob)
+        advanceUntilIdle()
+
+        val frame = transport.connections[0].sent.invites().single()
+        assertTrue("to" !in frame, "we named the destination ourselves: $frame")
+        sessions.stopAll()
+    }
+
+    /** Legal server-side, useless, and it still costs 2 of 25 rate points. */
+    @Test
+    fun invitingYourselfIsNotSent() = runTest {
+        val transport = FakeTransport().apply { scriptJoin() }
+        val sessions = manager(transport, this)
+        sessions.join("testroom", Credentials("alice"))
+        advanceUntilIdle()
+
+        val me = sessions.channels.value.getValue("testroom").roster.first { it.isme }
+        assertFalse(sessions.invite("testroom", me), "a self-invite reported success")
+        advanceUntilIdle()
+
+        assertTrue(
+            transport.connections[0].sent.invites().isEmpty(),
+            "a self-invite reached the wire",
+        )
+        sessions.stopAll()
+    }
+
+    @Test
+    fun invitingIntoAChannelWeAreNotInIsNotSent() = runTest {
+        val transport = FakeTransport().apply { scriptJoin() }
+        val sessions = manager(transport, this)
+        sessions.join("testroom", Credentials("alice"))
+        advanceUntilIdle()
+
+        val bob = sessions.channels.value.getValue("testroom").roster.first { it.nick == "bob" }
+        assertFalse(sessions.invite("elsewhere", bob), "an invite into a channel we have not joined")
         sessions.stopAll()
     }
 
