@@ -46,6 +46,20 @@ android {
     }
 
     buildTypes {
+        /*
+         * A debug build is a separate app: its own ID, so it installs beside
+         * the release rather than over it.
+         *
+         * Over it is not possible anyway — the debug key is not the release key,
+         * and Android refuses an update signed by a different one — so the only
+         * way a debug build reached a phone was to uninstall the release first,
+         * taking every remembered channel, trip password and setting with it.
+         * Side by side, testing a change never touches the install you use.
+         */
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-dev"
+        }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("release")

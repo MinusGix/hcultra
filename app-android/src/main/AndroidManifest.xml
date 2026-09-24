@@ -71,5 +71,22 @@
             android:name=".service.ReplyReceiver"
             android:exported="false" />
 
+        <!--
+          Hands the image viewer's fetched copies to other apps — the clipboard
+          and the share sheet — as content:// URIs they are granted one at a
+          time. Not exported: nothing reaches it except through such a grant.
+          The authority follows the application ID, so the debug build's
+          provider does not collide with the release's.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.images"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/image_paths" />
+        </provider>
+
     </application>
 </manifest>

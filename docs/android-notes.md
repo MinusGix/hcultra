@@ -196,16 +196,18 @@ with "more than one device". Name it:
 adb -s 192.168.1.188:45045 install -r app-android/build/outputs/apk/debug/app-android-debug.apk
 ```
 
-**A debug build cannot update a release install**, and fails in two ways. The
-version: a local build is versionCode 1 and a release is its tag's number, so
-it is `INSTALL_FAILED_VERSION_DOWNGRADE`. The signature: even with
-`HCULTRA_VERSION_CODE` raised, the debug key is not the release key, and
-Android refuses an update signed by a different one. The way through is to
-uninstall first — which loses remembered channels, trip passwords and every
-setting, images included — and the same is true in the other direction when
-going back to a release. A signed local release (`assembleRelease` with the
-four `HCULTRA_*` signing variables, see `releasing.md`) is the only
-data-preserving path.
+**Debug and release are separate apps.** The debug build is
+`chat.hc.ultra.debug`, labelled "hcultra dev", and installs beside the release
+rather than over it — so testing never touches the install actually in use.
+
+It was not always: with one application ID, a debug build could not update a
+release install at all. The version fails first (a local build is versionCode
+1, a release its tag's number: `INSTALL_FAILED_VERSION_DOWNGRADE`), and the
+signature after that (the debug key is not the release key, and Android refuses
+an update signed by a different one). The only way through was uninstalling,
+which took every remembered channel, trip password and setting with it. Two
+installs still share nothing — the debug one starts with an empty history and
+images off.
 
 Pre-Android-11 phones need a cable once: `adb tcpip 5555`, unplug,
 `adb connect <ip>:5555`.
@@ -374,6 +376,17 @@ picture is not fetched twice; and native re-checks `ImageHosts` before opening
 it at all, rather than trusting the untrusted page's word that the tap was on a
 whitelisted image. The gestures are in `viewer.js`, not WebView zoom, which
 double-tap-snaps to text columns and stops dead at the image's edge.
+
+Copy, save and share fetch the image again, natively and only on request
+(`data/ViewerImages.kt`): the WebView's cache is not readable by the app. The
+fetch keeps the WebView's rules — https, `ImageHosts`, and redirects followed
+by hand so each hop is re-checked, since `HttpURLConnection` would otherwise
+follow a whitelisted host's redirect anywhere. The copy lands in
+`cache/images/` (pruned after a day) and reaches the clipboard and share sheet
+through a `FileProvider` scoped to that directory. Save goes to
+`Pictures/hcultra` through MediaStore, which needs no permission from Android
+10; on 8 and 9 it opens the system's save dialog instead, rather than asking
+for storage permission the app has no other use for.
 
 The cost being opted into is that fetching an image tells the host serving it
 that you are here, and it was a stranger in the channel who chose which host

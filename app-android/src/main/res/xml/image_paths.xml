@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the image FileProvider may hand out: the viewer's fetched copies and
+  nothing else in the cache. See data/ViewerImages.kt.
+-->
+<paths>
+    <cache-path name="images" path="images/" />
+</paths>
