@@ -172,6 +172,44 @@ The service is not exported, so `adb shell am start-foreground-service` is
 rejected ("Requires permission not exported"). Drive the real UI instead:
 `adb shell input tap/text` plus `adb shell uiautomator dump` to read state.
 
+## A real phone, over wireless adb
+
+Android 11+ only; `adb` itself comes from `android-tools` in the system config,
+so this works outside the dev shell too. On the phone: Developer options →
+**Wireless debugging** on, same network as the PC.
+
+```sh
+adb pair 192.168.1.188:37123     # once per PC: "Pair device with pairing code"
+adb connect 192.168.1.188:45045  # the IP:port on the main Wireless debugging screen
+adb devices -l
+```
+
+The pairing port and the connect port are different, and the pairing one only
+lives while its dialog is open. The connect port changes whenever wireless
+debugging is toggled or the phone reboots; pairing survives both.
+
+The phone is then usually listed twice — once by `IP:port`, once by an mDNS
+name (`adb-<serial>._adb-tls-connect._tcp`) — so plain `adb install` refuses
+with "more than one device". Name it:
+
+```sh
+adb -s 192.168.1.188:45045 install -r app-android/build/outputs/apk/debug/app-android-debug.apk
+```
+
+**A debug build cannot update a release install**, and fails in two ways. The
+version: a local build is versionCode 1 and a release is its tag's number, so
+it is `INSTALL_FAILED_VERSION_DOWNGRADE`. The signature: even with
+`HCULTRA_VERSION_CODE` raised, the debug key is not the release key, and
+Android refuses an update signed by a different one. The way through is to
+uninstall first — which loses remembered channels, trip passwords and every
+setting, images included — and the same is true in the other direction when
+going back to a release. A signed local release (`assembleRelease` with the
+four `HCULTRA_*` signing variables, see `releasing.md`) is the only
+data-preserving path.
+
+Pre-Android-11 phones need a cable once: `adb tcpip 5555`, unplug,
+`adb connect <ip>:5555`.
+
 ## Verified on the emulator
 
 Against live hack.chat, with an independent Node observer
