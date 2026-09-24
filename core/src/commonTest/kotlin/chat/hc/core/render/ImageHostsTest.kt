@@ -14,6 +14,7 @@ class ImageHostsTest {
         assertTrue(ImageHosts.allows("https://i.ibb.co/x/y.png?size=large#frag"))
         assertTrue(ImageHosts.allows("https://files.catbox.moe/abc123.png"))
         assertTrue(ImageHosts.allows("https://litter.catbox.moe/abc123.gif"))
+        assertTrue(ImageHosts.allows("https://gateway.irys.xyz/AbC123xyz"))
     }
 
     @Test

@@ -28,6 +28,7 @@ object ImageHosts {
         "i.ibb.co",
         "files.catbox.moe",
         "litter.catbox.moe",
+        "gateway.irys.xyz",
     )
 
     /**
