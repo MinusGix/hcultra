@@ -280,15 +280,17 @@
     // Refilled with the row, so a message a bot is still streaming copies as
     // far as it has got.
     row._hcText = (m.kind === 'Join' || m.kind === 'Leave') ? '' : String(m.text || '');
-    // innerHTML just replaced the chip along with everything else.
+    // innerHTML just replaced the actions along with everything else.
     if (row === selected) {
-      if (row._hcText) addCopyChip(row);
+      if (row._hcText) addActions(row);
       else deselect();
     }
   }
 
   /*
-   * Selecting a message, to copy the whole of it in one tap.
+   * Selecting a message, to copy the whole of it in one tap — or to put it
+   * straight into the composer, which is the same wish one step further on
+   * when the message is a bot command you want to run again.
    *
    * Tap rather than long-press, because long-press already belongs to the
    * WebView's own text selection, and that has to keep working for copying
@@ -301,12 +303,32 @@
    */
   var selected = null;
 
-  function addCopyChip(row) {
-    var chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'copy-chip';
-    chip.textContent = 'Copy';
-    row.appendChild(chip);
+  /*
+   * A strip of full-size buttons under the message, rather than a chip beside
+   * it: a chip small enough to sit in the line of text was also too small to
+   * hit reliably, and a strip has room for more than one action.
+   *
+   * Icons are inline SVG, Material's `content_copy` and `edit`. Glyphs such as
+   * U+29C9 would be shorter, but whether one exists depends on the phone's
+   * fonts, and a missing one is a box.
+   */
+  var ICON_COPY = 'M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11' +
+    'c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z';
+  var ICON_EDIT = 'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41' +
+    'l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z';
+
+  function actionButton(act, icon, label) {
+    return '<button type="button" data-act="' + act + '">' +
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + icon + '"/></svg>' +
+      '<span>' + label + '</span></button>';
+  }
+
+  function addActions(row) {
+    var strip = document.createElement('div');
+    strip.className = 'msg-actions';
+    strip.innerHTML = actionButton('copy', ICON_COPY, 'Copy') +
+      actionButton('compose', ICON_EDIT, 'Put in composer');
+    row.appendChild(strip);
   }
 
   function select(row) {
@@ -314,14 +336,14 @@
     if (!row._hcText) return;
     selected = row;
     row.classList.add('selected');
-    addCopyChip(row);
+    addActions(row);
   }
 
   function deselect() {
     if (!selected) return;
     selected.classList.remove('selected');
-    var chip = selected.querySelector('.copy-chip');
-    if (chip) chip.parentNode.removeChild(chip);
+    var strip = selected.querySelector('.msg-actions');
+    if (strip) strip.parentNode.removeChild(strip);
     selected = null;
   }
 
@@ -401,17 +423,26 @@
 
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;
-    var chip = e.target.closest('.copy-chip');
-    if (chip) {
+    var act = e.target.closest('.msg-actions button');
+    if (act) {
       e.preventDefault();
-      post('onCopy', selected ? selected._hcText : '');
-      // Said on the chip itself: Android only confirms a copy on its own from
-      // 13 on, and the app supports back to 8.
-      chip.textContent = 'Copied';
+      var text = selected ? selected._hcText : '';
+      if (act.getAttribute('data-act') === 'compose') {
+        post('onCompose', text);
+        deselect();
+        return;
+      }
+      post('onCopy', text);
+      // Said on the button itself: Android only confirms a copy on its own
+      // from 13 on, and the app supports back to 8.
+      act.querySelector('span').textContent = 'Copied';
       var copied = selected;
       setTimeout(function () { if (selected === copied) deselect(); }, 700);
       return;
     }
+    // Between the buttons, or on the strip's own padding: not a tap on the
+    // message, so it must not fall through and deselect it.
+    if (e.target.closest('.msg-actions')) return;
     var a = e.target.closest('a');
     if (a) {
       e.preventDefault();

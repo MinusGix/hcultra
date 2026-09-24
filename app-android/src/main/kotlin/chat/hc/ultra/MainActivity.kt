@@ -639,8 +639,17 @@ private fun AppScreen(
     // current one — otherwise tapping a nick would mention into the channel
     // that happened to be open when the WebView was created.
     val currentMention by rememberUpdatedState(mention)
+    val compose: (String) -> Unit = { text ->
+        active?.channel?.let { channel ->
+            drafts[channel] = (drafts[channel] ?: TextFieldValue()).withInsert(text)
+        }
+    }
+    val currentCompose by rememberUpdatedState(compose)
     val webCallbacks = remember(rendererCallbacks) {
-        rendererCallbacks.copy(onNickTap = { nick -> currentMention(nick) })
+        rendererCallbacks.copy(
+            onNickTap = { nick -> currentMention(nick) },
+            onCompose = { text -> currentCompose(text) },
+        )
     }
 
     LaunchedEffect(pendingChannel) {
@@ -1117,6 +1126,21 @@ private fun TextFieldValue.withMention(nick: String): TextFieldValue {
     val lead = if (before.isEmpty() || before.last().isWhitespace()) "" else " "
     val trail = if (after.startsWith(" ")) "" else " "
     val insert = "$lead@$nick$trail"
+    return TextFieldValue(before + insert + after, TextRange(before.length + insert.length))
+}
+
+/**
+ * Drops [insert] into the draft as a paste would: over the selection, or at the
+ * cursor, with the cursor left after it.
+ *
+ * Into an empty draft that is simply the message, ready to send again — the
+ * case this exists for. Into a draft already under way it is an insertion, not
+ * a replacement: a half-written reply is not the app's to throw away because
+ * someone tapped a button on a different message.
+ */
+private fun TextFieldValue.withInsert(insert: String): TextFieldValue {
+    val before = text.take(selection.min)
+    val after = text.substring(selection.max)
     return TextFieldValue(before + insert + after, TextRange(before.length + insert.length))
 }
 

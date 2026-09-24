@@ -39,6 +39,8 @@ data class RendererCallbacks(
     val onNickTap: (String) -> Unit = {},
     /** A tapped embedded image, by its URL: show it full screen. */
     val onImageTap: (String) -> Unit = {},
+    /** A message's whole text, to go into the composer. */
+    val onCompose: (String) -> Unit = {},
 )
 
 private class Bridge(
@@ -86,6 +88,13 @@ private class Bridge(
             context.getSystemService(ClipboardManager::class.java)
                 ?.setPrimaryClip(ClipData.newPlainText("message", text))
         }
+    }
+
+    /** Main thread, as [onNickTap]: it edits the composer too. */
+    @JavascriptInterface
+    fun onCompose(text: String) {
+        if (text.isEmpty()) return
+        Handler(Looper.getMainLooper()).post { callbacks.onCompose(text) }
     }
 
     @JavascriptInterface
