@@ -362,7 +362,7 @@ Images are the one exception to "bundled assets only", and are off by default
 as they are on the site. With them on, `blockNetworkLoads` has to come down —
 so a `WebViewClient` becomes the actual gate, refusing every request that is
 neither a bundled asset nor an https image from `ImageHosts`, hack.chat's own
-whitelist (imgur, Discord, gyazo, postimg, ibb, ytimg). The list exists twice
+whitelist (imgur, Discord, gyazo, postimg, ibb, ytimg, catbox). The list exists twice
 by necessity — in `core` for the gate, in `app.js` to decide whether to emit an
 `<img>` at all — and a mismatch fails closed. Host matching is deliberately
 hand-rolled and tested: `https://i.imgur.com@evil.test/x.png` has host

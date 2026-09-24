@@ -12,6 +12,8 @@ class ImageHostsTest {
         assertTrue(ImageHosts.allows("https://i.imgur.com/abc.png"))
         assertTrue(ImageHosts.allows("https://cdn.discordapp.com/attachments/1/2/x.jpg"))
         assertTrue(ImageHosts.allows("https://i.ibb.co/x/y.png?size=large#frag"))
+        assertTrue(ImageHosts.allows("https://files.catbox.moe/abc123.png"))
+        assertTrue(ImageHosts.allows("https://litter.catbox.moe/abc123.gif"))
     }
 
     @Test
@@ -25,6 +27,7 @@ class ImageHostsTest {
     fun rejectsLookalikeHosts() {
         assertFalse(ImageHosts.allows("https://i.imgur.com.evil.test/abc.png"))
         assertFalse(ImageHosts.allows("https://notimgur.com/abc.png"))
+        assertFalse(ImageHosts.allows("https://catbox.moe/abc.png"))
     }
 
     /** Userinfo puts the real host after the `@`; reading the front is the trap. */

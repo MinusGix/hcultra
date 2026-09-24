@@ -26,6 +26,8 @@ object ImageHosts {
         "i.postimg.cc",
         "i.ytimg.com",
         "i.ibb.co",
+        "files.catbox.moe",
+        "litter.catbox.moe",
     )
 
     /**

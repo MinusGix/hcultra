@@ -46,7 +46,8 @@
   var allowImages = false;
   var imgHostWhitelist = [
     'i.imgur.com', 'imgur.com', 'share.lyka.pro', 'cdn.discordapp.com',
-    'i.gyazo.com', 'i.postimg.cc', 'i.ytimg.com', 'i.ibb.co'
+    'i.gyazo.com', 'i.postimg.cc', 'i.ytimg.com', 'i.ibb.co',
+    'files.catbox.moe', 'litter.catbox.moe'
   ];
 
   function hostOf(link) {

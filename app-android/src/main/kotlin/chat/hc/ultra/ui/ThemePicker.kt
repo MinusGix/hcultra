@@ -165,7 +165,7 @@ fun ThemeSheet(
                 // embedded image is a request to somebody else's server, made
                 // because a stranger in the channel wrote the URL.
                 subtitle = "From the same few hosts the site allows — imgur, Discord, " +
-                    "gyazo, postimg, ibb, ytimg. Loading one tells that host you are here; " +
+                    "gyazo, postimg, ibb, ytimg, catbox. Loading one tells that host you are here; " +
                     "anything else stays a link either way.",
                 checked = allowImages,
                 onChanged = onAllowImagesChanged,
