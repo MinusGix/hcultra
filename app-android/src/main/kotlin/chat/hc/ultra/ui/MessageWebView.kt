@@ -13,9 +13,33 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import chat.hc.core.render.ImageHosts
 import chat.hc.core.render.NickLayout
@@ -47,6 +71,7 @@ private class Bridge(
     private val context: Context,
     private val callbacks: RendererCallbacks,
     private val ready: () -> Unit,
+    private val scrolled: (ScrollState) -> Unit,
 ) {
     @JavascriptInterface
     fun onReady(unused: String) = ready()
@@ -97,12 +122,23 @@ private class Bridge(
         Handler(Looper.getMainLooper()).post { callbacks.onCompose(text) }
     }
 
+    /** `"1:0"`, `"0:3"`: at the bottom or not, and how many arrived below. */
     @JavascriptInterface
-    fun onPinnedChanged(atBottom: String) { /* reserved for a jump-to-latest affordance */ }
+    fun onScrollState(state: String) {
+        val atBottom = state.substringBefore(':') == "1"
+        val unseen = state.substringAfter(':').toIntOrNull() ?: 0
+        Handler(Looper.getMainLooper()).post { scrolled(ScrollState(atBottom, unseen)) }
+    }
 }
+
+/** Where the reader is in the visible channel, as the page last reported it. */
+private data class ScrollState(val atBottom: Boolean = true, val unseen: Int = 0)
 
 private class RendererState {
     var ready = false
+
+    /** For the jump button, which acts on the page from outside the factory. */
+    var webView: WebView? = null
 
     /**
      * What the page is holding, and therefore what it still needs telling.
@@ -223,98 +259,149 @@ fun MessageWebView(
     callbacks: RendererCallbacks = RendererCallbacks(),
 ) {
     val state = remember { RendererState() }
+    var scroll by remember { mutableStateOf(ScrollState()) }
 
-    AndroidView(
-        modifier = modifier,
-        factory = { context ->
-            state.allowImages = allowImages
-            WebView(context).apply {
-                setBackgroundColor(Color.TRANSPARENT)
-                settings.apply {
-                    javaScriptEnabled = true
-                    // Bundled assets only. The renderer must not be able to read
-                    // the filesystem or reach the network: every message it
-                    // renders is untrusted input from a public channel. Images,
-                    // when the user turns them on, are the single exception, and
-                    // [AssetsAndImagesOnly] is what keeps it to that.
-                    allowFileAccess = false
-                    allowContentAccess = false
-                    domStorageEnabled = false
-                    // An image an https URL cannot be reached over is simply an
-                    // image that does not load; it must not become a cleartext
-                    // fetch announcing what you are reading.
-                    mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                }
-                webViewClient = AssetsAndImagesOnly("index.html") { state.allowImages }
-                applyNetworkPolicy(allowImages)
-                addJavascriptInterface(
-                    Bridge(context, callbacks, ready = {
-                        // onReady arrives on a WebView-internal thread; all
-                        // WebView calls must be made on the UI thread.
-                        post {
-                            state.ready = true
-                            state.appliedTheme?.let { evaluateJavascript(it, null) }
-                            state.appliedLayout?.let { evaluateJavascript(it, null) }
-                            state.appliedFontScale?.let { evaluateJavascript(it, null) }
-                            // Before the messages: the page drops every
-                            // container when this changes, and there is nothing
-                            // to drop yet.
-                            state.appliedImages?.let { evaluateJavascript(it, null) }
-                            // A fresh page holds nothing, whatever we last
-                            // believed — this is a first load or a reload, and
-                            // the second is exactly the case where a stale
-                            // record would have us patching rows that are gone.
-                            state.sync.reset()
-                            state.lastChannel?.let { ch ->
-                                state.sync.update(ch, state.lastMessages)
-                                    .forEach { evaluateJavascript(it, null) }
-                            }
-                        }
-                    }),
-                    "HcBridge",
-                )
-                loadUrl("${AssetsAndImagesOnly.ASSET_PREFIX}index.html")
-            }
-        },
-        update = { webView ->
-            val themeCall = RendererBridge.themeCall(scheme, highlight)
-            if (state.appliedTheme != themeCall) {
-                state.appliedTheme = themeCall
-                if (state.ready) webView.evaluateJavascript(themeCall, null)
-            }
-            val layoutCall = RendererBridge.layoutCall(layout)
-            if (state.appliedLayout != layoutCall) {
-                state.appliedLayout = layoutCall
-                if (state.ready) webView.evaluateJavascript(layoutCall, null)
-            }
-            val fontCall = RendererBridge.fontScaleCall(fontScale)
-            if (state.appliedFontScale != fontCall) {
-                state.appliedFontScale = fontCall
-                if (state.ready) webView.evaluateJavascript(fontCall, null)
-            }
-            val imagesCall = RendererBridge.allowImagesCall(allowImages)
-            if (state.appliedImages != imagesCall) {
-                state.appliedImages = imagesCall
-                // The gate first: the images the page writes are requested the
-                // moment it redraws, and it must not do that through a closed
-                // network policy.
+    Box(modifier) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            onRelease = { state.webView = null },
+            factory = { context ->
                 state.allowImages = allowImages
-                webView.applyNetworkPolicy(allowImages)
-                if (state.ready) webView.evaluateJavascript(imagesCall, null)
-                // The page answers that call by dropping every container, since
-                // whether a message shows an image is not part of the message.
-                // Both sides forget together or neither does.
-                state.sync.reset()
-            }
+                WebView(context).apply {
+                    setBackgroundColor(Color.TRANSPARENT)
+                    settings.apply {
+                        javaScriptEnabled = true
+                        // Bundled assets only. The renderer must not be able to read
+                        // the filesystem or reach the network: every message it
+                        // renders is untrusted input from a public channel. Images,
+                        // when the user turns them on, are the single exception, and
+                        // [AssetsAndImagesOnly] is what keeps it to that.
+                        allowFileAccess = false
+                        allowContentAccess = false
+                        domStorageEnabled = false
+                        // An image an https URL cannot be reached over is simply an
+                        // image that does not load; it must not become a cleartext
+                        // fetch announcing what you are reading.
+                        mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    }
+                    webViewClient = AssetsAndImagesOnly("index.html") { state.allowImages }
+                    applyNetworkPolicy(allowImages)
+                    addJavascriptInterface(
+                        Bridge(context, callbacks, ready = {
+                            // onReady arrives on a WebView-internal thread; all
+                            // WebView calls must be made on the UI thread.
+                            post {
+                                state.ready = true
+                                state.appliedTheme?.let { evaluateJavascript(it, null) }
+                                state.appliedLayout?.let { evaluateJavascript(it, null) }
+                                state.appliedFontScale?.let { evaluateJavascript(it, null) }
+                                // Before the messages: the page drops every
+                                // container when this changes, and there is nothing
+                                // to drop yet.
+                                state.appliedImages?.let { evaluateJavascript(it, null) }
+                                // A fresh page holds nothing, whatever we last
+                                // believed — this is a first load or a reload, and
+                                // the second is exactly the case where a stale
+                                // record would have us patching rows that are gone.
+                                state.sync.reset()
+                                state.lastChannel?.let { ch ->
+                                    state.sync.update(ch, state.lastMessages)
+                                        .forEach { evaluateJavascript(it, null) }
+                                }
+                            }
+                        }, scrolled = { scroll = it }),
+                        "HcBridge",
+                    )
+                    state.webView = this
+                    loadUrl("${AssetsAndImagesOnly.ASSET_PREFIX}index.html")
+                }
+            },
+            update = { webView ->
+                val themeCall = RendererBridge.themeCall(scheme, highlight)
+                if (state.appliedTheme != themeCall) {
+                    state.appliedTheme = themeCall
+                    if (state.ready) webView.evaluateJavascript(themeCall, null)
+                }
+                val layoutCall = RendererBridge.layoutCall(layout)
+                if (state.appliedLayout != layoutCall) {
+                    state.appliedLayout = layoutCall
+                    if (state.ready) webView.evaluateJavascript(layoutCall, null)
+                }
+                val fontCall = RendererBridge.fontScaleCall(fontScale)
+                if (state.appliedFontScale != fontCall) {
+                    state.appliedFontScale = fontCall
+                    if (state.ready) webView.evaluateJavascript(fontCall, null)
+                }
+                val imagesCall = RendererBridge.allowImagesCall(allowImages)
+                if (state.appliedImages != imagesCall) {
+                    state.appliedImages = imagesCall
+                    // The gate first: the images the page writes are requested the
+                    // moment it redraws, and it must not do that through a closed
+                    // network policy.
+                    state.allowImages = allowImages
+                    webView.applyNetworkPolicy(allowImages)
+                    if (state.ready) webView.evaluateJavascript(imagesCall, null)
+                    // The page answers that call by dropping every container, since
+                    // whether a message shows an image is not part of the message.
+                    // Both sides forget together or neither does.
+                    state.sync.reset()
+                }
 
-            // Held for the reload path, which recomputes from these rather than
-            // from calls built against a record that reset() has since cleared.
-            state.lastChannel = channel
-            state.lastMessages = messages
-            if (state.ready) {
-                state.sync.update(channel, messages)
-                    .forEach { webView.evaluateJavascript(it, null) }
+                // Held for the reload path, which recomputes from these rather than
+                // from calls built against a record that reset() has since cleared.
+                state.lastChannel = channel
+                state.lastMessages = messages
+                if (state.ready) {
+                    state.sync.update(channel, messages)
+                        .forEach { webView.evaluateJavascript(it, null) }
+                }
+            },
+        )
+
+        // Only when the reader has left the bottom. At the bottom there is nothing
+        // to jump to, and a button that is always there stops being seen.
+        AnimatedVisibility(
+            visible = !scroll.atBottom,
+            enter = fadeIn() + slideInVertically { it / 2 },
+            exit = fadeOut() + slideOutVertically { it / 2 },
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+        ) {
+            JumpToLatest(unseen = scroll.unseen) {
+                state.webView?.evaluateJavascript(RendererBridge.scrollToBottomCall(), null)
             }
-        },
-    )
+        }
+    }
+}
+
+/**
+ * "↓ 3 new", or "↓ Latest" when the reader has only scrolled up and nothing has
+ * arrived since.
+ *
+ * In the scheme's accent — the same colour as the send button — so it reads as
+ * one of the app's controls rather than as something the channel said.
+ */
+@Composable
+private fun JumpToLatest(unseen: Int, onClick: () -> Unit) {
+    val label = when {
+        unseen > 99 -> "99+ new"
+        unseen > 0 -> "$unseen new"
+        else -> "Latest"
+    }
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+        shadowElevation = 4.dp,
+        modifier = Modifier.semantics { contentDescription = "Jump to latest, $label" },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(ArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge)
+        }
+    }
 }

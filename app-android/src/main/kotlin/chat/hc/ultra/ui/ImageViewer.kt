@@ -34,9 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -188,26 +186,3 @@ private class ViewerBridge(
     @JavascriptInterface
     fun onDismiss(unused: String) { main.post(onDismiss) }
 }
-
-/*
- * The two icons, as path data from Material's `arrow_back` and `open_in_new`.
- * Drawn here rather than pulling in the icons artifact for two glyphs.
- */
-private fun icon(name: String, path: String) = ImageVector.Builder(
-    name = name,
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).addPath(pathData = addPathNodes(path), fill = SolidColor(Color.White)).build()
-
-private val BackArrow = icon(
-    "BackArrow",
-    "M20,11H7.83l5.59,-5.59L12,4l-8,8 8,8 1.41,-1.41L7.83,13H20v-2z",
-)
-
-private val OpenInNew = icon(
-    "OpenInNew",
-    "M19,19H5V5h7V3H5c-1.11,0 -2,0.9 -2,2v14c0,1.1 0.89,2 2,2h14c1.1,0 2,-0.9 2,-2v-7h-2v7z" +
-        "M14,3v2h3.59l-9.83,9.83 1.41,1.41L19,6.41V10h2V3h-7z",
-)

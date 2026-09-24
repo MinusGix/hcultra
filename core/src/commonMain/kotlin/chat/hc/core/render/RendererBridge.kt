@@ -120,6 +120,9 @@ object RendererBridge {
      */
     fun allowImagesCall(allow: Boolean): String = "HC.setAllowImages($allow);"
 
+    /** Back to the newest message, and stay there as more arrive. */
+    fun scrollToBottomCall(): String = "HC.scrollToBottom();"
+
     /**
      * Scales the transcript's text.
      *

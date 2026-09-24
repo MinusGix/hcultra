@@ -122,7 +122,7 @@
    * highlight.js, and every image destroyed and rebuilt, for one tab tap.
    */
   var logRoot = document.getElementById('log');
-  var channels = Object.create(null);  // name -> {el, nodes, scrollY, pinned}
+  var channels = Object.create(null);  // name -> {el, nodes, scrollY, pinned, unseen}
   var current = null;
 
   function channelState(name) {
@@ -137,6 +137,7 @@
         nodes: Object.create(null),  // localId -> element
         scrollY: 0,
         pinned: true,                // stick to bottom unless the reader scrolls up
+        unseen: 0,                   // messages that arrived below a reader scrolled up
       };
     }
     return c;
@@ -146,15 +147,42 @@
     return (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 40);
   }
 
+  /*
+   * Where the visible channel is, for native's jump-to-latest button: whether
+   * the reader is at the bottom, and how many messages have arrived below them
+   * since they left it — "1:0", "0:3". Sent only when it changes, since scroll
+   * events arrive by the dozen.
+   */
+  var reported = null;
+  function report() {
+    var c = channels[current];
+    var state = c ? (c.pinned ? '1' : '0') + ':' + c.unseen : '1:0';
+    if (state === reported) return;
+    reported = state;
+    post('onScrollState', state);
+  }
+
   window.addEventListener('scroll', function () {
     var c = channels[current];
     if (!c) return;
     var b = atBottom();
     if (b !== c.pinned) {
       c.pinned = b;
-      post('onPinnedChanged', String(b));
+      // Reaching the bottom is having seen them, however you got there.
+      if (b) c.unseen = 0;
     }
+    report();
   }, { passive: true });
+
+  /*
+   * What counts toward "N new". Conversation only: a join or a leave arriving
+   * is not something a reader scrolled up in the backlog is missing out on,
+   * and counting them would make a busy channel's button mean nothing.
+   */
+  function isTalk(m) {
+    return m.kind === 'Chat' || m.kind === 'Emote' ||
+      m.kind === 'Whisper' || m.kind === 'WhisperSent';
+  }
 
   // An image finishes loading well after the message holding it was inserted,
   // and it grows the page as it lands. Without this the transcript slides out
@@ -385,6 +413,7 @@
     var order = patch.order || [];
     var seen = Object.create(null);
     var prev = null;
+    var arrived = 0, mine = false;
 
     for (var j = 0; j < order.length; j++) {
       var id = String(order[j]);
@@ -398,6 +427,10 @@
         if (!m) continue;
         el = build(m);
         c.nodes[id] = el;
+        if (!patch.full) {
+          if (isTalk(m)) arrived++;
+          if (m.isMine) mine = true;
+        }
       } else if (m) {
         fill(el, m);
       }
@@ -418,7 +451,18 @@
       }
     }
 
-    if (isCurrent && wasPinned) scrollToBottom();
+    // Sending takes you to what you sent: a message you cannot see arrive
+    // reads as one that did not go. Only a new row counts — our own echo
+    // later updates that row in place, and must not yank the reader again.
+    if (mine) wasPinned = true;
+    if (wasPinned) c.unseen = 0;
+    else c.unseen += arrived;
+    c.pinned = wasPinned;
+
+    if (isCurrent) {
+      if (wasPinned) scrollToBottom();
+      report();
+    }
   }
 
   document.addEventListener('click', function (e) {
@@ -500,6 +544,7 @@
         // Read before hiding: once it is hidden the document collapses to the
         // next container's height and both of these measure that instead.
         previous.pinned = previous.pinned || atBottom();
+        if (previous.pinned) previous.unseen = 0;
         previous.scrollY = window.scrollY;
         previous.el.hidden = true;
       }
@@ -509,6 +554,8 @@
       // offset it was: the channel they are arriving at is a different length.
       if (next.pinned) scrollToBottom();
       else window.scrollTo(0, next.scrollY);
+      // A channel that was left scrolled up brings its count with it.
+      report();
     },
 
     /** Drop a channel's DOM. Native evicts to keep retained transcripts bounded. */
@@ -582,11 +629,16 @@
       channels = Object.create(null);
       current = null;
       selected = null;
+      report();
     },
     scrollToBottom: function () {
       var c = channels[current];
-      if (c) c.pinned = true;
+      if (c) {
+        c.pinned = true;
+        c.unseen = 0;
+      }
       scrollToBottom();
+      report();
     }
   };
 
