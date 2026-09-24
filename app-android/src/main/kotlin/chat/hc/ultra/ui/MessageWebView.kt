@@ -1,6 +1,9 @@
 package chat.hc.ultra.ui
 
 import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
@@ -37,6 +40,7 @@ data class RendererCallbacks(
 )
 
 private class Bridge(
+    private val context: Context,
     private val callbacks: RendererCallbacks,
     private val ready: () -> Unit,
 ) {
@@ -58,6 +62,22 @@ private class Bridge(
     @JavascriptInterface
     fun onNickTap(nick: String) {
         Handler(Looper.getMainLooper()).post { callbacks.onNickTap(nick) }
+    }
+
+    /**
+     * A message's whole text, from its Copy chip.
+     *
+     * Handled here rather than passed up as a callback: it needs nothing from
+     * the screen, and the page has already shown "Copied", so there is no
+     * further state for anyone to react to.
+     */
+    @JavascriptInterface
+    fun onCopy(text: String) {
+        if (text.isEmpty()) return
+        Handler(Looper.getMainLooper()).post {
+            context.getSystemService(ClipboardManager::class.java)
+                ?.setPrimaryClip(ClipData.newPlainText("message", text))
+        }
     }
 
     @JavascriptInterface
@@ -205,7 +225,7 @@ fun MessageWebView(
                 webViewClient = AssetsAndImagesOnly(state)
                 applyNetworkPolicy(allowImages)
                 addJavascriptInterface(
-                    Bridge(callbacks, ready = {
+                    Bridge(context, callbacks, ready = {
                         // onReady arrives on a WebView-internal thread; all
                         // WebView calls must be made on the UI thread.
                         post {

@@ -152,6 +152,37 @@ body { font-size: 1rem; }
 }
 [data-nick]:active { opacity: 0.55; }
 
+/*
+ * A tapped message, and the chip that copies it.
+ *
+ * A neutral grey, like the code backgrounds below: a tint
+ * that reads on light and dark schemes alike without choosing a colour any of
+ * the 44 would have to be taught about. The chip is outlined in the text's own
+ * colour for the same reason.
+ */
+.message { -webkit-tap-highlight-color: transparent; }
+.message.selected {
+  background: rgba(127, 127, 127, 0.18);
+  border-radius: 4px;
+}
+.copy-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0.15em 0.8em;
+  font: inherit;
+  font-size: 0.8em;
+  font-weight: 600;
+  color: inherit;
+  background: rgba(127, 127, 127, 0.2);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+.copy-chip:active { opacity: 0.55; }
+/* A flex item in the gutter layout: keep it from stretching or shrinking. */
+.layout-gutter .copy-chip { flex: 0 0 auto; align-self: center; }
+
 .kind-info .text, .kind-join .text, .kind-leave .text { font-size: 0.93em; }
 .kind-join .text::before { content: "→ "; }
 .kind-leave .text::before { content: "← "; }

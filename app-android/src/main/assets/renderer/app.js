@@ -195,6 +195,8 @@
     if (m.kind === 'Info' || m.kind === 'Join' || m.kind === 'Leave') cls.push('info');
     if (m.kind === 'Warning') cls.push('warn');
     cls.push('kind-' + String(m.kind).toLowerCase());
+    // A bot streaming into the row you selected must not unselect it.
+    if (row === selected) cls.push('selected');
     row.className = cls.join(' ');
 
     /*
@@ -271,6 +273,61 @@
     }
 
     row.innerHTML = head + '<span class="text">' + body + '</span>' + flag;
+
+    // What Copy puts on the clipboard: the message as it was sent, not as it
+    // was rendered. The point is resending a bot command, and a command that
+    // has lost its backticks or asterisks to markdown is not the same command.
+    // Refilled with the row, so a message a bot is still streaming copies as
+    // far as it has got.
+    row._hcText = (m.kind === 'Join' || m.kind === 'Leave') ? '' : String(m.text || '');
+    // innerHTML just replaced the chip along with everything else.
+    if (row === selected) {
+      if (row._hcText) addCopyChip(row);
+      else deselect();
+    }
+  }
+
+  /*
+   * Selecting a message, to copy the whole of it in one tap.
+   *
+   * Tap rather than long-press, because long-press already belongs to the
+   * WebView's own text selection, and that has to keep working for copying
+   * part of a message. A tap had no meaning on a message body before, so this
+   * takes nothing away. A tap that lands while text is selected is the reader
+   * dismissing that selection, not choosing a message, and is left alone.
+   *
+   * One row at a time, held here rather than in native: it is a fact about the
+   * DOM, it goes away with the row, and nothing outside the page needs it.
+   */
+  var selected = null;
+
+  function addCopyChip(row) {
+    var chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'copy-chip';
+    chip.textContent = 'Copy';
+    row.appendChild(chip);
+  }
+
+  function select(row) {
+    deselect();
+    if (!row._hcText) return;
+    selected = row;
+    row.classList.add('selected');
+    addCopyChip(row);
+  }
+
+  function deselect() {
+    if (!selected) return;
+    selected.classList.remove('selected');
+    var chip = selected.querySelector('.copy-chip');
+    if (chip) chip.parentNode.removeChild(chip);
+    selected = null;
+  }
+
+  function hasTextSelection() {
+    var sel = window.getSelection && window.getSelection();
+    return !!(sel && !sel.isCollapsed);
   }
 
   /*
@@ -333,6 +390,7 @@
     for (var key in c.nodes) {
       if (!seen[key]) {
         var gone = c.nodes[key];
+        if (gone === selected) selected = null;
         if (gone.parentNode) gone.parentNode.removeChild(gone);
         delete c.nodes[key];
       }
@@ -343,6 +401,17 @@
 
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;
+    var chip = e.target.closest('.copy-chip');
+    if (chip) {
+      e.preventDefault();
+      post('onCopy', selected ? selected._hcText : '');
+      // Said on the chip itself: Android only confirms a copy on its own from
+      // 13 on, and the app supports back to 8.
+      chip.textContent = 'Copied';
+      var copied = selected;
+      setTimeout(function () { if (selected === copied) deselect(); }, 700);
+      return;
+    }
     var a = e.target.closest('a');
     if (a) {
       e.preventDefault();
@@ -357,7 +426,12 @@
     if (n) {
       e.preventDefault();
       post('onNickTap', n.getAttribute('data-nick'));
+      return;
     }
+    if (hasTextSelection()) return;
+    var row = e.target.closest('.message');
+    if (row && row !== selected) select(row);
+    else deselect();
   });
 
   function setHref(id, href) {
@@ -384,6 +458,9 @@
       channel = String(channel);
       var next = channelState(channel);
       if (current === channel) return;
+      // Selection is for the message in front of you; a channel coming back
+      // should not be holding one from whenever you last looked at it.
+      deselect();
       var previous = channels[current];
       if (previous) {
         // Read before hiding: once it is hidden the document collapses to the
@@ -408,6 +485,7 @@
       if (channel === current) return;
       var c = channels[channel];
       if (!c) return;
+      if (selected && c.el.contains(selected)) selected = null;
       if (c.el.parentNode) c.el.parentNode.removeChild(c.el);
       delete channels[channel];
     },
@@ -469,6 +547,7 @@
       }
       channels = Object.create(null);
       current = null;
+      selected = null;
     },
     scrollToBottom: function () {
       var c = channels[current];
