@@ -37,6 +37,8 @@ data class RendererCallbacks(
     val onChannelTap: (String) -> Unit = {},
     /** A tapped nick: mention them in the composer. */
     val onNickTap: (String) -> Unit = {},
+    /** A tapped embedded image, by its URL: show it full screen. */
+    val onImageTap: (String) -> Unit = {},
 )
 
 private class Bridge(
@@ -52,6 +54,12 @@ private class Bridge(
 
     @JavascriptInterface
     fun onChannelTap(channel: String) = callbacks.onChannelTap(channel)
+
+    /** Main thread for the same reason as [onNickTap]: it opens a dialog. */
+    @JavascriptInterface
+    fun onImageTap(url: String) {
+        Handler(Looper.getMainLooper()).post { callbacks.onImageTap(url) }
+    }
 
     /**
      * Bounced to the main thread: unlike the taps above, which hand off to the
@@ -120,9 +128,12 @@ private class RendererState {
 }
 
 /**
- * The only two things this WebView may fetch: its own bundled assets, and — when
- * the user has turned images on — an image from one of the hosts hack.chat
- * embeds from.
+ * The only two things a renderer WebView may fetch: its own bundled assets, and
+ * — when the user has turned images on — an image from one of the hosts
+ * hack.chat embeds from.
+ *
+ * Shared by the transcript and the image viewer. [page] is the one document the
+ * WebView is allowed to be showing.
  *
  * The JavaScript checks the same list before writing an `<img>` at all, so in
  * ordinary use nothing reaches here that this would refuse. It is the gate
@@ -131,7 +142,10 @@ private class RendererState {
  * `blockNetworkLoads`, and this is what keeps that from meaning "the renderer
  * may now talk to anyone".
  */
-private class AssetsAndImagesOnly(private val state: RendererState) : WebViewClient() {
+internal class AssetsAndImagesOnly(
+    private val page: String,
+    private val allowImages: () -> Boolean,
+) : WebViewClient() {
 
     override fun shouldInterceptRequest(
         view: WebView,
@@ -139,7 +153,7 @@ private class AssetsAndImagesOnly(private val state: RendererState) : WebViewCli
     ): WebResourceResponse? {
         val url = request.url.toString()
         if (url.startsWith(ASSET_PREFIX)) return null
-        if (state.allowImages && ImageHosts.allows(url)) return null
+        if (allowImages() && ImageHosts.allows(url)) return null
         // A response with no body: the load fails, nothing else does.
         return WebResourceResponse("text/plain", "utf-8", null)
     }
@@ -150,9 +164,9 @@ private class AssetsAndImagesOnly(private val state: RendererState) : WebViewCli
      * place of an image, say.
      */
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-        request.url.toString() != "${ASSET_PREFIX}index.html"
+        request.url.toString() != "$ASSET_PREFIX$page"
 
-    private companion object {
+    companion object {
         const val ASSET_PREFIX = "file:///android_asset/renderer/"
     }
 }
@@ -169,7 +183,7 @@ private class AssetsAndImagesOnly(private val state: RendererState) : WebViewCli
  * (they come off disk), but an image wants caching: refetching the same picture
  * on every rotation costs the user data and tells its host each time.
  */
-private fun WebView.applyNetworkPolicy(allowImages: Boolean) {
+internal fun WebView.applyNetworkPolicy(allowImages: Boolean) {
     settings.apply {
         if (allowImages) {
             blockNetworkImage = false
@@ -222,7 +236,7 @@ fun MessageWebView(
                     // fetch announcing what you are reading.
                     mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 }
-                webViewClient = AssetsAndImagesOnly(state)
+                webViewClient = AssetsAndImagesOnly("index.html") { state.allowImages }
                 applyNetworkPolicy(allowImages)
                 addJavascriptInterface(
                     Bridge(context, callbacks, ready = {
@@ -250,7 +264,7 @@ fun MessageWebView(
                     }),
                     "HcBridge",
                 )
-                loadUrl("file:///android_asset/renderer/index.html")
+                loadUrl("${AssetsAndImagesOnly.ASSET_PREFIX}index.html")
             }
         },
         update = { webView ->

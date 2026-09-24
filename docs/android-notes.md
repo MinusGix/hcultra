@@ -227,6 +227,15 @@ Against live hack.chat, with an independent Node observer
   to a link when it is turned off again — each without a reconnect or a reload,
   since the page rebuilds in place. An `example.com` image stays a link with
   the setting **on**, which is the whitelist doing its job.
+- the image viewer, against `--mode normal` with an `i.ytimg.com` image: a tap
+  opens it edge to edge and fit to width; double-tap zooms 2.5× about the tap;
+  dragging past the right edge settles with ~56px of margin showing; a single
+  tap hides the buttons; the edge back gesture, a swipe down, and the back
+  button each close it; "open original" hands the URL to the browser and
+  closes the viewer behind it. Pinch cannot be driven through `adb input`
+  (single pointer), so it was checked in a desktop browser with synthetic
+  touch pointers instead: zoom about the fingers, over-pinch springing back to
+  the limits.
 
 That last one also confirmed the core finding from the wrong side of the glass:
 the observer saw **`LEAVE` then `JOIN`** across the outage. Exactly the noise
@@ -318,6 +327,15 @@ by necessity — in `core` for the gate, in `app.js` to decide whether to emit a
 `<img>` at all — and a mismatch fails closed. Host matching is deliberately
 hand-rolled and tested: `https://i.imgur.com@evil.test/x.png` has host
 `evil.test`, and a prefix check would read it the other way round.
+
+Tapping an embedded image opens it full screen in `ui/ImageViewer.kt` — a
+dialog holding a second WebView over `viewer.html`. The same
+`AssetsAndImagesOnly` gate is installed on it, so the viewer can reach exactly
+what the transcript could; it shares the app's WebView HTTP cache, so the
+picture is not fetched twice; and native re-checks `ImageHosts` before opening
+it at all, rather than trusting the untrusted page's word that the tap was on a
+whitelisted image. The gestures are in `viewer.js`, not WebView zoom, which
+double-tap-snaps to text columns and stops dead at the image's edge.
 
 The cost being opted into is that fetching an image tells the host serving it
 that you are here, and it was a stranger in the channel who chose which host

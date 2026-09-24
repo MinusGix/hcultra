@@ -66,6 +66,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import chat.hc.core.render.ImageHosts
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.protocol.User
@@ -79,6 +80,7 @@ import chat.hc.core.store.MessageKind
 import chat.hc.ultra.service.HcService
 import chat.hc.ultra.ui.ChannelTabs
 import chat.hc.ultra.ui.BASE_TEXT_SP
+import chat.hc.ultra.ui.ImageViewer
 import chat.hc.ultra.ui.MessageWebView
 import chat.hc.ultra.ui.NotifyPrefs
 import chat.hc.ultra.ui.RendererCallbacks
@@ -188,6 +190,7 @@ class MainActivity : ComponentActivity() {
             var notifyOtherChannels by remember { mutableStateOf(notifyPrefs.otherChannels) }
             var showThemes by remember { mutableStateOf(false) }
             var pendingChannel by remember { mutableStateOf<String?>(null) }
+            var viewingImage by remember { mutableStateOf<String?>(null) }
             var serverUrl by remember { mutableStateOf(serverPrefs.url) }
 
             val scheme = remember(schemeName) { allSchemes.resolve(schemeName) }
@@ -321,6 +324,13 @@ class MainActivity : ComponentActivity() {
                         rendererCallbacks = RendererCallbacks(
                             onLinkTap = { url -> openExternal(url) },
                             onChannelTap = { channel -> pendingChannel = channel },
+                            onImageTap = { url ->
+                                // The page only embeds whitelisted images, but
+                                // it renders untrusted text; the viewer is not
+                                // opened on its say-so alone.
+                                if (ImageHosts.allows(url)) viewingImage = url
+                                else openExternal(url)
+                            },
                         ),
                         scheme = scheme,
                         highlight = highlight,
@@ -334,6 +344,13 @@ class MainActivity : ComponentActivity() {
                         showChannel = showChannel.collectAsStateWithLifecycle().value,
                         onShowChannelConsumed = { showChannel.value = null },
                     )
+                    viewingImage?.let { url ->
+                        ImageViewer(
+                            url = url,
+                            onDismiss = { viewingImage = null },
+                            onOpenOriginal = { openExternal(it) },
+                        )
+                    }
                 }
             }
         }

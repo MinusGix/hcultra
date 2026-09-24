@@ -416,6 +416,9 @@
     if (a) {
       e.preventDefault();
       if (a.hasAttribute('data-chan')) post('onChannelTap', a.getAttribute('data-chan'));
+      // An embedded image opens in the viewer, which has its own way out to
+      // the original; a link that merely points at one is still a link.
+      else if (a.querySelector('img')) post('onImageTap', a.getAttribute('href'));
       else if (a.getAttribute('href')) post('onLinkTap', a.getAttribute('href'));
       return;
     }

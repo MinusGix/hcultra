@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>
+    /*
+     * The page is only ever an image on black. Its background is the dimming,
+     * so it is painted here rather than by the dialog behind it: swiping the
+     * image away fades this, and the transcript shows through as it goes.
+     */
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: rgba(0, 0, 0, 1);
+      /* Every gesture is ours; the WebView must not pan, zoom or select. */
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #img {
+      position: absolute;
+      left: 0;
+      top: 0;
+      /* Hidden until measured, so it never flashes at its natural size. */
+      visibility: hidden;
+    }
+    #status {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.7);
+      font: 15px -apple-system, Roboto, sans-serif;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <img id="img" alt="" draggable="false" referrerpolicy="no-referrer">
+  <div id="status"></div>
+  <script src="viewer.js"></script>
+</body>
+</html>

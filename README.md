@@ -53,6 +53,11 @@ the background.
   One tap reconnects as that person; "Resume last" reopens every tab you had.
 - **Renders like the site.** The same markdown, KaTeX and syntax highlighting,
   and all 44 of hack.chat's colour schemes.
+- **A closer look without leaving.** With images on, tapping one opens it
+  full screen — pinch or double-tap to zoom, swipe or back to close — with the
+  original a button away.
+- **Copy a whole message in one tap**, as it was sent — handy for re-running
+  a bot's command.
 - **Reply from the notification**, which also shows the last few messages — so
   you can check whether anything happened without opening the app.
 
