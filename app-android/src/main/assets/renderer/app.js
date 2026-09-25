@@ -43,7 +43,12 @@
   // The same list lives in core as `ImageHosts`, which is what the WebView's
   // request interceptor enforces; this copy only decides whether an <img> is
   // written at all. Change both together.
+  //
+  // `imgPrefixes` are the user's own additions, pushed from native with the
+  // on/off switch: parsed https URL prefixes, matched by host and path. Native
+  // checks the same list (`ImageHosts.allows` with the extras) at request time.
   var allowImages = false;
+  var imgPrefixes = [];
   var imgHostWhitelist = [
     'i.imgur.com', 'imgur.com', 'share.lyka.pro', 'cdn.discordapp.com',
     'i.gyazo.com', 'i.postimg.cc', 'i.ytimg.com', 'i.ibb.co',
@@ -54,9 +59,38 @@
     try { return new URL(link, 'https://hack.chat').hostname; } catch (e) { return ''; }
   }
 
+  function parsePrefix(p) {
+    try {
+      var u = new URL(p);
+      return { host: u.hostname.replace(/\.$/, '').toLowerCase(), path: u.pathname || '/' };
+    } catch (e) { return null; }
+  }
+
+  // Absolute https only, no userinfo. The raw path is refused on dot segments
+  // as native does, since `new URL` would quietly resolve `/i/../x` to `/x`
+  // here while native saw it differently.
+  function underPrefix(link) {
+    if (!imgPrefixes.length) return false;
+    var u;
+    try { u = new URL(link); } catch (e) { return false; }
+    if (u.protocol !== 'https:' || u.username || u.password) return false;
+    var raw = String(link).split(/[?#]/)[0];
+    if (/\\|(^|\/)(\.|%2e){1,2}(\/|$)/i.test(raw.replace(/^[a-z]+:\/\/[^\/]*/i, ''))) return false;
+    var host = u.hostname.replace(/\.$/, '').toLowerCase();
+    for (var i = 0; i < imgPrefixes.length; i++) {
+      var p = imgPrefixes[i];
+      if (p.host === host && u.pathname.indexOf(p.path) === 0) return true;
+    }
+    return false;
+  }
+
+  function imageAllowed(link) {
+    return imgHostWhitelist.indexOf(hostOf(link)) !== -1 || underPrefix(link);
+  }
+
   md.renderer.rules.image = function (tokens, idx, options) {
     var src = esc(tokens[idx].src);
-    if (allowImages && imgHostWhitelist.indexOf(hostOf(tokens[idx].src)) !== -1) {
+    if (allowImages && imageAllowed(tokens[idx].src)) {
       var alt = tokens[idx].alt ? esc(Remarkable.utils.replaceEntities(Remarkable.utils.unescapeMd(tokens[idx].alt))) : '';
       return '<a href="' + src + '" data-ext="1"><img src="' + src + '" alt="' + alt + '" referrerpolicy="no-referrer"></a>';
     }
@@ -614,10 +648,13 @@
      * that arrived afterwards, and turning them off would leave the ones
      * already showing.
      */
-    setAllowImages: function (on) {
+    setAllowImages: function (on, prefixes) {
       on = !!on;
-      if (on === allowImages) return;
+      var next = [];
+      (prefixes || []).forEach(function (p) { var q = parsePrefix(p); if (q) next.push(q); });
+      if (on === allowImages && JSON.stringify(next) === JSON.stringify(imgPrefixes)) return;
       allowImages = on;
+      imgPrefixes = next;
       // Whether a message shows an image is not part of the message, so every
       // container is now stale — including the ones nobody is looking at.
       // Dropped rather than redrawn here: native resets its own record next to

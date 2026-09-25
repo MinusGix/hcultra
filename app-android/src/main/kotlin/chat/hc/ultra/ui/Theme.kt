@@ -7,10 +7,12 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import chat.hc.core.render.FontScale
+import chat.hc.core.render.ImageHosts
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
 import chat.hc.core.session.Servers
+import chat.hc.ultra.data.ImageSources
 
 /** Reads the build-time scheme metadata shipped alongside the renderer. */
 object SchemeAssets {
@@ -152,6 +154,30 @@ class ThemePrefs(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_IMAGES, value).apply()
 
     /**
+     * Image sources beyond the site's, as canonical https URL prefixes (see
+     * [ImageHosts.normalizePrefix]). Only consulted with [allowImages] on.
+     *
+     * Absent means never edited, and reads as [ImageHosts.defaultExtra]; an
+     * emptied list is stored as such and stays empty. Entries are re-normalized
+     * on the way out, so a hand-edited or older file cannot smuggle in
+     * something the settings field would have refused. Reading or writing also
+     * updates [ImageSources], which is what the request gates consult.
+     */
+    var extraImageSources: List<String>
+        get() {
+            val stored = prefs.getString(KEY_EXTRA_IMAGES, null)
+            val list = stored?.lines()?.mapNotNull(ImageHosts::normalizePrefix)?.distinct()
+                ?: ImageHosts.defaultExtra
+            ImageSources.extra = list
+            return list
+        }
+        set(value) {
+            val list = value.mapNotNull(ImageHosts::normalizePrefix).distinct()
+            ImageSources.extra = list
+            prefs.edit().putString(KEY_EXTRA_IMAGES, list.joinToString("\n")).apply()
+        }
+
+    /**
      * Whether someone arriving or leaving gets a line in the transcript — the
      * site's "Join/left notify", on by default there and here.
      *
@@ -182,6 +208,7 @@ class ThemePrefs(context: Context) {
         const val KEY_HIGHLIGHT = "highlight"
         const val KEY_LAYOUT = "nick_layout"
         const val KEY_IMAGES = "allow_images"
+        const val KEY_EXTRA_IMAGES = "extra_image_sources"
         const val KEY_JOIN_LEAVE = "join_leave"
         const val KEY_FONT_SCALE = "font_scale"
     }

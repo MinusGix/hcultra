@@ -41,7 +41,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import chat.hc.core.render.ImageHosts
+import chat.hc.ultra.data.ImageSources
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.RendererBridge
 import chat.hc.core.render.TranscriptSync
@@ -175,7 +175,7 @@ private class RendererState {
 /**
  * The only two things a renderer WebView may fetch: its own bundled assets, and
  * — when the user has turned images on — an image from one of the hosts
- * hack.chat embeds from.
+ * hack.chat embeds from, or from a source the user added ([ImageSources]).
  *
  * Shared by the transcript and the image viewer. [page] is the one document the
  * WebView is allowed to be showing.
@@ -198,7 +198,7 @@ internal class AssetsAndImagesOnly(
     ): WebResourceResponse? {
         val url = request.url.toString()
         if (url.startsWith(ASSET_PREFIX)) return null
-        if (allowImages() && ImageHosts.allows(url)) return null
+        if (allowImages() && ImageSources.allows(url)) return null
         // A response with no body: the load fails, nothing else does.
         return WebResourceResponse("text/plain", "utf-8", null)
     }
@@ -253,6 +253,8 @@ fun MessageWebView(
     layout: NickLayout,
     /** Embed images from hack.chat's whitelisted hosts rather than link them. */
     allowImages: Boolean,
+    /** The user's extra image sources, as URL prefixes; mirrors [ImageSources.extra]. */
+    extraImageSources: List<String>,
     /** Multiplier on the page's base text size; see [chat.hc.core.render.FontScale]. */
     fontScale: Float,
     modifier: Modifier = Modifier,
@@ -332,7 +334,7 @@ fun MessageWebView(
                     state.appliedFontScale = fontCall
                     if (state.ready) webView.evaluateJavascript(fontCall, null)
                 }
-                val imagesCall = RendererBridge.allowImagesCall(allowImages)
+                val imagesCall = RendererBridge.allowImagesCall(allowImages, extraImageSources)
                 if (state.appliedImages != imagesCall) {
                     state.appliedImages = imagesCall
                     // The gate first: the images the page writes are requested the

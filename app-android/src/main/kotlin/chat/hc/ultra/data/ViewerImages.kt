@@ -8,7 +8,6 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
-import chat.hc.core.render.ImageHosts
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
@@ -31,7 +30,7 @@ class ViewerImage(val file: File, val mime: String, val displayName: String)
  * picture in the first place.
  *
  * The fetch keeps the WebView's rules, because it is the same untrusted URL:
- * https only, [ImageHosts] only, and every redirect re-checked against both.
+ * https only, [ImageSources] only, and every redirect re-checked against both.
  * HttpURLConnection would follow a redirect on its own, and a whitelisted host
  * redirecting elsewhere would otherwise walk straight past the list.
  */
@@ -57,7 +56,7 @@ object ViewerImages {
 
         var current = url
         for (hop in 0..MAX_REDIRECTS) {
-            if (!ImageHosts.allows(current)) throw IOException("Not an allowed image host")
+            if (!ImageSources.allows(current)) throw IOException("Not an allowed image host")
             val conn = (URL(current).openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = false
                 connectTimeout = 15_000

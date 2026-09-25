@@ -66,7 +66,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
-import chat.hc.core.render.ImageHosts
+import chat.hc.ultra.data.ImageSources
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.protocol.User
@@ -182,6 +182,7 @@ class MainActivity : ComponentActivity() {
             var highlightOverride by remember { mutableStateOf(themePrefs.highlightOverride) }
             var nickLayout by remember { mutableStateOf(themePrefs.nickLayout) }
             var allowImages by remember { mutableStateOf(themePrefs.allowImages) }
+            var extraImageSources by remember { mutableStateOf(themePrefs.extraImageSources) }
             var fontScale by remember { mutableFloatStateOf(themePrefs.fontScale) }
             var joinLeave by remember { mutableStateOf(themePrefs.joinLeave) }
             var notifyMentions by remember { mutableStateOf(notifyPrefs.mentions) }
@@ -269,6 +270,14 @@ class MainActivity : ComponentActivity() {
                                 allowImages = it
                                 themePrefs.allowImages = it
                             },
+                            extraImageSources = extraImageSources,
+                            onExtraImageSourcesChanged = {
+                                // The pref writes through to ImageSources, which
+                                // the gates read; the state change then tells
+                                // the page, so the gate is never behind it.
+                                themePrefs.extraImageSources = it
+                                extraImageSources = it
+                            },
                             joinLeave = joinLeave,
                             onJoinLeaveChanged = {
                                 joinLeave = it
@@ -328,7 +337,7 @@ class MainActivity : ComponentActivity() {
                                 // The page only embeds whitelisted images, but
                                 // it renders untrusted text; the viewer is not
                                 // opened on its say-so alone.
-                                if (ImageHosts.allows(url)) viewingImage = url
+                                if (ImageSources.allows(url)) viewingImage = url
                                 else openExternal(url)
                             },
                         ),
@@ -337,6 +346,7 @@ class MainActivity : ComponentActivity() {
                         nickLayout = nickLayout,
                         fontScale = fontScale,
                         allowImages = allowImages,
+                        extraImageSources = extraImageSources,
                         joinLeave = joinLeave,
                         onOpenThemes = { showThemes = true },
                         pendingChannel = pendingChannel,
@@ -555,6 +565,8 @@ private fun AppScreen(
     fontScale: Float,
     /** Embed whitelisted images in the transcript rather than linking them. */
     allowImages: Boolean,
+    /** The user's own image sources, as URL prefixes. */
+    extraImageSources: List<String>,
     /**
      * Show arrivals and departures. New ones stop being buffered at all when
      * this is off — the service owns that — so this only governs the ones
@@ -794,6 +806,7 @@ private fun AppScreen(
                     highlight = highlight,
                     layout = nickLayout,
                     allowImages = allowImages,
+                    extraImageSources = extraImageSources,
                     fontScale = fontScale,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     callbacks = webCallbacks,

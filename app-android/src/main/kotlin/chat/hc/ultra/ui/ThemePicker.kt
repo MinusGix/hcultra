@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import chat.hc.core.render.FontScale
+import chat.hc.core.render.ImageHosts
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
@@ -87,6 +88,9 @@ fun ThemeSheet(
     onFontScaleChanged: (Float) -> Unit,
     allowImages: Boolean,
     onAllowImagesChanged: (Boolean) -> Unit,
+    /** The user's own image sources, as canonical URL prefixes. */
+    extraImageSources: List<String>,
+    onExtraImageSourcesChanged: (List<String>) -> Unit,
     joinLeave: Boolean,
     onJoinLeaveChanged: (Boolean) -> Unit,
     notifyMentions: Boolean,
@@ -170,6 +174,9 @@ fun ThemeSheet(
                 checked = allowImages,
                 onChanged = onAllowImagesChanged,
             )
+            if (allowImages) {
+                ExtraImageSources(extraImageSources, onExtraImageSourcesChanged)
+            }
 
             Text(
                 "Notifications",
@@ -547,6 +554,71 @@ private fun FontSizeSample(scale: Float) {
             lineHeight = (BASE_TEXT_SP * scale * 1.45f).sp,
             color = MaterialTheme.colorScheme.onSurface,
         )
+    }
+}
+
+/**
+ * The image sources the user trusts beyond the site's list: one row per URL
+ * prefix with a way to remove it, and a field to add another.
+ *
+ * Prefixes rather than hosts, so a server that hosts one folder of pictures
+ * can be allowed without allowing everything else it serves.
+ */
+@Composable
+private fun ExtraImageSources(sources: List<String>, onChanged: (List<String>) -> Unit) {
+    var input by remember { mutableStateOf("") }
+    val normalized = remember(input) { ImageHosts.normalizePrefix(input) }
+    val duplicate = normalized != null && normalized in sources
+
+    Column(Modifier.padding(start = 12.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Also allow images from", style = MaterialTheme.typography.bodyMedium)
+        if (sources.isEmpty()) {
+            Text(
+                "Nothing beyond the site's hosts.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        sources.forEach { source ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    source,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { onChanged(sources - source) }) { Text("Remove") }
+            }
+        }
+        OutlinedTextField(
+            value = input,
+            onValueChange = { input = it },
+            singleLine = true,
+            placeholder = { Text("https://example.com/images/") },
+            isError = input.isNotBlank() && normalized == null,
+            supportingText = {
+                when {
+                    input.isBlank() ->
+                        Text("A URL prefix: images whose address starts with it will embed.")
+                    normalized == null -> Text("Needs to be an https address, like example.com/images/")
+                    duplicate -> Text("Already allowed")
+                    else -> Text(normalized)
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(
+                onClick = {
+                    normalized?.let { onChanged(sources + it) }
+                    input = ""
+                },
+                enabled = normalized != null && !duplicate,
+            ) { Text("Add") }
+            TextButton(
+                onClick = { onChanged(ImageHosts.defaultExtra) },
+                enabled = sources != ImageHosts.defaultExtra,
+            ) { Text("Reset") }
+        }
     }
 }
 

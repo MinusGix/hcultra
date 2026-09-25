@@ -53,9 +53,61 @@ class ImageHostsTest {
         assertTrue(ImageHosts.allows("https://i.imgur.com.:443/abc.png"))
     }
 
+    private val extra = listOf("https://img.example.test/i/")
+
     @Test
-    fun bridgeCallIsALiteralBoolean() {
-        assertEquals("HC.setAllowImages(true);", RendererBridge.allowImagesCall(true))
-        assertEquals("HC.setAllowImages(false);", RendererBridge.allowImagesCall(false))
+    fun allowsUnderAnExtraPrefix() {
+        assertTrue(ImageHosts.allows("https://img.example.test/i/abc.png", extra))
+        assertTrue(ImageHosts.allows("https://IMG.example.test./i/abc.png?x=1#f", extra))
+        assertTrue(ImageHosts.allows("https://minus-desktop.tail084660.ts.net/i/X72qk4y2Ed3HUfQ3KM-Blw.png", ImageHosts.defaultExtra))
+    }
+
+    /** A prefix opens one folder of one host, and only over https. */
+    @Test
+    fun extraPrefixIsHostAndPath() {
+        assertFalse(ImageHosts.allows("https://img.example.test/abc.png", extra))
+        assertFalse(ImageHosts.allows("https://img.example.test/private/abc.png", extra))
+        assertFalse(ImageHosts.allows("https://img.example.test.evil.test/i/abc.png", extra))
+        assertFalse(ImageHosts.allows("https://img.example.test@evil.test/i/abc.png", extra))
+        assertFalse(ImageHosts.allows("http://img.example.test/i/abc.png", extra))
+        assertFalse(ImageHosts.allows("https://img.example.test/i/abc.png"))
+    }
+
+    @Test
+    fun extraPrefixRejectsDotSegments() {
+        assertFalse(ImageHosts.allows("https://img.example.test/i/../private/x.png", extra))
+        assertFalse(ImageHosts.allows("https://img.example.test/i/%2E%2e/private/x.png", extra))
+        assertFalse(ImageHosts.allows("https://img.example.test/i/..\\private/x.png", extra))
+    }
+
+    @Test
+    fun normalizesTypedPrefixes() {
+        assertEquals("https://img.example.test/i/", ImageHosts.normalizePrefix("  img.example.test/i/ "))
+        assertEquals("https://img.example.test/", ImageHosts.normalizePrefix("HTTPS://Img.Example.Test:8443"))
+        assertEquals("https://img.example.test/i/", ImageHosts.normalizePrefix("https://img.example.test/i/?q#f"))
+        assertEquals(null, ImageHosts.normalizePrefix("http://img.example.test/i/"))
+        assertEquals(null, ImageHosts.normalizePrefix("https://a@img.example.test/"))
+        assertEquals(null, ImageHosts.normalizePrefix("https://img.example.test/../x"))
+        assertEquals(null, ImageHosts.normalizePrefix("https:///i/"))
+        assertEquals(null, ImageHosts.normalizePrefix("img example"))
+        assertEquals(null, ImageHosts.normalizePrefix(""))
+    }
+
+    /** A root prefix admits the whole host. */
+    @Test
+    fun rootPrefixAdmitsTheHost() {
+        val root = listOf(ImageHosts.normalizePrefix("img.example.test")!!)
+        assertTrue(ImageHosts.allows("https://img.example.test/anything.png", root))
+        assertTrue(ImageHosts.allows("https://img.example.test", root))
+    }
+
+    @Test
+    fun bridgeCallIsALiteralBooleanAndList() {
+        assertEquals("HC.setAllowImages(true, []);", RendererBridge.allowImagesCall(true))
+        assertEquals("HC.setAllowImages(false, []);", RendererBridge.allowImagesCall(false))
+        assertEquals(
+            "HC.setAllowImages(true, [\"https://a.test/i/\"]);",
+            RendererBridge.allowImagesCall(true, listOf("https://a.test/i/")),
+        )
     }
 }

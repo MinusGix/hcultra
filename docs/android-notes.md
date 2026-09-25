@@ -368,18 +368,31 @@ by necessity — in `core` for the gate, in `app.js` to decide whether to emit a
 hand-rolled and tested: `https://i.imgur.com@evil.test/x.png` has host
 `evil.test`, and a prefix check would read it the other way round.
 
+Beyond the site's list, settings take extra sources as https URL prefixes
+(`ThemePrefs.extraImageSources`), matched by host *and* path so one folder of a
+server can be allowed without the rest of it. A fresh install carries one,
+`ImageHosts.defaultExtra` (the image host this app's own group posts from);
+removing it sticks, since an emptied list is stored rather than treated as
+unset. Paths with `.`/`..` segments (plain or `%2e`) never match a prefix —
+`/i/../x` starts with `/i/` and names something outside it. Native gates read
+the list through `data/ImageSources.kt`, a process-wide holder, because the
+interceptor and the viewer's fetch run off the main thread and are not
+composables; the pref writes through to it before the page is told, so the
+gate is never behind the renderer. The page gets it as the second argument of
+`HC.setAllowImages`, and a change rebuilds the transcript like the switch does.
+
 Tapping an embedded image opens it full screen in `ui/ImageViewer.kt` — a
 dialog holding a second WebView over `viewer.html`. The same
 `AssetsAndImagesOnly` gate is installed on it, so the viewer can reach exactly
 what the transcript could; it shares the app's WebView HTTP cache, so the
-picture is not fetched twice; and native re-checks `ImageHosts` before opening
+picture is not fetched twice; and native re-checks `ImageSources` before opening
 it at all, rather than trusting the untrusted page's word that the tap was on a
 whitelisted image. The gestures are in `viewer.js`, not WebView zoom, which
 double-tap-snaps to text columns and stops dead at the image's edge.
 
 Copy, save and share fetch the image again, natively and only on request
 (`data/ViewerImages.kt`): the WebView's cache is not readable by the app. The
-fetch keeps the WebView's rules — https, `ImageHosts`, and redirects followed
+fetch keeps the WebView's rules — https, `ImageSources`, and redirects followed
 by hand so each hop is re-checked, since `HttpURLConnection` would otherwise
 follow a whitelisted host's redirect anywhere. The copy lands in
 `cache/images/` (pruned after a day) and reaches the clipboard and share sheet

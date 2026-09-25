@@ -112,13 +112,15 @@ object RendererBridge {
     }
 
     /**
-     * Turns inline images on or off.
+     * Turns inline images on or off, and says which extra URL prefixes (beyond
+     * the site's hosts) count as image sources.
      *
      * The renderer rebuilds the transcript when this changes: whether a message
      * shows an image is not part of the message, so the render diff would
      * otherwise leave everything already on screen as it was.
      */
-    fun allowImagesCall(allow: Boolean): String = "HC.setAllowImages($allow);"
+    fun allowImagesCall(allow: Boolean, extra: List<String> = emptyList()): String =
+        "HC.setAllowImages($allow, ${json.encodeToString(ListSerializer(String.serializer()), extra)});"
 
     /** Back to the newest message, and stay there as more arrive. */
     fun scrollToBottomCall(): String = "HC.scrollToBottom();"
