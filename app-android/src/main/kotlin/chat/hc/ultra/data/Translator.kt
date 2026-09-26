@@ -134,6 +134,13 @@ object Translator {
             requestMethod = "POST"
             doOutput = true
             setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+            // Not Android's default. Google sends anything calling itself
+            // `Dalvik/…` to its bot check, for every language, while it answers
+            // other agents — curl, a browser, a bare app name — normally.
+            setRequestProperty("User-Agent", "hcultra")
+            // The only redirect this endpoint gives is to that check, a page
+            // for a person to solve; following it would only fetch the page.
+            instanceFollowRedirects = false
             connectTimeout = 10_000
             readTimeout = 10_000
         }
