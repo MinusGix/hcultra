@@ -171,18 +171,29 @@ body { font-size: 1rem; }
   margin-top: 6px;
   padding-right: 6px;
 }
+/*
+ * Icon over label, as in a bottom bar: three side by side with the icon
+ * beside the label left each about a word wide on a phone, and the page's
+ * `break-word` then split "Translate" down the middle. Labels still wrap, but
+ * only between words.
+ */
 .msg-actions button {
   flex: 1 1 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.45em;
+  gap: 0.2em;
   /* 44px is the least a finger should be asked to hit; `em` above that, so
      the buttons grow with the text size rather than staying phone-small. */
   min-height: max(44px, 2.9em);
-  padding: 0 0.8em;
+  min-width: 0;
+  padding: 0.35em 0.4em;
   font: inherit;
-  font-size: 0.93em;
+  font-size: 0.85em;
+  line-height: 1.2;
+  word-break: normal;
+  overflow-wrap: normal;
   font-weight: 600;
   color: inherit;
   background: rgba(127, 127, 127, 0.2);
@@ -196,6 +207,30 @@ body { font-size: 1rem; }
 /* The gutter layout is a flex row; the strip takes a line of its own. */
 .layout-gutter .message.selected { flex-wrap: wrap; }
 .layout-gutter .msg-actions { flex: 0 0 100%; }
+
+/*
+ * A translation, under the message. Set off by a grey rule for the same reason
+ * the selection is grey: it has to read on all 44 schemes without any of them
+ * knowing about it.
+ */
+.translation {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid rgba(127, 127, 127, 0.6);
+}
+.translation-note { font-size: 0.8em; opacity: 0.7; font-style: italic; }
+.translation.failed .translation-note { font-style: normal; }
+.translation-text > p { margin: 0; }
+.translation-text > p + p { margin-top: 4px; }
+.layout-gutter .message.translated { flex-wrap: wrap; }
+/* Under the text column, not the names: the gutter's width and gap as above. */
+.layout-gutter .translation {
+  --hc-gutter: calc(min(7.5em, 38vw) + 8px);
+  flex: 0 0 auto;
+  width: calc(100% - var(--hc-gutter));
+  margin-left: var(--hc-gutter);
+  box-sizing: border-box;
+}
 
 .kind-info .text, .kind-join .text, .kind-leave .text { font-size: 0.93em; }
 .kind-join .text::before { content: "→ "; }

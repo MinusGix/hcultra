@@ -67,6 +67,9 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import chat.hc.ultra.data.ImageSources
+import chat.hc.ultra.data.TranslatePrefs
+import chat.hc.ultra.data.TranslateResult
+import chat.hc.ultra.data.Translator
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.protocol.User
@@ -169,6 +172,7 @@ class MainActivity : ComponentActivity() {
 
         val themePrefs = ThemePrefs(this)
         val notifyPrefs = NotifyPrefs(this)
+        val translatePrefs = TranslatePrefs(this)
         val allSchemes = SchemeAssets.load(this)
 
         // Paint the window from the chosen scheme *before* Compose draws.
@@ -192,6 +196,8 @@ class MainActivity : ComponentActivity() {
             var showThemes by remember { mutableStateOf(false) }
             var pendingChannel by remember { mutableStateOf<String?>(null) }
             var viewingImage by remember { mutableStateOf<String?>(null) }
+            var translate by remember { mutableStateOf(translatePrefs.enabled) }
+            var translateTarget by remember { mutableStateOf(translatePrefs.target) }
             var serverUrl by remember { mutableStateOf(serverPrefs.url) }
 
             val scheme = remember(schemeName) { allSchemes.resolve(schemeName) }
@@ -286,6 +292,16 @@ class MainActivity : ComponentActivity() {
                                 // what is already buffered.
                                 themePrefs.joinLeave = it
                             },
+                            translate = translate,
+                            onTranslateChanged = {
+                                translate = it
+                                translatePrefs.enabled = it
+                            },
+                            translateTarget = translateTarget,
+                            onTranslateTargetChanged = {
+                                translatePrefs.target = it
+                                translateTarget = translatePrefs.target
+                            },
                             notifyMentions = notifyMentions,
                             onNotifyMentionsChanged = {
                                 notifyMentions = it
@@ -340,6 +356,17 @@ class MainActivity : ComponentActivity() {
                                 if (ImageSources.allows(url)) viewingImage = url
                                 else openExternal(url)
                             },
+                            onTranslate = { text, reply ->
+                                // Checked here as well as by the page having no
+                                // button: the page renders untrusted text, and
+                                // the setting is what agreed to sending it.
+                                if (translatePrefs.enabled) {
+                                    val target = translatePrefs.target ?: Translator.phoneTarget()
+                                    lifecycleScope.launch { reply(Translator.translate(text, target)) }
+                                } else {
+                                    reply(TranslateResult.Cancelled)
+                                }
+                            },
                         ),
                         scheme = scheme,
                         highlight = highlight,
@@ -348,6 +375,7 @@ class MainActivity : ComponentActivity() {
                         allowImages = allowImages,
                         extraImageSources = extraImageSources,
                         joinLeave = joinLeave,
+                        translate = translate,
                         onOpenThemes = { showThemes = true },
                         pendingChannel = pendingChannel,
                         onPendingConsumed = { pendingChannel = null },
@@ -574,6 +602,8 @@ private fun AppScreen(
      * make the switch look like it had not worked.
      */
     joinLeave: Boolean,
+    /** Whether a tapped message offers Translate. */
+    translate: Boolean,
     onOpenThemes: () -> Unit,
     /** A tapped `?channel` link pre-fills the join form rather than joining blind. */
     pendingChannel: String?,
@@ -808,6 +838,7 @@ private fun AppScreen(
                     allowImages = allowImages,
                     extraImageSources = extraImageSources,
                     fontScale = fontScale,
+                    translate = translate,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     callbacks = webCallbacks,
                 )

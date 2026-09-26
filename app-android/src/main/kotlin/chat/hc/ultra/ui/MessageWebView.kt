@@ -42,6 +42,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import chat.hc.ultra.data.ImageSources
+import chat.hc.ultra.data.TranslateResult
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.RendererBridge
 import chat.hc.core.render.TranscriptSync
@@ -65,6 +66,12 @@ data class RendererCallbacks(
     val onImageTap: (String) -> Unit = {},
     /** A message's whole text, to go into the composer. */
     val onCompose: (String) -> Unit = {},
+    /**
+     * A message's whole text, to translate. Always answered through `reply`,
+     * even when nothing was done, so the page can put its button back.
+     */
+    val onTranslate: (text: String, reply: (TranslateResult) -> Unit) -> Unit =
+        { _, reply -> reply(TranslateResult.Cancelled) },
 )
 
 private class Bridge(
@@ -72,6 +79,8 @@ private class Bridge(
     private val callbacks: RendererCallbacks,
     private val ready: () -> Unit,
     private val scrolled: (ScrollState) -> Unit,
+    /** Runs a statement in the page, on the UI thread. */
+    private val eval: (String) -> Unit,
 ) {
     @JavascriptInterface
     fun onReady(unused: String) = ready()
@@ -122,6 +131,30 @@ private class Bridge(
         Handler(Looper.getMainLooper()).post { callbacks.onCompose(text) }
     }
 
+    /**
+     * A message to translate, and which row asked, so the answer can find its
+     * way back to it. Main thread, as [onNickTap]: the first one opens a dialog.
+     */
+    @JavascriptInterface
+    fun onTranslate(channel: String, localId: String, text: String) {
+        val id = localId.toLongOrNull() ?: return
+        Handler(Looper.getMainLooper()).post {
+            callbacks.onTranslate(text) { result ->
+                val call = when (result) {
+                    is TranslateResult.Done ->
+                        RendererBridge.translationCall(channel, id, result.text, "Translated from ${result.from}")
+                    is TranslateResult.Already ->
+                        RendererBridge.translationCall(channel, id, null, "Already in ${result.language}")
+                    is TranslateResult.Failed ->
+                        RendererBridge.translationCall(channel, id, null, result.reason, failed = true)
+                    TranslateResult.Cancelled ->
+                        RendererBridge.translationCall(channel, id, null, null)
+                }
+                eval(call)
+            }
+        }
+    }
+
     /** `"1:0"`, `"0:3"`: at the bottom or not, and how many arrived below. */
     @JavascriptInterface
     fun onScrollState(state: String) {
@@ -163,6 +196,7 @@ private class RendererState {
     var appliedLayout: String? = null
     var appliedImages: String? = null
     var appliedFontScale: String? = null
+    var appliedTranslate: String? = null
 
     /**
      * Read by the request gate, which outlives any single recomposition — the
@@ -257,6 +291,8 @@ fun MessageWebView(
     extraImageSources: List<String>,
     /** Multiplier on the page's base text size; see [chat.hc.core.render.FontScale]. */
     fontScale: Float,
+    /** Whether a tapped message offers Translate; see [chat.hc.ultra.data.TranslatePrefs]. */
+    translate: Boolean,
     modifier: Modifier = Modifier,
     callbacks: RendererCallbacks = RendererCallbacks(),
 ) {
@@ -297,6 +333,7 @@ fun MessageWebView(
                                 state.appliedTheme?.let { evaluateJavascript(it, null) }
                                 state.appliedLayout?.let { evaluateJavascript(it, null) }
                                 state.appliedFontScale?.let { evaluateJavascript(it, null) }
+                                state.appliedTranslate?.let { evaluateJavascript(it, null) }
                                 // Before the messages: the page drops every
                                 // container when this changes, and there is nothing
                                 // to drop yet.
@@ -311,7 +348,9 @@ fun MessageWebView(
                                         .forEach { evaluateJavascript(it, null) }
                                 }
                             }
-                        }, scrolled = { scroll = it }),
+                        }, scrolled = { scroll = it }, eval = { js ->
+                            post { evaluateJavascript(js, null) }
+                        }),
                         "HcBridge",
                     )
                     state.webView = this
@@ -333,6 +372,11 @@ fun MessageWebView(
                 if (state.appliedFontScale != fontCall) {
                     state.appliedFontScale = fontCall
                     if (state.ready) webView.evaluateJavascript(fontCall, null)
+                }
+                val translateCall = RendererBridge.translateCall(translate)
+                if (state.appliedTranslate != translateCall) {
+                    state.appliedTranslate = translateCall
+                    if (state.ready) webView.evaluateJavascript(translateCall, null)
                 }
                 val imagesCall = RendererBridge.allowImagesCall(allowImages, extraImageSources)
                 if (state.appliedImages != imagesCall) {

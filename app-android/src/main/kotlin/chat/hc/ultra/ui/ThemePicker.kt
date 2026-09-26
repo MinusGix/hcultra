@@ -21,6 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -53,12 +54,15 @@ import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
 import chat.hc.core.session.Servers
+import chat.hc.core.translate.GoogleTranslate
 import chat.hc.ultra.data.REPO_URL
+import chat.hc.ultra.data.Translator
 import chat.hc.ultra.data.UpdateStatus
 import chat.hc.ultra.data.checkForUpdate
 import chat.hc.ultra.data.installedVersion
 import chat.hc.ultra.service.ChatNotifications
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 /**
  * Settings: server endpoint, then theming.
@@ -93,6 +97,11 @@ fun ThemeSheet(
     onExtraImageSourcesChanged: (List<String>) -> Unit,
     joinLeave: Boolean,
     onJoinLeaveChanged: (Boolean) -> Unit,
+    translate: Boolean,
+    onTranslateChanged: (Boolean) -> Unit,
+    /** One of [GoogleTranslate.LANGUAGES], or null for the phone's language. */
+    translateTarget: String?,
+    onTranslateTargetChanged: (String?) -> Unit,
     notifyMentions: Boolean,
     onNotifyMentionsChanged: (Boolean) -> Unit,
     notifyWhispers: Boolean,
@@ -176,6 +185,19 @@ fun ThemeSheet(
             )
             if (allowImages) {
                 ExtraImageSources(extraImageSources, onExtraImageSourcesChanged)
+            }
+            ToggleRow(
+                title = "Translate messages",
+                // Where the text goes, since that is what switching it on
+                // agrees to; there is no second question on the first tap.
+                subtitle = "Adds Translate to a tapped message. " +
+                    "The message's text is sent to Google Translate — not who wrote it " +
+                    "or which channel it is from.",
+                checked = translate,
+                onChanged = onTranslateChanged,
+            )
+            if (translate) {
+                TranslateTarget(translateTarget, onTranslateTargetChanged)
             }
 
             Text(
@@ -424,6 +446,129 @@ private fun ToggleRow(
             }
         }
         Switch(checked = checked, onCheckedChange = onChanged)
+    }
+}
+
+/**
+ * Which language Translate goes into: the phone's, unless the reader picks
+ * another.
+ *
+ * Each language is listed under its own name first, with the phone's name for
+ * it beneath: the reader choosing is, by the premise of the setting, someone
+ * more at home in a language other than the phone's, and should be able to
+ * find it by the name they know it by. The search matches either.
+ */
+@Composable
+private fun TranslateTarget(target: String?, onChanged: (String?) -> Unit) {
+    var picking by remember { mutableStateOf(false) }
+    val phone = remember { Translator.phoneTarget() }
+    val reader = remember { Locale.getDefault() }
+    val current = target?.let { Translator.languageName(it) }
+        ?: "Phone language (${Translator.languageName(phone, reader)})"
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { picking = true }
+            .padding(start = 12.dp, top = 4.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Translate into", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                current,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+
+    if (!picking) return
+    // Named once per opening rather than per keystroke: 130 locale lookups.
+    val languages = remember {
+        GoogleTranslate.LANGUAGES
+            .map { Triple(it, Translator.languageName(it), Translator.languageName(it, reader)) }
+            .sortedBy { it.third.lowercase(reader) }
+    }
+    var query by remember { mutableStateOf("") }
+    val shown = remember(query) {
+        val q = query.trim()
+        if (q.isEmpty()) languages
+        else languages.filter { (code, own, local) ->
+            own.contains(q, ignoreCase = true) || local.contains(q, ignoreCase = true) ||
+                code.equals(q, ignoreCase = true)
+        }
+    }
+    val choose = { code: String? ->
+        onChanged(code)
+        picking = false
+    }
+    AlertDialog(
+        onDismissRequest = { picking = false },
+        title = { Text("Translate into") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    placeholder = { Text("Search") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                LazyColumn(Modifier.heightIn(max = 360.dp).padding(top = 8.dp)) {
+                    if (query.isBlank()) {
+                        item {
+                            LanguageRow(
+                                title = "Phone language",
+                                subtitle = Translator.languageName(phone, reader),
+                                selected = target == null,
+                                onClick = { choose(null) },
+                            )
+                        }
+                    }
+                    items(shown, key = { it.first }) { (code, own, local) ->
+                        LanguageRow(
+                            title = own,
+                            // Nothing to add when the two names are the same,
+                            // as they are for the phone's own language.
+                            subtitle = local.takeIf { it != own },
+                            selected = code == target,
+                            onClick = { choose(code) },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = { picking = false }) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun LanguageRow(title: String, subtitle: String?, selected: Boolean, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                else Color.Transparent
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (selected) FontWeight.SemiBold else null,
+        )
+        if (subtitle != null) {
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

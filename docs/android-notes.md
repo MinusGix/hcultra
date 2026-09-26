@@ -405,6 +405,29 @@ The cost being opted into is that fetching an image tells the host serving it
 that you are here, and it was a stranger in the channel who chose which host
 that is. Hence the default, `referrerpolicy="no-referrer"`, and https only.
 
+Translate, in a tapped message's action strip, goes through Google Translate's
+keyless `translate_a/single?client=gtx` endpoint — the one its browser widgets
+use. It is unofficial: free and serverless, but with no promise it keeps
+answering or keeps its shape, so `core`'s `GoogleTranslate.parse` treats
+anything unrecognised as a failure rather than guessing. The request is made
+natively (`data/Translator.kt`), never by the page, whose network stays shut:
+the text goes as a POST body, not in the URL, into the phone's language
+(`Locale.getDefault()`, with Chinese split by script or region) unless settings
+name another. That choice is one of `GoogleTranslate.LANGUAGES`, listed under
+each language's own name with the phone's name beneath, since the point is a
+reader on an English phone finding "Español"; a stored value not on the list
+reads as the phone's language rather than reaching the URL. Only the text
+is sent. The button is off by default and switched on in settings
+(`TranslatePrefs`); the switch says where the text goes and is the agreement to
+it, as the image switch is, so there is no question on the first tap. Native
+checks the pref again when a request arrives rather than trusting the page's
+button to be absent. The answer comes back through
+`HC.translation(channel, id, …)`, keyed like the rows rather than by element,
+because the row may have been rebuilt meanwhile. A translation is kept on the
+row through a refill, but dropped if the text changed under it, e.g. a bot still
+streaming. Answers are cached per process; failures are not, so trying again
+actually tries again.
+
 `RendererBridge` lives in `core/` rather than the app module so iOS can reuse
 the same payload and the same asset bundle, with only the WKWebView host
 differing.

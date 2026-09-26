@@ -48,6 +48,14 @@ internal data class WirePatch(
     val upsert: List<WireMessage>,
 )
 
+/** What [RendererBridge.translationCall] tells the page about one message. */
+@Serializable
+internal data class WireTranslation(
+    val text: String? = null,
+    val note: String? = null,
+    val failed: Boolean = false,
+)
+
 object RendererBridge {
 
     private val json = Json { encodeDefaults = true }
@@ -121,6 +129,38 @@ object RendererBridge {
      */
     fun allowImagesCall(allow: Boolean, extra: List<String> = emptyList()): String =
         "HC.setAllowImages($allow, ${json.encodeToString(ListSerializer(String.serializer()), extra)});"
+
+    /**
+     * Whether a tapped message offers Translate. Off takes down any
+     * translations already showing too, since there would be no button left
+     * to hide them with.
+     */
+    fun translateCall(on: Boolean): String = "HC.setTranslate($on);"
+
+    /**
+     * The answer to a Translate tap on one message, identified the way the page
+     * keys its rows: by channel and local id, since ids restart in every
+     * channel.
+     *
+     * [note] is the line shown above the result — "Translated from Spanish",
+     * "Already in English", or why it failed — and a null [note] means there is
+     * nothing to show, only a button to put back. [text] is the translation,
+     * when there is one; it is untrusted like the message it came from, and
+     * goes the same way, as a JSON string the page parses.
+     */
+    fun translationCall(
+        channel: String,
+        localId: Long,
+        text: String?,
+        note: String?,
+        failed: Boolean = false,
+    ): String {
+        val t = json.encodeToString(
+            WireTranslation.serializer(),
+            WireTranslation(text = text, note = note, failed = failed),
+        )
+        return "HC.translation(${quote(channel)}, $localId, ${quote(t)});"
+    }
 
     /** Back to the newest message, and stay there as more arrive. */
     fun scrollToBottomCall(): String = "HC.scrollToBottom();"

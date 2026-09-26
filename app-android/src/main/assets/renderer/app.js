@@ -343,6 +343,13 @@
     // Refilled with the row, so a message a bot is still streaming copies as
     // far as it has got.
     row._hcText = (m.kind === 'Join' || m.kind === 'Leave') ? '' : String(m.text || '');
+    // A translation is of the text it was made from. A bot still streaming
+    // into the row has since said more, and a translation of less than the
+    // message would pass for all of it, so it goes.
+    if (row._hcTranslation) {
+      if (row._hcTranslation.source === row._hcText) addTranslation(row);
+      else row._hcTranslation = null;
+    }
     // innerHTML just replaced the actions along with everything else.
     if (row === selected) {
       if (row._hcText) addActions(row);
@@ -377,6 +384,9 @@
    */
   var ICON_COPY = 'M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11' +
     'c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z';
+  var ICON_TRANSLATE = 'M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0 0 14.07 6H17V4h-7V2H8v2H1v1.99h11.17' +
+    'C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 ' +
+    '3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z';
   var ICON_EDIT = 'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41' +
     'l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z';
 
@@ -390,8 +400,70 @@
     var strip = document.createElement('div');
     strip.className = 'msg-actions';
     strip.innerHTML = actionButton('copy', ICON_COPY, 'Copy') +
-      actionButton('compose', ICON_EDIT, 'Put in composer');
+      actionButton('compose', ICON_EDIT, 'Put in composer') +
+      (translateEnabled ? actionButton('translate', ICON_TRANSLATE, translateLabel(row)) : '');
     row.appendChild(strip);
+  }
+
+  /*
+   * Translation, under the message it translates.
+   *
+   * The page only asks and shows: native decides whether the reader has agreed
+   * to sending it to Google, makes the request, and answers with
+   * `HC.translation`, keyed by channel and id rather than by element because
+   * the row may have been rebuilt while the request was out.
+   *
+   * Held on the row, like `_hcText`, so it survives the row being refilled and
+   * goes away with it. A failure is shown in the same place as a success, and
+   * hidden the same way: it answers the tap either way, and an error that
+   * vanished on its own would leave the reader unsure anything happened.
+   */
+  // Off unless the reader turned it on in settings; native says which.
+  var translateEnabled = false;
+
+  function translateLabel(row) {
+    if (row._hcTranslating) return 'Translating\u2026';
+    return row._hcTranslation ? 'Hide translation' : 'Translate';
+  }
+
+  function addTranslation(row) {
+    var t = row._hcTranslation;
+    var box = document.createElement('div');
+    box.className = 'translation' + (t.failed ? ' failed' : '');
+    var note = '<div class="translation-note">' + esc(t.note) + '</div>';
+    // Rendered like the message: markdown survives the round trip well
+    // enough, and a translated code block should still read as one.
+    box.innerHTML = note + (t.text ? '<div class="translation-text">' + renderBody(t.text) + '</div>' : '');
+    row.appendChild(box);
+    // A class rather than `:has()`, which older WebViews do not know.
+    row.classList.add('translated');
+  }
+
+  function removeTranslation(row) {
+    row._hcTranslation = null;
+    row.classList.remove('translated');
+    var box = row.querySelector('.translation');
+    if (box) box.parentNode.removeChild(box);
+  }
+
+  function translate(row) {
+    if (row._hcTranslation) {
+      removeTranslation(row);
+      deselect();
+      return;
+    }
+    if (row._hcTranslating) return;
+    row._hcTranslating = true;
+    var label = row.querySelector('.msg-actions [data-act="translate"] span');
+    if (label) label.textContent = translateLabel(row);
+    // Three arguments, so not through post(); the same guard.
+    if (window.HcBridge && window.HcBridge.onTranslate) {
+      try {
+        window.HcBridge.onTranslate(current, row.getAttribute('data-id'), row._hcText);
+        return;
+      } catch (e) {}
+    }
+    row._hcTranslating = false;
   }
 
   function select(row) {
@@ -506,6 +578,10 @@
     if (act) {
       e.preventDefault();
       var text = selected ? selected._hcText : '';
+      if (act.getAttribute('data-act') === 'translate') {
+        if (selected) translate(selected);
+        return;
+      }
       if (act.getAttribute('data-act') === 'compose') {
         post('onCompose', text);
         deselect();
@@ -668,6 +744,48 @@
       current = null;
       selected = null;
       report();
+    },
+    setTranslate: function (on) {
+      on = !!on;
+      if (on === translateEnabled) return;
+      translateEnabled = on;
+      // The strip is rebuilt on the next tap; the selected one is simply let go.
+      deselect();
+      if (on) return;
+      for (var name in channels) {
+        var nodes = channels[name].nodes;
+        for (var id in nodes) {
+          nodes[id]._hcTranslating = false;
+          if (nodes[id]._hcTranslation) removeTranslation(nodes[id]);
+        }
+      }
+    },
+    /*
+     * Native's answer to a Translate tap. A row that is gone by now — scrolled
+     * out of the buffer, or dropped with its channel — is simply not there to
+     * show it.
+     */
+    translation: function (channel, id, json) {
+      var t;
+      try { t = JSON.parse(json); } catch (e) { return; }
+      var c = channels[String(channel)];
+      var row = c && c.nodes[String(id)];
+      if (!row || !translateEnabled) return;
+      row._hcTranslating = false;
+      if (t.note) {
+        var old = row.querySelector('.translation');
+        if (old) old.parentNode.removeChild(old);
+        row._hcTranslation = { source: row._hcText, text: t.text || '', note: t.note, failed: !!t.failed };
+        // The answer is what the tap was for; the strip has done its job, and
+        // left up it would sit between the message and its translation.
+        if (row === selected) deselect();
+        addTranslation(row);
+        // Growing a row pushes the bottom away from a reader sitting there,
+        // as an image landing does.
+        if (c === channels[current] && c.pinned) scrollToBottom();
+      }
+      var label = row.querySelector('.msg-actions [data-act="translate"] span');
+      if (label) label.textContent = translateLabel(row);
     },
     scrollToBottom: function () {
       var c = channels[current];
