@@ -17,6 +17,7 @@ import chat.hc.ultra.ui.ThemePrefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
@@ -84,14 +85,17 @@ class HcService : Service() {
             tokenStore = KeystoreTokenStore(this),
             motdStore = MotdPrefs(this),
             showJoinLeave = { display.joinLeave },
+            historyLimit = { display.historyLimit },
             now = { System.currentTimeMillis() },
             // Must be <= 6 chars: chat.js drops a longer customId silently and
             // charges 13 rate-limit points of 25. 36^6 is ample for correlating
-            // an echo against the few hundred messages we keep.
+            // an echo against even a history of tens of thousands.
             customIdFactory = { Random.nextLong(0, 2_176_782_336L).toString(36).padStart(6, '0') },
         )
         // Channels are registered in HcApp, which has already run by now.
         notifications = ChatNotifications(this)
+        // Debug builds only: lets adb fill a channel with synthetic history.
+        DebugTools.attach(sessions, scope)
 
         // The notification is the app's background presence: it shows which
         // channels are connected and how much is unread, and carries the
@@ -110,6 +114,16 @@ class HcService : Service() {
                 // Checked here rather than at ACTION_LEAVE because the leave now
                 // completes on a timer, long after the intent was handled.
                 else if (everJoined) stopSelf()
+            }
+        }
+
+        // The age limit, for channels too quiet to reach it on their own: it is
+        // otherwise applied as messages arrive. Cheap when there is nothing to
+        // trim, and a few minutes late is no difference to a limit in days.
+        scope.launch {
+            while (true) {
+                delay(HISTORY_SWEEP_MILLIS)
+                sessions.enforceHistory()
             }
         }
 
@@ -253,6 +267,8 @@ class HcService : Service() {
         const val ACTION_MODERATE = "chat.hc.ultra.MODERATE"
         const val ACTION_INVITE = "chat.hc.ultra.INVITE"
         const val ACTION_ANSWER = "chat.hc.ultra.ANSWER"
+
+        private const val HISTORY_SWEEP_MILLIS = 5 * 60 * 1000L
 
         const val EXTRA_CHANNEL = "channel"
         const val EXTRA_NICK = "nick"

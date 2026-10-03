@@ -7,6 +7,7 @@ import chat.hc.core.protocol.Outbound
 import chat.hc.core.store.ChannelBuffer
 import chat.hc.core.store.ChatMessage
 import chat.hc.core.store.Delivery
+import chat.hc.core.store.HistoryLimit
 import chat.hc.core.store.MessageKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
@@ -60,7 +61,13 @@ class SessionManager(
      * would be empty exactly when it is needed — on a fresh launch.
      */
     private val motdStore: MotdStore = InMemoryMotdStore(),
-    private val bufferCapacity: Int = 500,
+    /**
+     * How much of each channel to keep. A supplier, like [showJoinLeave], since
+     * it is a user setting that changes while this manager lives in the
+     * service; it is read on every publish, so a lowered limit takes effect
+     * with the next message and [enforceHistory] covers channels gone quiet.
+     */
+    private val historyLimit: () -> HistoryLimit = { HistoryLimit() },
     /**
      * How long to wait for the server to echo our own message before marking it
      * unconfirmed. A normal echo returns in well under a second; this only has
@@ -185,7 +192,7 @@ class SessionManager(
                 tokenStore = tokenStore,
             )
             sessions[channel] = session
-            buffers.getOrPut(channel) { ChannelBuffer(bufferCapacity) }
+            buffers.getOrPut(channel) { ChannelBuffer(historyLimit().maxLines) }
             _channels.update { it + (channel to (it[channel] ?: ChannelUi(channel))) }
             publish(channel)
 
@@ -388,7 +395,7 @@ class SessionManager(
 
         when (event) {
             is SessionEvent.Message -> {
-                val msg = buffer.applyChat(event.frame, session.userid)
+                val msg = buffer.applyChat(event.frame, session.userid, receivedAt = now())
                 if (!msg.isMine) {
                     if (channel != activeChannel) {
                         mutate(channel) { it.copy(unread = it.unread + 1) }
@@ -624,7 +631,39 @@ class SessionManager(
 
     private fun publish(channel: String) {
         val buffer = buffers[channel] ?: return
+        buffer.enforce(historyLimit(), now())
         mutate(channel) { it.copy(messages = buffer.snapshot()) }
+    }
+
+    /**
+     * Puts [messages] into a joined channel's history as if they had arrived,
+     * without the server. For exercising long histories on a device — nothing
+     * outside a debug build calls it. Ids are assigned here; the ones passed
+     * in are ignored. Returns false if the channel is not open.
+     */
+    fun injectForTesting(channel: String, messages: List<ChatMessage>): Boolean {
+        val buffer = buffers[channel] ?: return false
+        messages.forEach { buffer.add(it) }
+        if (channel != activeChannel) mutate(channel) { it.copy(unread = it.unread + messages.size) }
+        publish(channel)
+        return true
+    }
+
+    /**
+     * Applies the history limit to every channel now, rather than at its next
+     * message. For a changed setting, and for the age limit, which a quiet
+     * channel would otherwise never reach: nothing arrives to trigger a publish.
+     */
+    suspend fun enforceHistory() {
+        // Under the lock because it walks the channel map, which join and leave
+        // change; the buffers guard themselves.
+        lock.withLock {
+            val limit = historyLimit()
+            val at = now()
+            buffers.keys.forEach { channel ->
+                if (buffers[channel]?.enforce(limit, at) == true) publish(channel)
+            }
+        }
     }
 
     /**

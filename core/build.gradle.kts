@@ -55,3 +55,15 @@ tasks.register<JavaExec>("liveSmoke") {
         configurations.getByName("jvmRuntimeClasspath"),
     )
 }
+
+/** Per-message native cost by history length; see TranscriptBench.kt. */
+tasks.register<JavaExec>("transcriptBench") {
+    group = "verification"
+    description = "Measure what an arriving message costs natively as history grows."
+    dependsOn("jvmMainClasses")
+    mainClass.set("chat.hc.core.bench.TranscriptBenchKt")
+    classpath(
+        kotlin.jvm().compilations.getByName("main").output.allOutputs,
+        configurations.getByName("jvmRuntimeClasspath"),
+    )
+}

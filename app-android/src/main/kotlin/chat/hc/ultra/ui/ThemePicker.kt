@@ -21,6 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +47,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import chat.hc.core.render.FontScale
@@ -54,6 +56,7 @@ import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
 import chat.hc.core.session.Servers
+import chat.hc.core.store.HistoryLimit
 import chat.hc.core.translate.GoogleTranslate
 import chat.hc.ultra.data.REPO_URL
 import chat.hc.ultra.data.Translator
@@ -97,6 +100,11 @@ fun ThemeSheet(
     onExtraImageSourcesChanged: (List<String>) -> Unit,
     joinLeave: Boolean,
     onJoinLeaveChanged: (Boolean) -> Unit,
+    /** Lines kept per channel; always at least 1. */
+    historyLines: Int,
+    /** Days kept per channel, or null for no age limit. */
+    historyDays: Int?,
+    onHistoryChanged: (lines: Int, days: Int?) -> Unit,
     translate: Boolean,
     onTranslateChanged: (Boolean) -> Unit,
     /** One of [GoogleTranslate.LANGUAGES], or null for the phone's language. */
@@ -172,6 +180,7 @@ fun ThemeSheet(
                 checked = joinLeave,
                 onChanged = onJoinLeaveChanged,
             )
+            HistorySetting(historyLines, historyDays, onHistoryChanged)
             ToggleRow(
                 title = "Show images in the transcript",
                 // The honest cost, since that is what the choice is about: an
@@ -763,6 +772,76 @@ private fun ExtraImageSources(sources: List<String>, onChanged: (List<String>) -
                 onClick = { onChanged(ImageHosts.defaultExtra) },
                 enabled = sources != ImageHosts.defaultExtra,
             ) { Text("Reset") }
+        }
+    }
+}
+
+/**
+ * How much of each channel to keep: a number of lines, and optionally a number
+ * of days, whichever is reached first.
+ *
+ * Applied by a button rather than as you type. Lowering it throws history away
+ * for good — the server keeps none to fetch again — and typing 10000 passes
+ * through 1 on the way, which as a live setting would have kept one line.
+ */
+@Composable
+private fun HistorySetting(lines: Int, days: Int?, onChanged: (Int, Int?) -> Unit) {
+    var linesInput by remember(lines) { mutableStateOf(lines.toString()) }
+    var daysInput by remember(days) { mutableStateOf(days?.toString() ?: "") }
+    val newLines = linesInput.trim().toIntOrNull()?.takeIf { it >= 1 }
+    // Blank is "no age limit", not an error.
+    val newDays = daysInput.trim().let { if (it.isEmpty()) null else it.toIntOrNull()?.takeIf { d -> d >= 1 } }
+    val daysValid = daysInput.isBlank() || newDays != null
+    val valid = newLines != null && daysValid
+    val changed = valid && (newLines != lines || newDays != days)
+    val shrinks = changed && (newLines!! < lines || (newDays != null && (days == null || newDays < days)))
+
+    Column(Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("History kept per channel", style = MaterialTheme.typography.bodyMedium)
+        Text(
+            "In memory only, and gone when the app is closed. Whichever limit is reached " +
+                "first applies. Only the newest few hundred lines are drawn until you scroll " +
+                "up, so a long history does not slow the transcript down.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = linesInput,
+                onValueChange = { linesInput = it.filter(Char::isDigit) },
+                label = { Text("Lines") },
+                singleLine = true,
+                isError = newLines == null,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+                value = daysInput,
+                onValueChange = { daysInput = it.filter(Char::isDigit) },
+                label = { Text("Days") },
+                placeholder = { Text("No limit") },
+                singleLine = true,
+                isError = !daysValid,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (shrinks) {
+            Text(
+                "Lowering it deletes what is over the new limit, in every open channel.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = { onChanged(newLines!!, newDays) }, enabled = changed) { Text("Apply") }
+            TextButton(
+                onClick = {
+                    linesInput = HistoryLimit.DEFAULT_LINES.toString()
+                    daysInput = ""
+                },
+                enabled = linesInput != HistoryLimit.DEFAULT_LINES.toString() || daysInput.isNotEmpty(),
+            ) { Text("Default") }
         }
     }
 }

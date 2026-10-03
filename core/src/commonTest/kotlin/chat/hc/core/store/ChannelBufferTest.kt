@@ -184,6 +184,68 @@ class ChannelBufferTest {
         assertEquals(listOf("a", "b"), b.snapshot().map { it.text })
     }
 
+    // ---- history limits ----
+
+    private fun at(t: Long, text: String = "m$t") = ChatMessage(0, MessageKind.Chat, text = text, at = t)
+
+    @Test
+    fun enforceAppliesALoweredLineLimit() {
+        val b = ChannelBuffer(capacity = 10)
+        repeat(10) { b.add(at(it.toLong())) }
+
+        assertTrue(b.enforce(HistoryLimit(maxLines = 4), now = 100))
+        assertEquals(listOf("m6", "m7", "m8", "m9"), b.snapshot().map { it.text })
+        // And keeps applying it to what arrives next.
+        b.add(at(10))
+        assertEquals(4, b.size)
+    }
+
+    @Test
+    fun enforceDropsWhatIsOlderThanTheAgeLimit() {
+        val b = ChannelBuffer()
+        listOf(100L, 200L, 300L, 400L).forEach { b.add(at(it)) }
+
+        assertTrue(b.enforce(HistoryLimit(maxAgeMillis = 150), now = 450))
+        assertEquals(listOf("m300", "m400"), b.snapshot().map { it.text })
+        assertFalse(b.enforce(HistoryLimit(maxAgeMillis = 150), now = 450), "nothing more to drop")
+    }
+
+    /** Whichever limit is tighter wins. */
+    @Test
+    fun theTighterLimitWins() {
+        val b = ChannelBuffer()
+        (1L..10L).forEach { b.add(at(it * 100)) }
+
+        b.enforce(HistoryLimit(maxLines = 3, maxAgeMillis = 10_000), now = 1_000)
+        assertEquals(3, b.size)
+        b.enforce(HistoryLimit(maxLines = 100, maxAgeMillis = 150), now = 1_000)
+        assertEquals(listOf("m900", "m1000"), b.snapshot().map { it.text })
+    }
+
+    /** A frame without `time` must still have an age, or the day limit would drop it at once. */
+    @Test
+    fun aChatWithoutTimeIsAgedFromArrival() {
+        val b = ChannelBuffer()
+        b.applyChat(chat("hi"), myUserid = 1L, receivedAt = 5_000)
+
+        assertEquals(5_000, b.snapshot().single().at)
+        assertFalse(b.enforce(HistoryLimit(maxAgeMillis = 1_000), now = 5_500))
+    }
+
+    /** Lookups by id are arithmetic now; they must survive the front being trimmed. */
+    @Test
+    fun anEchoStillReconcilesAfterTheFrontIsTrimmed() {
+        val b = ChannelBuffer(capacity = 3)
+        b.add(at(1))
+        b.addPending("mine", "abc123", "me", 1L, 2)
+        b.add(at(3))
+        b.add(at(4))   // trims m1; the pending row is now at index 0
+
+        b.applyChat(chat("mine", customId = "abc123", userid = 1L, nick = "me"), myUserid = 1L)
+        assertEquals(3, b.size, "the echo duplicated instead of reconciling")
+        assertEquals(Delivery.Sent, b.snapshot().first().delivery)
+    }
+
     @Test
     fun localIdsAreUniqueAndOrdered() {
         val b = ChannelBuffer()

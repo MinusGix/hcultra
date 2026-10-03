@@ -58,18 +58,24 @@ data class ChatMessage(
  * notification tap — without losing the conversation, while still honouring
  * hack.chat's no-logs norm across app restarts.
  */
-class ChannelBuffer(private val capacity: Int = 500) {
+class ChannelBuffer(capacity: Int = HistoryLimit.DEFAULT_LINES) {
     private val messages = ArrayDeque<ChatMessage>()
     private var nextId = 1L
+    private val lock = BufferLock()
+
+    /** Most messages kept; see [enforce]. */
+    private var capacity = capacity
 
     /** customId -> localId, for `updateMessage` and for matching our own echo. */
     private val byCustomId = HashMap<String, Long>()
 
-    val size: Int get() = messages.size
+    val size: Int get() = lock.withLock { messages.size }
 
-    fun snapshot(): List<ChatMessage> = messages.toList()
+    fun snapshot(): List<ChatMessage> = lock.withLock { messages.toList() }
 
-    fun add(message: ChatMessage): ChatMessage {
+    fun add(message: ChatMessage): ChatMessage = lock.withLock { addLocked(message) }
+
+    private fun addLocked(message: ChatMessage): ChatMessage {
         val stamped = message.copy(localId = nextId++)
         messages.addLast(stamped)
         // A message still waiting for its echo keeps the mapping: customIds are
@@ -82,9 +88,24 @@ class ChannelBuffer(private val capacity: Int = 500) {
         return stamped
     }
 
+    /**
+     * Where [localId] sits, or -1 once it has been trimmed.
+     *
+     * Constant time, which is what lets history run to tens of thousands of
+     * messages: ids are handed out one apart by [add] and messages only ever
+     * leave from the front, so the deque is a contiguous run of ids and a
+     * position is a subtraction. Every per-message lookup used to be a scan.
+     */
+    private fun indexOf(localId: Long): Int {
+        val first = messages.firstOrNull()?.localId ?: return -1
+        val idx = localId - first
+        return if (idx in 0 until messages.size) idx.toInt() else -1
+    }
+
     private fun isAwaitingEcho(localId: Long?): Boolean {
         if (localId == null) return false
-        return messages.any { it.localId == localId && it.delivery == Delivery.Sending }
+        val idx = indexOf(localId)
+        return idx >= 0 && messages[idx].delivery == Delivery.Sending
     }
 
     /**
@@ -109,15 +130,18 @@ class ChannelBuffer(private val capacity: Int = 500) {
     /**
      * Applies an inbound chat. If it carries a customId we already have pending,
      * this is our own echo: reconcile rather than duplicate.
+     *
+     * [receivedAt] stands in for a frame that carries no `time`, so every
+     * message has an age that [enforce] can judge.
      */
-    fun applyChat(frame: Inbound.Chat, myUserid: Long?): ChatMessage {
+    fun applyChat(frame: Inbound.Chat, myUserid: Long?, receivedAt: Long = 0L): ChatMessage = lock.withLock {
         // Only ours can reconcile ours: customIds are six characters and unique
         // per user only, so someone else's chat carrying the same one is a
         // different message that happens to collide.
         val mine = myUserid == null || frame.userid == myUserid
         val pendingId = frame.customId?.takeIf { mine }?.let { byCustomId[it] }
         if (pendingId != null) {
-            val idx = messages.indexOfFirst { it.localId == pendingId }
+            val idx = indexOf(pendingId)
             // Accept the echo for an already-downgraded message too: a slow
             // round trip can outlive the timeout, and resolving it is far
             // better than appending a duplicate of what the user just sent.
@@ -135,10 +159,10 @@ class ChannelBuffer(private val capacity: Int = 500) {
                     level = frame.level,
                 )
                 messages[idx] = reconciled
-                return reconciled
+                return@withLock reconciled
             }
         }
-        return add(
+        addLocked(
             ChatMessage(
                 localId = 0,
                 kind = MessageKind.Chat,
@@ -149,7 +173,7 @@ class ChannelBuffer(private val capacity: Int = 500) {
                 color = frame.color,
                 flair = frame.flair,
                 level = frame.level,
-                at = frame.time ?: 0L,
+                at = frame.time ?: receivedAt,
                 customId = frame.customId,
                 serverId = frame.id,
                 isMine = myUserid != null && frame.userid == myUserid,
@@ -172,26 +196,26 @@ class ChannelBuffer(private val capacity: Int = 500) {
      * state we latched would outlive the stream it described. The text arriving
      * is the signal.
      */
-    fun applyUpdate(frame: Inbound.UpdateMessage): ChatMessage? {
-        val localId = byCustomId[frame.customId] ?: return null
-        val idx = messages.indexOfFirst { it.localId == localId }
-        if (idx < 0) return null
+    fun applyUpdate(frame: Inbound.UpdateMessage): ChatMessage? = lock.withLock {
+        val localId = byCustomId[frame.customId] ?: return@withLock null
+        val idx = indexOf(localId)
+        if (idx < 0) return@withLock null
         val current = messages[idx]
-        if (frame.userid != 0L && current.userid != 0L && frame.userid != current.userid) return null
+        if (frame.userid != 0L && current.userid != 0L && frame.userid != current.userid) return@withLock null
         val updated = when (frame.updateMode) {
             UpdateMode.Overwrite -> current.copy(text = frame.text)
             UpdateMode.Append -> current.copy(text = current.text + frame.text)
             UpdateMode.Prepend -> current.copy(text = frame.text + current.text)
             UpdateMode.Complete -> current.copy(text = current.text + frame.text)
-            UpdateMode.Unknown -> return null
+            UpdateMode.Unknown -> return@withLock null
         }
         messages[idx] = updated
-        return updated
+        updated
     }
 
-    fun markFailed(customId: String) {
-        val localId = byCustomId[customId] ?: return
-        val idx = messages.indexOfFirst { it.localId == localId }
+    fun markFailed(customId: String): Unit = lock.withLock {
+        val localId = byCustomId[customId] ?: return@withLock
+        val idx = indexOf(localId)
         if (idx >= 0) messages[idx] = messages[idx].copy(delivery = Delivery.Failed)
     }
 
@@ -201,19 +225,19 @@ class ChannelBuffer(private val capacity: Int = 500) {
      *
      * @return true if anything changed, so callers can skip a redundant publish.
      */
-    fun markUnconfirmed(customId: String): Boolean {
-        val localId = byCustomId[customId] ?: return false
-        val idx = messages.indexOfFirst { it.localId == localId }
-        if (idx < 0 || messages[idx].delivery != Delivery.Sending) return false
+    fun markUnconfirmed(customId: String): Boolean = lock.withLock {
+        val localId = byCustomId[customId] ?: return@withLock false
+        val idx = indexOf(localId)
+        if (idx < 0 || messages[idx].delivery != Delivery.Sending) return@withLock false
         messages[idx] = messages[idx].copy(delivery = Delivery.Unconfirmed)
-        return true
+        true
     }
 
     /**
      * Downgrades every still-pending message. Used when the connection drops:
      * the echoes those messages were waiting for can never arrive.
      */
-    fun markAllPendingUnconfirmed(): Boolean {
+    fun markAllPendingUnconfirmed(): Boolean = lock.withLock {
         var changed = false
         for (i in messages.indices) {
             if (messages[i].delivery == Delivery.Sending) {
@@ -221,20 +245,42 @@ class ChannelBuffer(private val capacity: Int = 500) {
                 changed = true
             }
         }
-        return changed
+        changed
     }
 
-    fun clear() {
+    fun clear(): Unit = lock.withLock {
         messages.clear()
         byCustomId.clear()
     }
 
-    private fun trim() {
-        while (messages.size > capacity) {
-            val dropped = messages.removeFirst()
-            // Only if it is still *this* message's mapping: a colliding customId
-            // may have left it pointing at a message that is still on screen.
-            dropped.customId?.let { if (byCustomId[it] == dropped.localId) byCustomId.remove(it) }
+    /**
+     * Applies [limit] as it stands now, trimming from the oldest end.
+     *
+     * Age is judged by each message's own `at`, oldest first, and stops at the
+     * first young enough to keep — messages arrive in order, so everything
+     * after it is younger still.
+     *
+     * @return true if anything was dropped, so callers can skip a redundant publish.
+     */
+    fun enforce(limit: HistoryLimit, now: Long): Boolean = lock.withLock {
+        val before = messages.size
+        capacity = limit.maxLines
+        trim()
+        limit.maxAgeMillis?.let { maxAge ->
+            val cutoff = now - maxAge
+            while (messages.isNotEmpty() && messages.first().at < cutoff) dropFirst()
         }
+        messages.size != before
+    }
+
+    private fun trim() {
+        while (messages.size > capacity) dropFirst()
+    }
+
+    private fun dropFirst() {
+        val dropped = messages.removeFirst()
+        // Only if it is still *this* message's mapping: a colliding customId
+        // may have left it pointing at a message that is still on screen.
+        dropped.customId?.let { if (byCustomId[it] == dropped.localId) byCustomId.remove(it) }
     }
 }

@@ -5,11 +5,15 @@ import chat.hc.core.store.Delivery
 import chat.hc.core.store.MessageKind
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -31,8 +35,20 @@ class TranscriptSyncTest {
     private fun List<String>.shows() = filter { it.startsWith("HC.show(") }
     private fun List<String>.evicts() = filter { it.startsWith("HC.evict(") }
 
-    /** Rough stand-in for payload weight: how much of the wire is message bodies. */
-    private fun String.upsertCount(): Int = Regex("\\\\\"localId\\\\\":").findAll(this).count()
+    /** The patch an `HC.apply` statement carries, decoded the way the page decodes it. */
+    private fun String.patch(): JsonObject {
+        val argument = substringAfter(", ").removeSuffix(");")
+        return Json.parseToJsonElement(Json.decodeFromString(String.serializer(), argument)).jsonObject
+    }
+
+    private fun String.full() = patch().getValue("full").jsonPrimitive.boolean
+    private fun String.atStart() = patch().getValue("atStart").jsonPrimitive.boolean
+    private fun String.ids(field: String) =
+        patch().getValue(field).jsonArray.map { it.jsonObject.getValue("localId").jsonPrimitive.long }
+    private fun String.dropped() = patch().getValue("drop").jsonArray.map { it.jsonPrimitive.long }
+
+    /** Every body the patch carries, whichever list it is in: the payload's weight. */
+    private fun String.bodies() = ids("prepend").size + ids("append").size + ids("update").size
 
     @Test
     fun aChannelNeverShownBeforeIsSentInFull() {
@@ -40,8 +56,8 @@ class TranscriptSyncTest {
         val calls = sync.update("alpha", transcript(3))
 
         assertEquals(1, calls.applies().size)
-        assertTrue(calls.applies()[0].contains("full\\\":true"), calls.applies()[0])
-        assertEquals(3, calls.applies()[0].upsertCount())
+        assertTrue(calls.applies()[0].full(), calls.applies()[0])
+        assertEquals(listOf(1L, 2L, 3L), calls.applies()[0].ids("append"))
         assertEquals(1, calls.shows().size)
     }
 
@@ -67,8 +83,9 @@ class TranscriptSyncTest {
         val calls = sync.update("alpha", transcript(200) + msg(201, "new"))
         val apply = calls.applies().single()
 
-        assertTrue(apply.contains("full\\\":false"), apply)
-        assertEquals(1, apply.upsertCount(), "only the arriving row should carry a body")
+        assertFalse(apply.full(), apply)
+        assertEquals(listOf(201L), apply.ids("append"), "only the arriving row should carry a body")
+        assertEquals(1, apply.bodies())
         assertEquals(emptyList(), calls.shows(), "an arriving message is not a channel switch")
     }
 
@@ -82,8 +99,8 @@ class TranscriptSyncTest {
         edited[20] = msg(21, "edited")
         val apply = sync.update("alpha", edited).applies().single()
 
-        assertEquals(1, apply.upsertCount())
-        assertTrue(apply.contains("edited"), apply)
+        assertEquals(listOf(21L), apply.ids("update"))
+        assertEquals(1, apply.bodies())
     }
 
     @Test
@@ -92,18 +109,139 @@ class TranscriptSyncTest {
         sync.update("alpha", listOf(msg(1, "hi", Delivery.Sending)))
 
         val apply = sync.update("alpha", listOf(msg(1, "hi", Delivery.Sent))).applies().single()
-        assertEquals(1, apply.upsertCount())
+        assertEquals(listOf(1L), apply.ids("update"))
     }
 
     /** Trimming at the buffer cap drops ids from the front and adds none. */
     @Test
-    fun aTrimmedFrontIsCarriedByTheOrderAlone() {
+    fun aTrimmedFrontIsADropAlone() {
         val sync = TranscriptSync()
         sync.update("alpha", transcript(5))
 
         val apply = sync.update("alpha", transcript(5).drop(1)).applies().single()
-        assertEquals(0, apply.upsertCount(), "dropping rows should not resend any body")
-        assertTrue(!apply.contains("[1,"), "id 1 should be gone from the order: $apply")
+        assertEquals(0, apply.bodies(), "dropping rows should not resend any body")
+        assertEquals(listOf(1L), apply.dropped())
+    }
+
+    /** A filter taking rows out of the middle — joins and leaves hidden — is a drop too. */
+    @Test
+    fun rowsRemovedFromTheMiddleAreDropped() {
+        val sync = TranscriptSync()
+        sync.update("alpha", transcript(5))
+
+        val apply = sync.update("alpha", transcript(5).filter { it.localId != 3L }).applies().single()
+        assertEquals(listOf(3L), apply.dropped())
+        assertEquals(0, apply.bodies())
+    }
+
+    /** And putting them back is a full redraw rather than a guess about where they go. */
+    @Test
+    fun rowsReappearingInTheMiddleRedrawTheWindow() {
+        val sync = TranscriptSync()
+        sync.update("alpha", transcript(5).filter { it.localId != 3L })
+
+        val apply = sync.update("alpha", transcript(5)).applies().single()
+        assertTrue(apply.full(), apply)
+        assertEquals(listOf(1L, 2L, 3L, 4L, 5L), apply.ids("append"))
+    }
+
+    // --- the drawn window --------------------------------------------------
+
+    /**
+     * The point of the window: a long history costs what is drawn, not what is
+     * kept. Ten thousand lines open as the newest few hundred.
+     */
+    @Test
+    fun aLongHistoryOpensAsTheNewestWindow() {
+        val sync = TranscriptSync(window = 300)
+        val apply = sync.update("alpha", transcript(10_000)).applies().single()
+
+        assertEquals((9_701L..10_000L).toList(), apply.ids("append"))
+        assertFalse(apply.atStart(), "there is older history to scroll into")
+    }
+
+    @Test
+    fun aShortHistorySaysItIsAtTheStart() {
+        val sync = TranscriptSync(window = 300)
+        assertTrue(sync.update("alpha", transcript(10)).applies().single().atStart())
+    }
+
+    /** Arrivals at the bottom grow the window until the slack runs out, then it is cut. */
+    @Test
+    fun aPinnedReaderHasTheTopCutBackOnceTheSlackIsUsed() {
+        val sync = TranscriptSync(window = 10, slack = 5)
+        sync.update("alpha", transcript(100))
+
+        // Up to window + slack rows drawn, nothing is dropped.
+        for (n in 101..105) {
+            assertEquals(emptyList(), sync.update("alpha", transcript(n)).applies().single().dropped())
+        }
+        // One past it, and the top goes back down to the window.
+        val cut = sync.update("alpha", transcript(106)).applies().single()
+        assertEquals((91L..96L).toList(), cut.dropped())
+        assertEquals(listOf(106L), cut.ids("append"))
+    }
+
+    /** A reader up in the history must not have it cut out from under them. */
+    @Test
+    fun anUnpinnedReaderKeepsTheirWindow() {
+        val sync = TranscriptSync(window = 10, slack = 5)
+        sync.update("alpha", transcript(100))
+        sync.setPinned("alpha", false)
+
+        for (n in 101..110) sync.update("alpha", transcript(n))
+        val apply = sync.update("alpha", transcript(111)).applies().single()
+        assertEquals(emptyList(), apply.dropped())
+
+        // Back at the bottom, the next redraw cuts it down.
+        sync.setPinned("alpha", true)
+        val cut = sync.update("alpha", transcript(111)).applies().single()
+        assertEquals((91L..101L).toList(), cut.dropped())
+        assertEquals(0, cut.bodies())
+    }
+
+    /** Scrolling up asks for older rows a chunk at a time, oldest first, above the rest. */
+    @Test
+    fun olderPrependsAChunk() {
+        val sync = TranscriptSync(window = 10, chunk = 4)
+        val history = transcript(20)
+        sync.update("alpha", history)
+
+        val first = sync.older("alpha", history).single()
+        assertEquals(listOf(7L, 8L, 9L, 10L), first.ids("prepend"))
+        assertFalse(first.atStart())
+
+        sync.older("alpha", history)
+        val last = sync.older("alpha", history).single()
+        assertEquals(listOf(1L, 2L), last.ids("prepend"))
+        assertTrue(last.atStart())
+
+        assertEquals(emptyList(), sync.older("alpha", history), "nothing older than the start")
+    }
+
+    /** What was prepended is part of the window: an arrival afterwards is still one row. */
+    @Test
+    fun anArrivalAfterOlderIsStillOneRow() {
+        val sync = TranscriptSync(window = 10, slack = 100, chunk = 4)
+        sync.update("alpha", transcript(20))
+        sync.older("alpha", transcript(20))
+
+        val apply = sync.update("alpha", transcript(21)).applies().single()
+        assertEquals(listOf(21L), apply.ids("append"))
+        assertEquals(emptyList(), apply.dropped())
+    }
+
+    /** A channel that piled up while hidden comes back at its latest, not all of it drawn. */
+    @Test
+    fun aFloodWhileAwayIsNotAllDrawn() {
+        val sync = TranscriptSync(window = 10, slack = 5)
+        sync.update("alpha", transcript(10))
+        sync.update("beta", transcript(1))
+        sync.setPinned("alpha", false)
+
+        val apply = sync.update("alpha", transcript(1_000)).applies().single()
+        assertEquals((991L..1_000L).toList(), apply.ids("append"))
+        assertEquals((1L..10L).toList(), apply.dropped())
     }
 
     /**
@@ -156,8 +294,8 @@ class TranscriptSyncTest {
         sync.update("c", transcript(3))
 
         val apply = sync.update("a", transcript(3)).applies().single()
-        assertTrue(apply.contains("full\\\":true"), "an evicted channel must not be patched: $apply")
-        assertEquals(3, apply.upsertCount())
+        assertTrue(apply.full(), "an evicted channel must not be patched: $apply")
+        assertEquals(3, apply.bodies())
     }
 
     /** Whatever the limit says, the page must never be told to drop what is on screen. */
@@ -197,7 +335,7 @@ class TranscriptSyncTest {
         sync.reset()
 
         val calls = sync.update("alpha", messages)
-        assertTrue(calls.applies().single().contains("full\\\":true"))
+        assertTrue(calls.applies().single().full())
         assertEquals(1, calls.shows().size, "the page has no visible channel after a reset")
     }
 
@@ -236,7 +374,7 @@ class TranscriptSyncTest {
         val argument = apply.substringAfter(", ").removeSuffix(");")
         val payload = Json.decodeFromString(String.serializer(), argument)
         val text = Json.parseToJsonElement(payload)
-            .jsonObject.getValue("upsert")
+            .jsonObject.getValue("append")
             .jsonArray[0]
             .jsonObject.getValue("text")
             .jsonPrimitive.content

@@ -79,6 +79,8 @@ private class Bridge(
     private val callbacks: RendererCallbacks,
     private val ready: () -> Unit,
     private val scrolled: (ScrollState) -> Unit,
+    /** The reader is near the top of what is drawn for this channel. Main thread. */
+    private val needOlder: (String) -> Unit,
     /** Runs a statement in the page, on the UI thread. */
     private val eval: (String) -> Unit,
 ) {
@@ -153,6 +155,12 @@ private class Bridge(
                 eval(call)
             }
         }
+    }
+
+    /** Asked once at a time; see `maybeLoadOlder` in app.js. */
+    @JavascriptInterface
+    fun onNeedOlder(channel: String) {
+        Handler(Looper.getMainLooper()).post { needOlder(channel) }
     }
 
     /** `"1:0"`, `"0:3"`: at the bottom or not, and how many arrived below. */
@@ -348,7 +356,27 @@ fun MessageWebView(
                                         .forEach { evaluateJavascript(it, null) }
                                 }
                             }
-                        }, scrolled = { scroll = it }, eval = { js ->
+                        }, scrolled = { now ->
+                            scroll = now
+                            // Reaching the bottom is what lets a window grown by
+                            // scrolling up be cut back down, so it is worth a
+                            // redraw — which is empty unless there is a cut to make.
+                            val ch = state.lastChannel
+                            if (ch != null && state.ready) {
+                                state.sync.setPinned(ch, now.atBottom)
+                                if (now.atBottom) {
+                                    state.sync.update(ch, state.lastMessages)
+                                        .forEach { evaluateJavascript(it, null) }
+                                }
+                            }
+                        }, needOlder = { ch ->
+                            // Only for what is on screen; a request from a channel
+                            // since switched away from answers nothing anyone sees.
+                            if (state.ready && ch == state.lastChannel) {
+                                state.sync.older(ch, state.lastMessages)
+                                    .forEach { evaluateJavascript(it, null) }
+                            }
+                        }, eval = { js ->
                             post { evaluateJavascript(js, null) }
                         }),
                         "HcBridge",

@@ -12,6 +12,7 @@ import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
 import chat.hc.core.session.Servers
+import chat.hc.core.store.HistoryLimit
 import chat.hc.ultra.data.ImageSources
 
 /** Reads the build-time scheme metadata shipped alongside the renderer. */
@@ -191,6 +192,23 @@ class ThemePrefs(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_JOIN_LEAVE, value).apply()
 
     /**
+     * How many lines each channel keeps. Any positive number; the renderer
+     * draws only a window of it, so a large one costs memory, not speed.
+     */
+    var historyLines: Int
+        get() = prefs.getInt(KEY_HISTORY_LINES, HistoryLimit.DEFAULT_LINES).coerceAtLeast(1)
+        set(value) = prefs.edit().putInt(KEY_HISTORY_LINES, value.coerceAtLeast(1)).apply()
+
+    /** How many days of each channel to keep, or null to keep any age up to [historyLines]. */
+    var historyDays: Int?
+        get() = prefs.getInt(KEY_HISTORY_DAYS, 0).takeIf { it > 0 }
+        set(value) = prefs.edit().putInt(KEY_HISTORY_DAYS, value?.coerceAtLeast(1) ?: 0).apply()
+
+    /** The two history settings as the service applies them. */
+    val historyLimit: HistoryLimit
+        get() = HistoryLimit(historyLines, historyDays?.let { it * HistoryLimit.DAY_MILLIS })
+
+    /**
      * How large the transcript's text is, as a multiplier on the renderer's
      * base size.
      *
@@ -211,5 +229,7 @@ class ThemePrefs(context: Context) {
         const val KEY_EXTRA_IMAGES = "extra_image_sources"
         const val KEY_JOIN_LEAVE = "join_leave"
         const val KEY_FONT_SCALE = "font_scale"
+        const val KEY_HISTORY_LINES = "history_lines"
+        const val KEY_HISTORY_DAYS = "history_days"
     }
 }

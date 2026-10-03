@@ -173,6 +173,8 @@
         scrollY: 0,
         pinned: true,                // stick to bottom unless the reader scrolls up
         unseen: 0,                   // messages that arrived below a reader scrolled up
+        atStart: true,               // the top row is the oldest there is
+        loadingSince: 0,             // when we last asked native for older rows
       };
     }
     return c;
@@ -207,6 +209,7 @@
       if (b) c.unseen = 0;
     }
     report();
+    maybeLoadOlder();
   }, { passive: true });
 
   /*
@@ -490,10 +493,12 @@
   /*
    * Bring one channel's container in line with a patch from native.
    *
-   * `order` is every id in transcript order; `upsert` carries bodies only for
-   * rows that are new or have changed. Everything else is left exactly as it
-   * is — which is the point: an arriving message touches one row, and a channel
-   * switch usually touches none.
+   * The container holds a window of the channel — the newest few hundred rows,
+   * plus whatever the reader has scrolled up into — never the whole history.
+   * A patch says what to drop, what goes above everything held (older rows the
+   * reader asked for), what goes below it (arrivals), and what changed in
+   * place. Transcript order is id order, so a row's id is all it takes to
+   * place it; no full order is sent, and nothing here walks every row.
    *
    * Native is the authority on what changed. The page deliberately keeps no
    * signature of its own: two sides guessing at the same question is how they
@@ -501,62 +506,67 @@
    */
   function applyPatch(name, patch) {
     var c = channelState(name);
-    if (patch.full) {
-      c.el.innerHTML = '';
-      c.nodes = Object.create(null);
-    }
-
     var isCurrent = name === current;
     // Only the visible container can be measured; a background one keeps the
     // flag it had, which is what puts a reader back where they were.
     var wasPinned = isCurrent ? (c.pinned || atBottom()) : c.pinned;
+    // Rows coming or going above the reader would slide what they are reading
+    // out from under them. Held by what is on screen, not by an offset: an
+    // offset is exactly what changes.
+    var anchor = isCurrent && !wasPinned && !patch.full ? captureAnchor(c) : null;
 
-    var bodies = Object.create(null);
-    var upsert = patch.upsert || [];
-    for (var i = 0; i < upsert.length; i++) {
-      bodies[String(upsert[i].localId)] = upsert[i];
+    if (patch.full) {
+      c.el.innerHTML = '';
+      c.nodes = Object.create(null);
+      if (selected && !selected.isConnected) selected = null;
     }
 
-    var order = patch.order || [];
-    var seen = Object.create(null);
-    var prev = null;
+    var drop = patch.drop || [];
+    for (var d = 0; d < drop.length; d++) {
+      var key = String(drop[d]);
+      var gone = c.nodes[key];
+      if (!gone) continue;
+      if (gone === selected) selected = null;
+      if (gone.parentNode) gone.parentNode.removeChild(gone);
+      delete c.nodes[key];
+    }
+
+    var update = patch.update || [];
+    for (var u = 0; u < update.length; u++) {
+      var row = c.nodes[String(update[u].localId)];
+      if (row) fill(row, update[u]);
+    }
+
+    var prepend = patch.prepend || [];
+    if (prepend.length) {
+      var above = document.createDocumentFragment();
+      for (var p = 0; p < prepend.length; p++) {
+        var older = build(prepend[p]);
+        c.nodes[String(prepend[p].localId)] = older;
+        above.appendChild(older);
+      }
+      c.el.insertBefore(above, c.el.firstChild);
+    }
+
+    var append = patch.append || [];
     var arrived = 0, mine = false;
-
-    for (var j = 0; j < order.length; j++) {
-      var id = String(order[j]);
-      seen[id] = true;
-      var m = bodies[id];
-      var el = c.nodes[id];
-
-      if (!el) {
-        // Native sends a body for anything we are not already holding, so this
-        // only trips if the two have drifted. Skipping beats an empty row.
-        if (!m) continue;
-        el = build(m);
-        c.nodes[id] = el;
+    if (append.length) {
+      var below = document.createDocumentFragment();
+      for (var a = 0; a < append.length; a++) {
+        var m = append[a];
+        var el = build(m);
+        c.nodes[String(m.localId)] = el;
+        below.appendChild(el);
         if (!patch.full) {
           if (isTalk(m)) arrived++;
           if (m.isMine) mine = true;
         }
-      } else if (m) {
-        fill(el, m);
       }
-
-      // Put it where `order` says. insertBefore(el, null) appends, and a node
-      // already in place is left alone rather than moved through the DOM.
-      var want = prev ? prev.nextSibling : c.el.firstChild;
-      if (el !== want) c.el.insertBefore(el, want);
-      prev = el;
+      c.el.appendChild(below);
     }
 
-    for (var key in c.nodes) {
-      if (!seen[key]) {
-        var gone = c.nodes[key];
-        if (gone === selected) selected = null;
-        if (gone.parentNode) gone.parentNode.removeChild(gone);
-        delete c.nodes[key];
-      }
-    }
+    c.atStart = !!patch.atStart;
+    if (patch.full || prepend.length || c.atStart) c.loadingSince = 0;
 
     // Sending takes you to what you sent: a message you cannot see arrive
     // reads as one that did not go. Only a new row counts — our own echo
@@ -568,8 +578,56 @@
 
     if (isCurrent) {
       if (wasPinned) scrollToBottom();
+      else restoreAnchor(anchor);
       report();
+      maybeLoadOlder();
     }
+  }
+
+  /*
+   * The row at the top of the viewport and where it sits, so it can be put
+   * back there after rows are added or removed above it. Binary search over
+   * the rows' boxes: the container can hold thousands once a reader has
+   * scrolled far back, and they are in visual order.
+   */
+  function captureAnchor(c) {
+    var kids = c.el.children;
+    var lo = 0, hi = kids.length - 1;
+    if (hi < 0) return null;
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1;
+      if (kids[mid].getBoundingClientRect().bottom <= 0) lo = mid + 1;
+      else hi = mid;
+    }
+    return { el: kids[lo], top: kids[lo].getBoundingClientRect().top };
+  }
+
+  /*
+   * Moves the page so the anchor is where it was. Measured rather than
+   * computed, so it is a no-op if the browser's own scroll anchoring already
+   * did the job — and does it when that does not apply, as at the very top,
+   * which is exactly where older rows arrive.
+   */
+  function restoreAnchor(anchor) {
+    if (!anchor || !anchor.el.isConnected) return;
+    var shift = anchor.el.getBoundingClientRect().top - anchor.top;
+    if (shift) window.scrollBy(0, shift);
+  }
+
+  /*
+   * Asks native for older rows once the reader is within two screens of the
+   * top of what is drawn. One request at a time; the answer clears it. A
+   * request that gets no answer — native had nothing to add — may be retried
+   * after a second, which also covers a reload losing the reply.
+   */
+  function maybeLoadOlder() {
+    var c = channels[current];
+    if (!c || c.atStart || c.el.hidden) return;
+    if (window.scrollY > window.innerHeight * 2) return;
+    var now = Date.now();
+    if (c.loadingSince && now - c.loadingSince < 1000) return;
+    c.loadingSince = now;
+    post('onNeedOlder', current);
   }
 
   document.addEventListener('click', function (e) {
@@ -667,6 +725,7 @@
       else window.scrollTo(0, next.scrollY);
       // A channel that was left scrolled up brings its count with it.
       report();
+      maybeLoadOlder();
     },
 
     /** Drop a channel's DOM. Native evicts to keep retained transcripts bounded. */

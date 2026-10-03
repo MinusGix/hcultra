@@ -41,11 +41,23 @@ internal data class WireMessage(
  * [full] means the page must clear this channel before applying: it is how a
  * channel it has never held, or has dropped, gets rebuilt from nothing.
  */
+/**
+ * One channel's change, as [TranscriptSync] works it out. Rows are placed by id
+ * alone — transcript order is id order — so no full order is ever sent.
+ */
 @Serializable
 internal data class WirePatch(
+    /** Discard the container first; [append] is then everything. */
     val full: Boolean,
-    val order: List<Long>,
-    val upsert: List<WireMessage>,
+    val drop: List<Long>,
+    /** Older rows, oldest first, to go above everything held. */
+    val prepend: List<WireMessage>,
+    /** Newer rows, oldest first, to go below everything held. */
+    val append: List<WireMessage>,
+    /** Rows already held whose content changed. */
+    val update: List<WireMessage>,
+    /** The top row is the oldest there is: the page stops asking for more. */
+    val atStart: Boolean,
 )
 
 /** What [RendererBridge.translationCall] tells the page about one message. */
@@ -91,12 +103,22 @@ object RendererBridge {
     fun applyCall(
         channel: String,
         full: Boolean,
-        order: List<Long>,
-        upsert: List<ChatMessage>,
+        drop: List<Long>,
+        prepend: List<ChatMessage>,
+        append: List<ChatMessage>,
+        update: List<ChatMessage>,
+        atStart: Boolean,
     ): String {
         val patch = json.encodeToString(
             WirePatch.serializer(),
-            WirePatch(full = full, order = order, upsert = upsert.map(::wire)),
+            WirePatch(
+                full = full,
+                drop = drop,
+                prepend = prepend.map(::wire),
+                append = append.map(::wire),
+                update = update.map(::wire),
+                atStart = atStart,
+            ),
         )
         return "HC.apply(${quote(channel)}, ${quote(patch)});"
     }

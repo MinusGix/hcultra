@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<!--
+  Renderer benchmark: drives the real transcript page (assets/renderer) the way
+  native does, with a long history, and times it.
+
+  Serve the repository root and open this file:
+
+      python3 -m http.server 18931 --bind 127.0.0.1
+      http://127.0.0.1:18931/tools/renderer-bench.html
+
+  Desktop Chrome is several times faster than a phone's WebView, so read the
+  numbers relative to each other — and set DevTools' CPU throttling to 4–6× for
+  something closer to a mid-range phone.
+
+  The stand-in for native mirrors TranscriptSync's window: the newest WINDOW
+  rows, cut back by SLACK when the reader is at the bottom, CHUNK more on each
+  onNeedOlder. It is a model of that class, not a copy — the Kotlin tests are
+  what pin its behaviour down.
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Renderer bench</title>
+  <style>
+    body { font: 13px/1.4 system-ui, sans-serif; margin: 0; display: flex; height: 100vh; }
+    #side { width: 340px; padding: 12px; overflow: auto; border-right: 1px solid #ccc; }
+    iframe { width: 375px; height: 100%; border: 0; }
+    pre { white-space: pre-wrap; font-size: 12px; }
+    button { margin: 2px 0; }
+  </style>
+</head>
+<body>
+  <div id="side">
+    <div>History: <input id="n" value="10000" size="7"></div>
+    <button id="run">Run</button>
+    <pre id="out"></pre>
+  </div>
+  <iframe id="page" src="../app-android/src/main/assets/renderer/index.html"></iframe>
+<script>
+var WINDOW = 300, SLACK = 100, CHUNK = 200;
+
+function msg(i) {
+  var r = i % 100, text = 'message number ' + i + ' with an ordinary amount of text in it, like most chat', kind = 'Chat';
+  if (r < 5) text = 'look at this:\n```js\nfunction f(x) { return x * ' + i + '; }\n```';
+  else if (r < 8) text = 'math $\\sum_{k=1}^{' + i + '} k^2 = \\frac{n(n+1)(2n+1)}{6}$ ok';
+  else if (r < 15) { kind = r < 11 ? 'Join' : 'Leave'; text = ''; }
+  else if (r < 20) text = '**bold** and _it_ and a link https://example.com/' + i + ' and ?channel';
+  return { localId: i, kind: kind, nick: 'user' + (i % 40), text: text, trip: i % 3 ? 'abc123' : null,
+           color: null, flair: null, level: 0, delivery: 'Sent', isMine: false };
+}
+
+/** Stand-in for native: one channel's history and the window drawn of it. */
+function Native(win, n) {
+  this.win = win;
+  this.all = [];
+  for (var i = 1; i <= n; i++) this.all.push(msg(i));
+  this.floor = 0;      // index of the top drawn row
+  this.pinned = true;
+  var self = this;
+  win.HcBridge = {
+    onNeedOlder: function () { self.requests++; setTimeout(function () { self.older(); }, 0); },
+    onScrollState: function (s) { self.pinned = s.charAt(0) === '1'; }
+  };
+  this.requests = 0;
+}
+Native.prototype.call = function (patch) {
+  var t0 = performance.now();
+  this.win.HC.apply('bench', JSON.stringify(patch));
+  return performance.now() - t0;
+};
+Native.prototype.open = function () {
+  this.floor = Math.max(0, this.all.length - WINDOW);
+  var t = this.call({ full: true, drop: [], prepend: [], append: this.all.slice(this.floor),
+                      update: [], atStart: this.floor === 0 });
+  this.win.HC.show('bench');
+  return t;
+};
+Native.prototype.arrive = function () {
+  var m = msg(this.all.length + 1);
+  this.all.push(m);
+  var drop = [];
+  if (this.pinned && this.all.length - this.floor > WINDOW + SLACK) {
+    var to = this.all.length - WINDOW;
+    for (var i = this.floor; i < to; i++) drop.push(this.all[i].localId);
+    this.floor = to;
+  }
+  return this.call({ full: false, drop: drop, prepend: [], append: [m], update: [], atStart: this.floor === 0 });
+};
+Native.prototype.older = function () {
+  if (this.floor === 0) return 0;
+  var from = Math.max(0, this.floor - CHUNK);
+  var rows = this.all.slice(from, this.floor);
+  this.floor = from;
+  return this.call({ full: false, drop: [], prepend: rows, append: [], update: [], atStart: from === 0 });
+};
+
+function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function median(a) { a = a.slice().sort(function (x, y) { return x - y; }); return a[a.length >> 1]; }
+
+async function run() {
+  var out = document.getElementById('out');
+  var n = parseInt(document.getElementById('n').value, 10) || 10000;
+  var frame = document.getElementById('page');
+  frame.contentWindow.location.reload();
+  await new Promise(function (r) { frame.onload = r; });
+  var win = frame.contentWindow, doc = win.document;
+  var nat = new Native(win, n);
+  var res = { history: n };
+
+  res.openMs = +nat.open().toFixed(1);
+  await wait(100);
+
+  // Arrivals at the bottom, through several cut-backs.
+  var t = [];
+  for (var k = 0; k < 250; k++) { t.push(nat.arrive()); if (k % 10 === 0) await wait(0); }
+  res.arriveMedianMs = +median(t).toFixed(2);
+  res.arriveMaxMs = +Math.max.apply(null, t).toFixed(2);
+  res.rowsDrawnAtBottom = doc.querySelectorAll('.channel > [data-id]').length;
+
+  // Scroll to the top of what is drawn and let the page ask for more.
+  // The row on screen must not move while older rows land above it.
+  // Scroll events arrive on animation frames, which a backgrounded tab does
+  // not run; dispatching one makes the run independent of that.
+  win.scrollTo(0, 1);
+  win.dispatchEvent(new win.Event('scroll'));
+  await wait(50);
+  var anchor = doc.elementFromPoint(100, 100);
+  var row = anchor && anchor.closest('[data-id]');
+  var before = row && row.getBoundingClientRect().top;
+  await wait(300);
+  res.olderRequests = nat.requests;
+  res.anchorShiftPx = row ? Math.round(row.getBoundingClientRect().top - before) : 'no row';
+  res.rowsDrawnAfterScrollUp = doc.querySelectorAll('.channel > [data-id]').length;
+
+  // Back to the bottom: the next arrival cuts the window down again.
+  win.HC.scrollToBottom();
+  win.dispatchEvent(new win.Event('scroll'));
+  await wait(50);
+  nat.arrive();
+  res.rowsDrawnBackAtBottom = doc.querySelectorAll('.channel > [data-id]').length;
+  res.domNodes = doc.getElementsByTagName('*').length;
+
+  out.textContent = JSON.stringify(res, null, 2);
+  window.lastResult = res;
+  return res;
+}
+document.getElementById('run').onclick = run;
+</script>
+</body>
+</html>

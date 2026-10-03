@@ -198,6 +198,8 @@ class MainActivity : ComponentActivity() {
             var extraImageSources by remember { mutableStateOf(themePrefs.extraImageSources) }
             var fontScale by remember { mutableFloatStateOf(themePrefs.fontScale) }
             var joinLeave by remember { mutableStateOf(themePrefs.joinLeave) }
+            var historyLines by remember { mutableStateOf(themePrefs.historyLines) }
+            var historyDays by remember { mutableStateOf(themePrefs.historyDays) }
             var notifyMentions by remember { mutableStateOf(notifyPrefs.mentions) }
             var notifyWhispers by remember { mutableStateOf(notifyPrefs.whispers) }
             var notifyInvites by remember { mutableStateOf(notifyPrefs.invites) }
@@ -300,6 +302,15 @@ class MainActivity : ComponentActivity() {
                                 // this only decides what the transcript shows of
                                 // what is already buffered.
                                 themePrefs.joinLeave = it
+                            },
+                            historyLines = historyLines,
+                            historyDays = historyDays,
+                            onHistoryChanged = { lines, days ->
+                                themePrefs.historyLines = lines
+                                themePrefs.historyDays = days
+                                historyLines = themePrefs.historyLines
+                                historyDays = themePrefs.historyDays
+                                startEnforceHistory()
                             },
                             translate = translate,
                             onTranslateChanged = {
@@ -496,6 +507,16 @@ class MainActivity : ComponentActivity() {
                 putExtra(HcService.EXTRA_USERID, target.userid)
             },
         )
+    }
+
+    /**
+     * The service reads the limit itself; this only asks it to apply it now.
+     * Through the binding rather than an intent: an intent would start the
+     * service, and its notification, with nothing open to apply it to.
+     */
+    private fun startEnforceHistory() {
+        val svc = service ?: return
+        lifecycleScope.launch { svc.sessions.enforceHistory() }
     }
 
     private fun startAnswer(channel: String, text: String) {
