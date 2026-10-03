@@ -82,8 +82,32 @@ sealed interface SessionState {
     data object Handshaking : SessionState
     data class Live(val restored: Boolean) : SessionState
     data class Reconnecting(val attempt: Int, val delayMillis: Long) : SessionState
+    /**
+     * The join is held until the user answers [challenge]; see
+     * [ChannelSession.answer]. The socket stays open the whole time, so this can
+     * last as long as the user takes.
+     *
+     * [serial] tells one challenge from the next. Two wrong passwords in a row
+     * are otherwise equal values, and a StateFlow drops an equal value — the UI
+     * would never see that its answer was spent and a new one is wanted.
+     */
+    data class Challenged(val challenge: Challenge, val serial: Int) : SessionState
     /** Terminal: retrying cannot help (e.g. nick rejected, channel locked). */
     data class Failed(val reason: String) : SessionState
+}
+
+/**
+ * Something the server wants answered before it lets us into a channel.
+ *
+ * [retry] is true when the previous answer was wrong. The server spends a
+ * challenge on any answer, right or wrong, so a retry is a fresh challenge from
+ * a fresh `join` — for a captcha, different art.
+ */
+sealed interface Challenge {
+    val retry: Boolean
+
+    data class Captcha(val art: String, override val retry: Boolean = false) : Challenge
+    data class Password(override val retry: Boolean = false) : Challenge
 }
 
 /** Why a connection is being replaced. Drives make-before-break vs cold restore. */

@@ -57,6 +57,8 @@ object FrameCodec {
                 "invite" -> reader.decodeFromJsonElement(Inbound.Invite.serializer(), root)
                 "info" -> reader.decodeFromJsonElement(Inbound.Info.serializer(), root)
                 "warn" -> reader.decodeFromJsonElement(Inbound.Warn.serializer(), root)
+                "captcha" -> reader.decodeFromJsonElement(Inbound.Captcha.serializer(), root)
+                "passwordreq" -> reader.decodeFromJsonElement(Inbound.PasswordReq.serializer(), root)
                 else -> Inbound.Unknown(cmd, root, timeOf(root))
             }
         }.getOrElse {
@@ -103,8 +105,34 @@ object ErrorId {
      */
     const val INTERNAL_ERROR = 14
 
-    /** Join.ALREADY_JOINED: "Joining more than one channel is not currently supported". */
-    const val JOIN_ALREADY_JOINED = 33
+    /** Captcha.NO_REJOIN: a token restore refused because the channel has a captcha. */
+    const val CAPTCHA_NO_REJOIN = 22
+
+    /** Captcha.BAD_CAPTCHA. The challenge is spent; a fresh `join` gets a new one. */
+    const val BAD_CAPTCHA = 23
+
+    /**
+     * The Join block. Renumbered in the 2026-10 server update: 33 used to be
+     * "Joining more than one channel is not currently supported" and is now
+     * NAME_TAKEN.
+     */
+    const val JOIN_INVALID_NICK = 31
+    const val JOIN_ALREADY_JOINED = 32
+    const val JOIN_NAME_TAKEN = 33
+    const val JOIN_CHANNEL_LOCKED = 34
+    const val JOIN_LEGACY_RESTRICT = 35
+
+    /** LockRoom.NO_REJOIN: a token restore refused because the channel is locked. */
+    const val LOCKROOM_NO_REJOIN = 204
+
+    /**
+     * LockRoom.INVALID_PASSWORD — what a wrong channel password gets. Like
+     * [BAD_CAPTCHA] it spends the challenge.
+     */
+    const val INVALID_PASSWORD = 205
+
+    /** Password.NO_AUTO_JOIN: a token restore refused because the channel has a password. */
+    const val PASSWORD_NO_REJOIN = 221
 
     /** Info.Core.MOTD, delivered on every join. Observed as 1304 on live. */
     const val MOTD = 1304

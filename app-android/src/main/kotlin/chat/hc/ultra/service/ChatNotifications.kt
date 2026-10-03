@@ -12,6 +12,7 @@ import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import chat.hc.core.session.Alert
 import chat.hc.core.session.ChannelUi
+import chat.hc.core.session.Challenge
 import chat.hc.core.session.SessionState
 import chat.hc.core.store.MessageKind
 import chat.hc.ultra.MainActivity
@@ -99,9 +100,18 @@ class ChatNotifications(private val context: Context) {
         val connected = channels.values.count { it.state is SessionState.Live }
         val unread = channels.values.sumOf { it.unread }
         val reconnecting = channels.values.any { it.state is SessionState.Reconnecting }
+        // A reconnect into a protected channel is challenged again, and that
+        // can happen with the app in the background. Nothing moves until the
+        // user answers, so the shade is where they have to hear about it.
+        val challenged = channels.values.firstOrNull { it.state is SessionState.Challenged }
 
         val title = when {
             channels.isEmpty() -> "Not connected"
+            challenged != null -> "?${challenged.channel} is waiting for " +
+                when ((challenged.state as SessionState.Challenged).challenge) {
+                    is Challenge.Captcha -> "a captcha"
+                    is Challenge.Password -> "its password"
+                }
             reconnecting -> "Reconnecting…"
             else -> "$connected channel${if (connected == 1) "" else "s"} connected"
         }

@@ -174,9 +174,38 @@ machine) behind one manager. The token format already carries a `channels`
 array and `session.js` restores all of them via `restoreJoin`, so when upstream
 finishes multichannel we collapse N sockets into 1 without the UI noticing.
 
+**Revisit (2026-10 server update, unverified on live):** the published
+`join.js` now refuses a second channel only for v1 sockets
+(`socket.hcProtocol === 1`, `Join.LEGACY_RESTRICT` = 35), id 33 has been
+renumbered to `NAME_TAKEN`, and `hackchat-engine` keeps a channel map on one
+socket. Multichannel on v2 may now work. Probe it on live before changing the
+one-socket-per-channel design.
+
+## 8a. Captcha and password challenges (2026-10 server update, from source)
+
+Both hold the `join` and send a challenge instead of `onlineSet`:
+`{cmd:'captcha', text:<ascii art>, channel}` or `{cmd:'passwordreq', channel}`.
+The answer is an ordinary `chat {channel, text}`. A chat hook (priority 5 for
+captcha, 6 for password) intercepts it before it can be broadcast, puts the
+channel on the socket's whitelist, and re-runs the join itself. Captcha comes
+first, so a channel with both asks twice.
+
+A wrong answer gets `warn 23` (captcha) or `warn 205` (password), costs
+`frisk 7`, and **spends the challenge**. A new `join` is the only way to get
+another.
+
+A token restore into a protected channel is refused (`warn 22` captcha, `221`
+password, `204` lock). `restoreJoin` runs synchronously **before** the
+`session` reply, so the refused channel is simply missing from
+`session.channels`. The same ordering means a successful restore's `onlineSet`
+also arrives before the `session` reply. Cold-joining on the same socket is how
+to get the challenge. The whitelist lives on the socket, so every reconnect is
+challenged again.
+
 ## 9. Untested / open
 
 - `changenick` — hit a per-socket "changing nicknames too fast" cooldown on both
   attempts; its dialect difference is unverified.
-- Captcha flow (`enablecaptcha`), `updateMessage` streaming shapes, `bomb`,
+- Captcha/password flows against live (§8a is from source only; needs a mod to
+  enable them), `updateMessage` streaming shapes, `bomb`,
   `uwuify`, and the wallet commands.

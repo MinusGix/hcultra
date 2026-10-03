@@ -79,7 +79,8 @@ class FrameCodecTest {
             """{"cmd":"warn","text":"Joining more than one channel is not currently supported","id":33,"channel":false,"time":1785833243910}"""
         )
         assertIs<Inbound.Warn>(f)
-        assertEquals(ErrorId.JOIN_ALREADY_JOINED, f.id)
+        // Recorded before the 2026-10 renumbering; 33 is NAME_TAKEN now.
+        assertEquals(33, f.id)
     }
 
     @Test

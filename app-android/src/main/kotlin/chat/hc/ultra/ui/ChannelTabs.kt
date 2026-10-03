@@ -215,6 +215,8 @@ private fun StatusDot(state: SessionState, selected: Boolean) {
         is SessionState.Live -> if (selected) colors.onPrimary else colors.primary
         is SessionState.Failed -> colors.error
         is SessionState.Reconnecting -> colors.error.copy(alpha = 0.7f)
+        // Waiting on the user, not the network — so not an error colour.
+        is SessionState.Challenged -> colors.tertiary
         else -> colors.onSurfaceVariant.copy(alpha = 0.5f)
     }
     Box(Modifier.size(7.dp).clip(CircleShape).background(color))

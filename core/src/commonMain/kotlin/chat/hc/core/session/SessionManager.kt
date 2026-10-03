@@ -307,6 +307,15 @@ class SessionManager(
     }
 
     /**
+     * Answers the captcha or password a channel is holding its join for — see
+     * [SessionState.Challenged]. Not a chat: nothing is buffered or echoed, and
+     * the server never broadcasts it.
+     */
+    fun answerChallenge(channel: String, text: String) {
+        sessions[channel]?.answer(text)
+    }
+
+    /**
      * A message can be written to the socket and still never come back: the
      * connection may drop, or the server may discard it without replying (an
      * oversized customId or a rate-limit penalty both do exactly that). Since

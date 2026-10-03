@@ -13,6 +13,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -50,6 +52,10 @@ import kotlinx.coroutines.withTimeout
  *     our nick. So the token is looked up by [credentials] as well as channel
  *     ([TokenStore]): asking to join as someone else must not be answered by
  *     silently becoming who we were here last time.
+ *  5. A channel with a **captcha or password holds the join** and sends a
+ *     challenge instead of `onlineSet`; the answer is a `chat`, and the server
+ *     re-runs the join itself. A token restore into such a channel is refused
+ *     outright, so every reconnect cold-joins and is challenged again.
  */
 class ChannelSession(
     val channel: String,
@@ -81,6 +87,18 @@ class ChannelSession(
     private var stopped = false
     /** Set when the next resume is expected to be invisible to peers. */
     private var expectSilentResume = false
+
+    /** What the user typed for the current [SessionState.Challenged]. */
+    private val answers = Channel<String>(Channel.CONFLATED)
+    private var challengeSerial = 0
+
+    /**
+     * The channel password that last got us in. A token restore is refused for
+     * a password-protected channel, so without this every dropped connection
+     * would stop and ask again for something we already know. Memory only, and
+     * forgotten the moment the server rejects it.
+     */
+    private var channelPassword: String? = null
 
     fun start(scope: CoroutineScope) {
         if (supervisor != null) return
@@ -128,6 +146,11 @@ class ChannelSession(
     suspend fun sendChat(text: String, customId: String? = null) =
         send(Outbound.Chat(channel, text, customId))
 
+    /** Answers the challenge in [SessionState.Challenged]; ignored at any other time. */
+    fun answer(text: String) {
+        answers.trySend(text)
+    }
+
     /**
      * Proactively replace the connection while the old one still works, so
      * peers see only `updateUser {online:true}` instead of a leave/join pair.
@@ -144,7 +167,15 @@ class ChannelSession(
         // Bring the replacement fully up *before* retiring the old socket:
         // disconnect.js suppresses onlineRemove only while a duplicate userid
         // is still present in the channel.
-        val fresh = connectAndHandshake(scope, tokenStore.load(url, channel, credentials))
+        // Not interactive: the old socket is still serving the channel, and
+        // stopping to ask the user a question would leave the tab showing a
+        // prompt for a channel that is working fine. Keep the old one instead.
+        val fresh = try {
+            connectAndHandshake(scope, tokenStore.load(url, channel, credentials), interactive = false)
+        } catch (_: ChallengeRequiredException) {
+            expectSilentResume = false
+            return
+        }
         current = fresh.connection
         old.close()
         emit(SessionEvent.Resumed(channel, fresh.restored, silent = true))
@@ -201,45 +232,53 @@ class ChannelSession(
         val deferred: List<Inbound>,
     )
 
-    private suspend fun connectAndHandshake(scope: CoroutineScope, token: String?): LiveConnection {
+    private suspend fun connectAndHandshake(
+        scope: CoroutineScope,
+        token: String?,
+        /** False when a challenge should fail the handshake instead of waiting on the user. */
+        interactive: Boolean = true,
+    ): LiveConnection {
         val deferred = mutableListOf<Inbound>()
+        var conn: Connection? = null
         try {
             _state.value = SessionState.Handshaking
-            val conn = transport.open(url)
-            val frames = conn.incoming.map(FrameCodec::decode).produceIn(scope)
+            val opened = transport.open(url)
+            conn = opened
+            val frames = opened.incoming.map(FrameCodec::decode).produceIn(scope)
 
             // Frame 1, always: declares protocol v2 whether or not we hold a token.
             governor.spend(RateGovernor.Cost.SESSION)
-            conn.send(FrameCodec.encode(Outbound.Session(token)))
+            opened.send(FrameCodec.encode(Outbound.Session(token)))
 
             val session = awaitFrame(frames, "session reply", deferred) {
                 it is Inbound.Session
             } as Inbound.Session
             if (session.token.isNotEmpty()) tokenStore.save(url, channel, credentials, session.token)
 
-            if (session.restored) {
-                // restoreJoin replies with a fresh onlineSet for the restored channel.
-                runCatching {
-                    awaitFrame(frames, "restored onlineSet", deferred) { it is Inbound.OnlineSet }
-                }.onSuccess {
-                    // Dispatched immediately, not deferred: the roster and our
-                    // own userid have to be current before any held-back chat
-                    // is replayed through it.
-                    dispatch(it)
-                }
-                return LiveConnection(conn, frames, restored = true, deferred = deferred.toList())
+            // session.js restores each channel *before* it replies, so `channels`
+            // is the server's verdict: a channel missing from it was refused —
+            // captcha, password, lock or a nick collision — and the warn saying
+            // so is already among the deferred frames, where it will explain
+            // what happens next in the transcript. A cold join on this same
+            // socket is how to get the challenge.
+            if (session.restored && channel in session.channels) {
+                // Usually already here for the same reason; waited for only in
+                // case a server ever replies first.
+                val set = deferred.firstOrNull { it is Inbound.OnlineSet }?.also { deferred.remove(it) }
+                    ?: runCatching {
+                        awaitFrame(frames, "restored onlineSet", deferred) { it is Inbound.OnlineSet }
+                    }.getOrNull()
+                // Dispatched immediately, not deferred: the roster and our own
+                // userid have to be current before any held-back chat is
+                // replayed through it.
+                set?.let { dispatch(it) }
+                return LiveConnection(opened, frames, restored = true, deferred = deferred.toList())
             }
 
             governor.spend(RateGovernor.Cost.JOIN)
-            conn.send(FrameCodec.encode(Outbound.Join(channel, credentials.nick, credentials.pass)))
+            opened.send(FrameCodec.encode(Outbound.Join(channel, credentials.nick, credentials.pass)))
 
-            val joined = awaitFrame(frames, "onlineSet", deferred) {
-                it is Inbound.OnlineSet || (it is Inbound.Warn && it.isJoinFailure())
-            }
-            if (joined is Inbound.Warn) {
-                throw FatalSessionException("join refused (id ${joined.id}): ${joined.text}")
-            }
-            dispatch(joined)
+            dispatch(awaitAdmission(opened, frames, deferred, interactive))
 
             // The token trails onlineSet and the MOTD. Missing it is not fatal —
             // we simply lose silent-resume until the next token arrives.
@@ -254,16 +293,136 @@ class ChannelSession(
                 // Leave the old token in place; a later frame may still carry one.
             }
 
-            return LiveConnection(conn, frames, restored = false, deferred = deferred.toList())
+            return LiveConnection(opened, frames, restored = false, deferred = deferred.toList())
         } catch (c: CancellationException) {
+            conn?.close()
             throw c
         } catch (e: Throwable) {
+            conn?.close()
             // The handshake failed, so no resume notice will ever be emitted and
             // there is no seam left to order against. Deliver what we collected
             // rather than losing it — a join refusal in particular is usually
             // preceded by the info frames explaining why.
             deferred.forEach { dispatch(it) }
             throw e
+        }
+    }
+
+    /**
+     * Waits out a sent `join` until the server lets us in, answering whatever it
+     * asks on the way. Returns the `onlineSet`.
+     *
+     * Challenges can chain — captcha is checked before password (hook priority
+     * 5 vs 6), so a channel with both asks twice. A wrong answer spends the
+     * challenge without issuing another, so the join is re-sent to get a fresh
+     * one rather than leaving the user typing into nothing.
+     */
+    private suspend fun awaitAdmission(
+        conn: Connection,
+        frames: ReceiveChannel<Inbound>,
+        deferred: MutableList<Inbound>,
+        interactive: Boolean,
+    ): Inbound.OnlineSet {
+        var retry = false
+        // The remembered password gets one try per join; if it is refused the
+        // channel's password changed, and only the user can supply the new one.
+        var triedRemembered = false
+        // Whether the answer in flight came from memory rather than the user.
+        var answeredForUser = false
+        var offeredPassword: String? = null
+
+        while (true) {
+            val reply = awaitFrame(frames, "onlineSet", deferred) {
+                it is Inbound.OnlineSet || it is Inbound.Captcha || it is Inbound.PasswordReq ||
+                    (it is Inbound.Warn && (it.isJoinFailure() || it.isWrongAnswer()))
+            }
+            when (reply) {
+                is Inbound.OnlineSet -> {
+                    offeredPassword?.let { channelPassword = it }
+                    return reply
+                }
+
+                is Inbound.Warn -> {
+                    if (!reply.isWrongAnswer()) {
+                        throw FatalSessionException("join refused (id ${reply.id}): ${reply.text}")
+                    }
+                    // Mirrors the server's frisk(socket, 7) for a wrong answer.
+                    governor.penalize(WRONG_ANSWER_COST)
+                    if (reply.id == ErrorId.INVALID_PASSWORD) channelPassword = null
+                    // A refused remembered password is not the user's mistake:
+                    // they have not been asked anything yet.
+                    retry = !answeredForUser
+                    answeredForUser = false
+                    offeredPassword = null
+                    governor.spend(RateGovernor.Cost.JOIN)
+                    conn.send(FrameCodec.encode(Outbound.Join(channel, credentials.nick, credentials.pass)))
+                }
+
+                is Inbound.Captcha -> {
+                    val answer = awaitAnswer(frames, deferred, Challenge.Captcha(reply.text, retry), interactive)
+                    retry = false
+                    answeredForUser = false
+                    sendAnswer(conn, answer)
+                }
+
+                is Inbound.PasswordReq -> {
+                    val remembered = channelPassword
+                    answeredForUser = remembered != null && !triedRemembered
+                    val answer = if (answeredForUser) {
+                        triedRemembered = true
+                        remembered!!
+                    } else {
+                        awaitAnswer(frames, deferred, Challenge.Password(retry), interactive)
+                    }
+                    retry = false
+                    offeredPassword = answer
+                    sendAnswer(conn, answer)
+                }
+
+                else -> error("unreachable: $reply")
+            }
+        }
+    }
+
+    private suspend fun sendAnswer(conn: Connection, text: String) {
+        governor.spend(RateGovernor.Cost.chat(text))
+        conn.send(FrameCodec.encode(Outbound.Chat(channel, text)))
+    }
+
+    /**
+     * Shows [challenge] and suspends until the user answers it.
+     *
+     * Deliberately outside the handshake timeout — a person reading ASCII art
+     * on a phone takes longer than any timeout that also catches a dead socket.
+     * The socket is watched instead: if it closes while we wait, that ends the
+     * wait the same way any other handshake failure would.
+     */
+    private suspend fun awaitAnswer(
+        frames: ReceiveChannel<Inbound>,
+        deferred: MutableList<Inbound>,
+        challenge: Challenge,
+        interactive: Boolean,
+    ): String {
+        if (!interactive) throw ChallengeRequiredException()
+        // Anything typed before this challenge was shown answers an older one.
+        while (answers.tryReceive().isSuccess) Unit
+        _state.value = SessionState.Challenged(challenge, ++challengeSerial)
+        while (true) {
+            val answer = select<String?> {
+                answers.onReceive { it }
+                frames.onReceiveCatching { result ->
+                    val frame = result.getOrNull()
+                        ?: throw ConnectionClosedException("$channel: closed while awaiting an answer")
+                    deferred += frame
+                    null
+                }
+            }
+            // Only on this path: a failure leaves the state to supervise(), and
+            // a stop() sets Idle — a reset in a finally could land after it.
+            if (answer != null) {
+                _state.value = SessionState.Handshaking
+                return answer
+            }
         }
     }
 
@@ -336,6 +495,8 @@ class ChannelSession(
 
             is Inbound.Session ->
                 if (frame.token.isNotEmpty()) tokenStore.save(url, channel, credentials, frame.token)
+            // Only meaningful mid-join, where awaitAdmission consumes them.
+            is Inbound.Captcha, is Inbound.PasswordReq -> Unit
             is Inbound.Unknown -> emit(SessionEvent.UnknownFrame(channel, frame))
         }
     }
@@ -352,10 +513,23 @@ class ChannelSession(
     }
 }
 
+/**
+ * The Join block (31–35) by id. "may not join" carries a canJoinChannel reason
+ * code from the Channel block instead, so it is matched on text.
+ */
 private fun Inbound.Warn.isJoinFailure(): Boolean =
-    id == ErrorId.JOIN_ALREADY_JOINED || text.contains("may not join") || text.contains("Nickname")
+    id in ErrorId.JOIN_INVALID_NICK..ErrorId.JOIN_LEGACY_RESTRICT || text.contains("may not join")
+
+private fun Inbound.Warn.isWrongAnswer(): Boolean =
+    id == ErrorId.BAD_CAPTCHA || id == ErrorId.INVALID_PASSWORD
+
+/** What `frisk(socket, 7)` charges for a wrong captcha or password. */
+private const val WRONG_ANSWER_COST = 7.0
 
 class FatalSessionException(message: String) : Exception(message)
+
+/** A non-interactive handshake was asked a question only the user can answer. */
+private class ChallengeRequiredException : Exception("join requires a captcha or password")
 
 /** The frame would be silently discarded by the server; refused client-side. */
 class InvalidFrameException(message: String) : Exception(message)

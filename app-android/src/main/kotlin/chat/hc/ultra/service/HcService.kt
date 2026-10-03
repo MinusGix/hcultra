@@ -174,6 +174,14 @@ class HcService : Service() {
                 scope.launch { sessions.sendChat(channel, text) }
             }
 
+            // Not ACTION_SEND: the answer to a captcha or password is not a
+            // message — it gets no bubble, no echo, and clears no alerts.
+            ACTION_ANSWER -> {
+                val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
+                val text = intent.getStringExtra(EXTRA_TEXT) ?: return START_STICKY
+                sessions.answerChallenge(channel, text)
+            }
+
             ACTION_MODERATE -> {
                 val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
                 val action = intent.getStringExtra(EXTRA_MOD_ACTION) ?: return START_STICKY
@@ -244,6 +252,7 @@ class HcService : Service() {
         const val ACTION_SET_SERVER = "chat.hc.ultra.SET_SERVER"
         const val ACTION_MODERATE = "chat.hc.ultra.MODERATE"
         const val ACTION_INVITE = "chat.hc.ultra.INVITE"
+        const val ACTION_ANSWER = "chat.hc.ultra.ANSWER"
 
         const val EXTRA_CHANNEL = "channel"
         const val EXTRA_NICK = "nick"

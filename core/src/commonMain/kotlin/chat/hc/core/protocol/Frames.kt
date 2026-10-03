@@ -182,6 +182,29 @@ sealed interface Inbound {
     ) : Inbound
 
     /**
+     * The join was held for a captcha. `text` is ASCII art of the solution
+     * (enablecaptcha.js, `ascii-captcha`), and the answer goes back as an
+     * ordinary `chat` naming the channel — the server intercepts it in a chat
+     * hook before it could be broadcast, and re-runs the join itself.
+     */
+    @Serializable
+    data class Captcha(
+        val text: String = "",
+        val channel: String? = null,
+        override val time: Long? = null,
+    ) : Inbound
+
+    /**
+     * The join was held for the channel's password (setpassword.js). Answered
+     * exactly like [Captcha]: a `chat` whose text is the password.
+     */
+    @Serializable
+    data class PasswordReq(
+        val channel: String? = null,
+        override val time: Long? = null,
+    ) : Inbound
+
+    /**
      * Any frame we do not model. The live server runs commands absent from the
      * public source (`bomb`, `uwuify`, the wallet set), and more may appear at
      * any deploy, so an unknown `cmd` must never be fatal.

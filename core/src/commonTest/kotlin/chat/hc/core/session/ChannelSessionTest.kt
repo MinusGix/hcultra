@@ -351,7 +351,7 @@ class ChannelSessionTest {
     }
 }
 
-private fun CoroutineScope.launchCollect(
+internal fun CoroutineScope.launchCollect(
     s: ChannelSession,
     into: MutableList<SessionEvent>,
 ): Job = launch { s.events.collect { into += it } }

@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -58,7 +61,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -73,6 +81,7 @@ import chat.hc.ultra.data.Translator
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.protocol.User
+import chat.hc.core.session.Challenge
 import chat.hc.core.session.ChannelUi
 import chat.hc.ultra.data.ChannelHistory
 import chat.hc.ultra.data.ChannelIdentity
@@ -337,6 +346,7 @@ class MainActivity : ComponentActivity() {
                             startModerate(channel, action, target)
                         },
                         onInvite = { channel, target -> startInvite(channel, target) },
+                        onAnswer = { channel, text -> startAnswer(channel, text) },
                         onActiveChanged = { activeChannel = it },
                         recent = recent,
                         lastSession = lastSession,
@@ -488,6 +498,17 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private fun startAnswer(channel: String, text: String) {
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, HcService::class.java).apply {
+                action = HcService.ACTION_ANSWER
+                putExtra(HcService.EXTRA_CHANNEL, channel)
+                putExtra(HcService.EXTRA_TEXT, text)
+            },
+        )
+    }
+
     private fun startLeave(channel: String) {
         ContextCompat.startForegroundService(
             this,
@@ -575,6 +596,8 @@ private fun AppScreen(
     onUndoLeave: (String) -> Unit,
     onModerate: (String, ModAction, User) -> Unit,
     onInvite: (String, User) -> Unit,
+    /** Answers the captcha or password a channel's join is waiting on. */
+    onAnswer: (String, String) -> Unit,
     onActiveChanged: (String?) -> Unit,
     /** Who you have been on this server, most recent first. */
     recent: List<ChannelIdentity>,
@@ -793,6 +816,19 @@ private fun AppScreen(
                     )
                 }
 
+                (active.state as? SessionState.Challenged)?.let { challenged ->
+                    // Keyed per challenge, so a retry — which is a new
+                    // challenge — starts with an empty field and a live button.
+                    androidx.compose.runtime.key(active.channel, challenged.serial) {
+                        ChallengeCard(
+                            channel = active.channel,
+                            challenge = challenged.challenge,
+                            onAnswer = { onAnswer(active.channel, it) },
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                    }
+                }
+
                 if (openRoster == active.channel) {
                     UserList(
                         users = active.roster,
@@ -891,6 +927,98 @@ private fun AppScreen(
                         disabledIndicatorColor = Color.Transparent,
                     ),
                 )
+            }
+        }
+    }
+}
+
+/**
+ * The captcha or password a channel is holding its join for.
+ *
+ * Inline above the transcript rather than a dialog: it belongs to one channel,
+ * and a dialog would cover the others' tabs — including a second channel that
+ * could be asking for something too.
+ */
+@Composable
+private fun ChallengeCard(
+    channel: String,
+    challenge: Challenge,
+    onAnswer: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var answer by remember { mutableStateOf("") }
+    // Sent once per challenge: the card stays up until the server moves the
+    // state on, and a second tap would answer a challenge already spent.
+    var sent by remember { mutableStateOf(false) }
+    // A captcha is case-sensitive and an exact match, so it is never trimmed;
+    // a password is whatever the moderator set, spaces included.
+    val submit = {
+        if (answer.isNotEmpty() && !sent) {
+            sent = true
+            onAnswer(answer)
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        val heading = when (challenge) {
+            is Challenge.Captcha -> "?$channel wants a captcha solved"
+            is Challenge.Password -> "?$channel is password protected"
+        }
+        Text(heading, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        if (challenge.retry) {
+            Text(
+                when (challenge) {
+                    is Challenge.Captcha -> "That was not it. Here is a new one."
+                    is Challenge.Password -> "Wrong password."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+
+        if (challenge is Challenge.Captcha) {
+            // Wider than a phone. Scrolled rather than shrunk: art scaled down
+            // to fit is art nobody can read, and reading it is the point.
+            Text(
+                challenge.art,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                lineHeight = 11.sp,
+                softWrap = false,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            )
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = answer,
+                onValueChange = { answer = it },
+                singleLine = true,
+                enabled = !sent,
+                label = {
+                    Text(if (challenge is Challenge.Captcha) "Letters (case-sensitive)" else "Channel password")
+                },
+                visualTransformation = if (challenge is Challenge.Password) PasswordVisualTransformation()
+                else VisualTransformation.None,
+                keyboardOptions = KeyboardOptions(
+                    // Autocorrect "fixing" the case of a captcha is a wrong answer.
+                    autoCorrectEnabled = false,
+                    keyboardType = if (challenge is Challenge.Password) KeyboardType.Password else KeyboardType.Ascii,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(onDone = { submit() }),
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = submit, enabled = answer.isNotEmpty() && !sent) {
+                Text(if (sent) "Joining…" else "Join")
             }
         }
     }
@@ -1199,6 +1327,8 @@ private fun describe(state: SessionState): String? = when (state) {
     is SessionState.Live -> null
     is SessionState.Reconnecting -> "Reconnecting (attempt ${state.attempt})"
     is SessionState.Failed -> "Failed: ${state.reason}"
+    // Has a card of its own, which says more than a status line could.
+    is SessionState.Challenged -> null
     SessionState.Connecting, SessionState.Handshaking -> "Connecting…"
     SessionState.Idle -> null
 }
