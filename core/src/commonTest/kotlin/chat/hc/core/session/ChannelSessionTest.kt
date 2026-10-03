@@ -89,6 +89,27 @@ class ChannelSessionTest {
     }
 
     /**
+     * Every `in chat` hook (`/me`, `/w`, `/nick`, …) bails unless the payload
+     * names its channel, and only v1 sockets get it filled in by legacylayer.
+     * Plain text still works without it — chat.js falls back to the socket's
+     * first channel — so omitting it fails only for commands, which land in
+     * finalCmdCheck as "Unknown command".
+     */
+    @Test
+    fun chatNamesItsChannel() = runTest {
+        val transport = FakeTransport().apply { scriptColdJoin() }
+        val s = session(transport)
+        s.start(this)
+        advanceUntilIdle()
+
+        s.sendChat("/me waves")
+        val last = Json.parseToJsonElement(transport.latest.sent.last()).jsonObject
+        assertEquals("chat", last["cmd"]?.jsonPrimitive?.content)
+        assertEquals("testroom", last["channel"]?.jsonPrimitive?.content)
+        s.stop()
+    }
+
+    /**
      * The post-join token arrives after onlineSet and after the MOTD. A client
      * that treats onlineSet as "done" never captures it and loses silent resume.
      */

@@ -126,7 +126,7 @@ class ChannelSession(
     }
 
     suspend fun sendChat(text: String, customId: String? = null) =
-        send(Outbound.Chat(text, customId))
+        send(Outbound.Chat(channel, text, customId))
 
     /**
      * Proactively replace the connection while the old one still works, so

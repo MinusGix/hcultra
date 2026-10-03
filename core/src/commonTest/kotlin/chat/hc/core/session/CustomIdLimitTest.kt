@@ -61,7 +61,7 @@ class CustomIdLimitTest {
 
         val before = transport.latest.sent.size
         assertFailsWith<InvalidFrameException> {
-            s.send(Outbound.Chat("hi", customId = "abcdefghijkl"))
+            s.send(Outbound.Chat("c", "hi", customId = "abcdefghijkl"))
         }
         assertEquals(before, transport.latest.sent.size, "oversized frame must not be written")
         s.stop()
@@ -75,7 +75,7 @@ class CustomIdLimitTest {
         advanceUntilIdle()
 
         assertFailsWith<InvalidFrameException> {
-            s.send(Outbound.UpdateMessage("append", "x", customId = "waytoolong"))
+            s.send(Outbound.UpdateMessage("c", "append", "x", customId = "waytoolong"))
         }
         s.stop()
     }
@@ -87,7 +87,7 @@ class CustomIdLimitTest {
         s.start(this)
         advanceUntilIdle()
 
-        s.send(Outbound.Chat("hi", customId = "abc123"))
+        s.send(Outbound.Chat("c", "hi", customId = "abc123"))
         val last = transport.latest.sent.last()
         assertEquals("chat", cmdOf(last))
         assertTrue(last.contains("abc123"))

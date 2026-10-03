@@ -291,14 +291,14 @@ class SessionManager(
         // info, a warn, or nothing at all — so there is no echo to reconcile
         // against and an optimistic bubble would hang at "sending…" forever.
         if (Composer.isSlashCommand(text)) {
-            runCatching { session.send(Outbound.Chat(text)) }
+            runCatching { session.send(Outbound.Chat(channel, text)) }
             return
         }
 
         val customId = customIdFactory()
         buffer.addPending(text, customId, session.roster.firstOrNull { it.isme }?.nick ?: "", session.userid ?: 0L, now())
         publish(channel)
-        runCatching { session.send(Outbound.Chat(text, customId)) }
+        runCatching { session.send(Outbound.Chat(channel, text, customId)) }
             .onSuccess { scheduleEchoTimeout(channel, customId) }
             .onFailure {
                 buffer.markFailed(customId)

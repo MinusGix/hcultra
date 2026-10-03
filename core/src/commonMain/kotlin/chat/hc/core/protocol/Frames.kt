@@ -247,6 +247,7 @@ sealed class Outbound {
     @Serializable
     @SerialName("chat")
     data class Chat(
+        val channel: String,
         val text: String,
         val customId: String? = null,
     ) : Outbound() {
@@ -255,7 +256,7 @@ sealed class Outbound {
 
     @Serializable
     @SerialName("emote")
-    data class Emote(val text: String) : Outbound() {
+    data class Emote(val channel: String, val text: String) : Outbound() {
         override val cmd: String get() = "emote"
     }
 
@@ -296,6 +297,7 @@ sealed class Outbound {
     @Serializable
     @SerialName("updateMessage")
     data class UpdateMessage(
+        val channel: String,
         val mode: String,
         val text: String,
         val customId: String,

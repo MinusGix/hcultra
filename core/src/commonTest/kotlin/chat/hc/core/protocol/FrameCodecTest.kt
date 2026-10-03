@@ -136,7 +136,7 @@ class FrameCodecTest {
      */
     @Test
     fun encodesCommandDiscriminator() {
-        val obj = Json.parseToJsonElement(FrameCodec.encode(Outbound.Chat("hi"))).jsonObject
+        val obj = Json.parseToJsonElement(FrameCodec.encode(Outbound.Chat("c", "hi"))).jsonObject
         assertEquals("chat", obj["cmd"]?.jsonPrimitive?.content)
         assertEquals("hi", obj["text"]?.jsonPrimitive?.content)
     }

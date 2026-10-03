@@ -39,6 +39,12 @@ commands disagree:
 - `invite` — requires **numeric `userid`** and string `channel`; a nick-only
   payload is silently dropped (`invite.js` `return true`, no reply at all).
 
+Since the 2026-10 server update this covers `chat`, `emote` and `updateMessage`
+too. `chat.js#run` still falls back to the socket's first channel, so plain text
+works without it — but every `in chat` hook (`/me`, `/w`, `/nick`, …) checks
+`payload.channel` and passes the text through untouched when it is missing,
+so the command ends in `finalCmdCheck` as `warn: Unknown command`.
+
 `help`'s own usage strings are **stale for v2** (it advertises `invite` as taking a
 nickname). Do not treat `help` output as API documentation.
 
