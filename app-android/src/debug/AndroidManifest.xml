@@ -18,5 +18,15 @@
     <application
         android:usesCleartextTraffic="true"
         android:label="hcultra dev"
-        tools:replace="android:label" />
+        tools:replace="android:label">
+        <!--
+          adb's way to fill a channel with synthetic history; see DebugTools.
+          Exported only to holders of DUMP, which `adb shell` is and an
+          installed app cannot be.
+        -->
+        <receiver
+            android:name=".service.DebugReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+    </application>
 </manifest>
