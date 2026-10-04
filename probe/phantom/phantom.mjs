@@ -26,7 +26,9 @@
 
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import {
+  existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import http from 'node:http';
 import net from 'node:net';
@@ -148,19 +150,59 @@ function writeServerConfig({ serverPort, strict }) {
   }));
 }
 
-function startServer() {
+/**
+ * While loading its command modules, hackchat-server renames `commands/` to a
+ * random `commands.<suffix>` (ImportsManager.getImports, to defeat the ESM
+ * cache) and renames it back when done. A server killed mid-load leaves it
+ * stranded, and every later start fails on a missing module. Put it back.
+ */
+function restoreCommandsDir() {
+  const dir = path.join(SRV, 'commands');
+  if (existsSync(dir)) return;
+  const stranded = readdirSync(SRV).filter((n) => n.startsWith('commands.'));
+  if (stranded.length !== 1) throw new Error(`srv/commands is missing; run setup again (found: ${stranded.join(', ') || 'nothing'})`);
+  log(`restoring srv/${stranded[0]} to srv/commands (a server was killed mid-load)`);
+  renameSync(path.join(SRV, stranded[0]), dir);
+}
+
+/** Resolves once something accepts TCP connections on [port]. */
+function waitForPort(port, child, ms = 15_000) {
+  const start = Date.now();
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['main.mjs'], { cwd: SRV, stdio: ['ignore', 'pipe', 'pipe'] });
-    let ready = false;
-    const onData = (buf) => {
-      const text = String(buf);
-      for (const line of text.split('\n').filter(Boolean)) log('server:', line);
-      if (!ready && text.includes('Websocket server ready')) { ready = true; resolve(child); }
+    let exited = null;
+    child.once('exit', (code) => { exited = code; });
+    const attempt = () => {
+      if (exited !== null) return reject(new Error(`server exited (${exited}) before listening`));
+      if (Date.now() - start > ms) return reject(new Error(`server not listening on ${port} after ${ms} ms`));
+      const sock = net.connect(port, '127.0.0.1');
+      sock.once('connect', () => { sock.destroy(); resolve(); });
+      sock.once('error', () => { sock.destroy(); setTimeout(attempt, 50); });
     };
-    child.stdout.on('data', onData);
-    child.stderr.on('data', onData);
-    child.on('exit', (code) => { if (!ready) reject(new Error(`server exited (${code}) before ready`)); });
+    attempt();
   });
+}
+
+/**
+ * Starts the server and resolves once it is listening. Not on its "Websocket
+ * server ready" line: main.mjs prints that *before* `init()` has loaded the
+ * command modules and opened the port, so a client — or a restart — acting on
+ * it races the load.
+ */
+async function startServer(serverPort) {
+  restoreCommandsDir();
+  const child = spawn(process.execPath, ['main.mjs'], { cwd: SRV, stdio: ['ignore', 'pipe', 'pipe'] });
+  const onData = (buf) => {
+    for (const line of String(buf).split('\n').filter(Boolean)) log('server:', line);
+  };
+  child.stdout.on('data', onData);
+  child.stderr.on('data', onData);
+  try {
+    await waitForPort(serverPort, child);
+  } catch (e) {
+    child.kill();
+    throw e;
+  }
+  return child;
 }
 
 // --- proxy --------------------------------------------------------------
@@ -408,7 +450,7 @@ async function serve(opts) {
   const admins = new Admins(serverPort);
   const boot = async () => {
     writeServerConfig({ serverPort, strict });
-    child = await startServer();
+    child = await startServer(serverPort);
   };
   await boot();
   const proxy = startProxy({ clientPort, serverPort });
