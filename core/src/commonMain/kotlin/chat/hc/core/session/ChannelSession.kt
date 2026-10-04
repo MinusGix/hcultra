@@ -76,6 +76,12 @@ class ChannelSession(
     val events: SharedFlow<SessionEvent> = _events.asSharedFlow()
 
     private val presence = PresenceTracker()
+
+    /** Whether this session has ever been admitted — what makes a NAME_TAKEN our own ghost. */
+    private var everLive = false
+
+    /** Consecutive reconnects refused because our previous socket still holds the nick. */
+    private var ghostRetries = 0
     val roster get() = presence.roster
 
     /** Our own userid, learned at join and stable across restores. */
@@ -175,6 +181,12 @@ class ChannelSession(
         } catch (_: ChallengeRequiredException) {
             expectSilentResume = false
             return
+        } catch (_: GhostNickException) {
+            // A channel that refuses token restore (password, captcha) forces a
+            // cold join, whose collision check counts the very socket we are
+            // replacing. Overlap is impossible there; keep the old one.
+            expectSilentResume = false
+            return
         }
         current = fresh.connection
         old.close()
@@ -191,6 +203,8 @@ class ChannelSession(
                 val live = connectAndHandshake(scope, tokenStore.load(url, channel, credentials))
                 current = live.connection
                 attempt = 0
+                everLive = true
+                ghostRetries = 0
                 _state.value = SessionState.Live(live.restored)
                 emit(SessionEvent.Resumed(channel, live.restored, silent = expectSilentResume))
                 expectSilentResume = false
@@ -203,6 +217,9 @@ class ChannelSession(
                 _state.value = SessionState.Failed(e.message ?: "fatal")
                 emit(SessionEvent.Disconnected(channel, e.message))
                 return
+            } catch (e: GhostNickException) {
+                ghostRetries += 1
+                emit(SessionEvent.Disconnected(channel, e.message))
             } catch (e: Exception) {
                 emit(SessionEvent.Disconnected(channel, e.message))
             }
@@ -334,7 +351,7 @@ class ChannelSession(
         while (true) {
             val reply = awaitFrame(frames, "onlineSet", deferred) {
                 it is Inbound.OnlineSet || it is Inbound.Captcha || it is Inbound.PasswordReq ||
-                    (it is Inbound.Warn && (it.isJoinFailure() || it.isWrongAnswer()))
+                    (it is Inbound.Warn && (it.isJoinFailure() || it.isWrongAnswer() || it.id == ErrorId.RATELIMIT))
             }
             when (reply) {
                 is Inbound.OnlineSet -> {
@@ -343,6 +360,22 @@ class ChannelSession(
                 }
 
                 is Inbound.Warn -> {
+                    // join.js reports its own rate limit as Global.RATELIMIT
+                    // since the 2026-10 update, not from the Join block. Not
+                    // fatal: hand it back as deferred so dispatch() both shows
+                    // it and resyncs the governor, and let supervise() back off.
+                    if (reply.id == ErrorId.RATELIMIT) {
+                        deferred += reply
+                        throw JoinRateLimitedException()
+                    }
+                    // Token restore is refused into password and captcha
+                    // channels, and the cold join that follows checks nick
+                    // collisions without excluding our own userid — so a
+                    // reconnect collides with the socket we just lost until the
+                    // server reaps it. A first join has no ghost: that clash is real.
+                    if (reply.id == ErrorId.JOIN_NAME_TAKEN && everLive && ghostRetries < MAX_GHOST_RETRIES) {
+                        throw GhostNickException()
+                    }
                     if (!reply.isWrongAnswer()) {
                         throw FatalSessionException("join refused (id ${reply.id}): ${reply.text}")
                     }
@@ -531,10 +564,23 @@ private fun Inbound.Warn.isJoinFailure(): Boolean =
 private fun Inbound.Warn.isWrongAnswer(): Boolean =
     id == ErrorId.BAD_CAPTCHA || id == ErrorId.INVALID_PASSWORD
 
+/**
+ * How many reconnects to spend waiting for the server to drop our previous
+ * socket. With [Backoff]'s defaults that is roughly three minutes; past it, the
+ * nick is more likely someone else's than our ghost's.
+ */
+private const val MAX_GHOST_RETRIES = 9
+
 /** What `frisk(socket, 7)` charges for a wrong captcha or password. */
 private const val WRONG_ANSWER_COST = 7.0
 
 class FatalSessionException(message: String) : Exception(message)
+
+/** The server rate-limited our join. Retryable; the backoff is the remedy. */
+private class JoinRateLimitedException : Exception("join rate-limited")
+
+/** A rejoin collided with our own not-yet-reaped previous socket. Retryable. */
+private class GhostNickException : Exception("nick still held by the previous connection")
 
 /** A non-interactive handshake was asked a question only the user can answer. */
 private class ChallengeRequiredException : Exception("join requires a captcha or password")

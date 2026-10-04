@@ -8,6 +8,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -238,6 +239,130 @@ class ChannelSessionTest {
 
         assertTrue(s.state.value is SessionState.Failed, "expected Failed, got ${s.state.value}")
         assertEquals(1, transport.connections.size, "must not have reconnected")
+        s.stop()
+    }
+
+    /** A first join has no ghost to collide with: NAME_TAKEN there is someone else's nick. */
+    @Test
+    fun nameTakenOnFirstJoinIsFatal() = runTest {
+        val transport = FakeTransport()
+        transport.onSend = { raw ->
+            when (cmdOf(raw)) {
+                "session" -> serverSends("""{"cmd":"session","restored":false,"token":"","channels":[]}""")
+                "join" -> serverSends("""{"cmd":"warn","text":"Nickname taken in channel: ?testroom","id":33,"channel":false}""")
+            }
+        }
+        val s = session(transport)
+        s.start(this)
+        advanceUntilIdle()
+
+        assertTrue(s.state.value is SessionState.Failed, "expected Failed, got ${s.state.value}")
+        assertEquals(1, transport.connections.size)
+        s.stop()
+    }
+
+    /**
+     * Scripts the server after a drop in a password channel: token restore is
+     * refused (221), and the cold join collides with our own unreaped socket
+     * [collisions] times before the server lets go of it.
+     */
+    private fun FakeTransport.scriptGhostedRejoin(collisions: Int) {
+        var joins = 0
+        onSend = { raw ->
+            when (cmdOf(raw)) {
+                "session" -> {
+                    serverSends("""{"cmd":"warn","text":"Could not auto-rejoin ?testroom. The channel is now password protected","id":221,"channel":false}""")
+                    serverSends("""{"cmd":"session","restored":false,"token":"tok-2","channels":[]}""")
+                }
+                "join" -> {
+                    joins += 1
+                    if (joins <= collisions) {
+                        serverSends("""{"cmd":"warn","text":"Nickname taken in channel: ?testroom","id":33,"channel":false}""")
+                    } else {
+                        serverSends("""{"cmd":"onlineSet","users":[{"isme":true,"nick":"tester","userid":99}],"channel":"testroom"}""")
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Restore is refused into password and captcha channels, and the cold join
+     * that follows counts our own dead socket as a nick collision until the
+     * server reaps it. That must back off and retry, not fail the tab.
+     */
+    @Test
+    fun rejoinRetriesWhileOurGhostHoldsTheNick() = runTest {
+        val transport = FakeTransport().apply { scriptColdJoin() }
+        val s = session(transport)
+        s.start(this)
+        advanceUntilIdle()
+
+        transport.scriptGhostedRejoin(collisions = 2)
+        transport.connections[0].kill()
+        advanceUntilIdle()
+
+        assertEquals(SessionState.Live(restored = false), s.state.value)
+        assertEquals(4, transport.connections.size, "two refused rejoins, then admitted")
+        s.stop()
+    }
+
+    /** The ghost wait is bounded: a nick still taken minutes later is someone else's. */
+    @Test
+    fun ghostRetriesGiveUpEventually() = runTest {
+        val transport = FakeTransport().apply { scriptColdJoin() }
+        val s = session(transport)
+        s.start(this)
+        advanceUntilIdle()
+
+        transport.scriptGhostedRejoin(collisions = Int.MAX_VALUE)
+        transport.connections[0].kill()
+        advanceUntilIdle()
+
+        assertTrue(s.state.value is SessionState.Failed, "expected Failed, got ${s.state.value}")
+        // The first socket, nine ghost retries, and the one that gives up.
+        assertEquals(11, transport.connections.size)
+        s.stop()
+    }
+
+    /**
+     * join.js reports its rate limit as Global.RATELIMIT (11), not from the Join
+     * block. It must end the handshake at once and back off — not sit out the
+     * handshake timeout — and still be shown.
+     */
+    @Test
+    fun rateLimitedJoinBacksOffAndRetries() = runTest {
+        var joins = 0
+        val transport = FakeTransport()
+        transport.onSend = { raw ->
+            when (cmdOf(raw)) {
+                "session" -> serverSends("""{"cmd":"session","restored":false,"token":"","channels":[]}""")
+                "join" -> {
+                    joins += 1
+                    if (joins == 1) {
+                        serverSends("""{"cmd":"warn","text":"Issuing commands too quickly. Wait a moment before trying again","id":11,"channel":false}""")
+                    } else {
+                        serverSends("""{"cmd":"onlineSet","users":[{"isme":true,"nick":"tester","userid":99}],"channel":"testroom"}""")
+                    }
+                }
+            }
+        }
+        val s = session(transport)
+        val seen = mutableListOf<SessionEvent>()
+        val collector = this.launchCollect(s, seen)
+        s.start(this)
+        advanceUntilIdle()
+
+        assertEquals(SessionState.Live(restored = false), s.state.value)
+        assertEquals(2, transport.connections.size)
+        // One backoff plus the post-join token grace; waiting out the 10 s
+        // handshake timeout first would put this well past it.
+        assertTrue(currentTime < 10_000, "retried only after ${currentTime}ms")
+        assertTrue(
+            seen.any { it is SessionEvent.Warning && it.frame.id == 11 },
+            "the rate-limit warn was swallowed",
+        )
+        collector.cancel()
         s.stop()
     }
 
