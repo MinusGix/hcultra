@@ -80,8 +80,15 @@ class ChannelSession(
     /** Whether this session has ever been admitted — what makes a NAME_TAKEN our own ghost. */
     private var everLive = false
 
-    /** Consecutive reconnects refused because our previous socket still holds the nick. */
-    private var ghostRetries = 0
+    /**
+     * Backoff spent so far waiting for our previous socket to let go of the
+     * nick. Counted from the delays we chose rather than a clock, so it means
+     * the same under any [Backoff] and under a test's virtual time.
+     */
+    private var ghostWaitedMillis = 0L
+
+    /** Whether the last attempt failed on our own ghost; set by [supervise]. */
+    private var lastFailureWasGhost = false
     val roster get() = presence.roster
 
     /** Our own userid, learned at join and stable across restores. */
@@ -204,7 +211,7 @@ class ChannelSession(
                 current = live.connection
                 attempt = 0
                 everLive = true
-                ghostRetries = 0
+                ghostWaitedMillis = 0
                 _state.value = SessionState.Live(live.restored)
                 emit(SessionEvent.Resumed(channel, live.restored, silent = expectSilentResume))
                 expectSilentResume = false
@@ -218,7 +225,7 @@ class ChannelSession(
                 emit(SessionEvent.Disconnected(channel, e.message))
                 return
             } catch (e: GhostNickException) {
-                ghostRetries += 1
+                lastFailureWasGhost = true
                 emit(SessionEvent.Disconnected(channel, e.message))
             } catch (e: Exception) {
                 emit(SessionEvent.Disconnected(channel, e.message))
@@ -229,6 +236,8 @@ class ChannelSession(
 
             attempt += 1
             val wait = backoff.delayFor(attempt)
+            if (lastFailureWasGhost) ghostWaitedMillis += wait
+            lastFailureWasGhost = false
             _state.value = SessionState.Reconnecting(attempt, wait)
             delay(wait)
         }
@@ -355,6 +364,13 @@ class ChannelSession(
             }
             when (reply) {
                 is Inbound.OnlineSet -> {
+                    // A lock turns us away without a warn: join.js rewrites the
+                    // join to ?purgatory under a random nick and lets *that*
+                    // succeed. Its onlineSet is the only sign. Retrying cannot
+                    // help until someone unlocks, so this is terminal.
+                    if (reply.channel != null && reply.channel != channel) {
+                        throw FatalSessionException("?$channel is locked")
+                    }
                     offeredPassword?.let { channelPassword = it }
                     return reply
                 }
@@ -373,7 +389,7 @@ class ChannelSession(
                     // collisions without excluding our own userid — so a
                     // reconnect collides with the socket we just lost until the
                     // server reaps it. A first join has no ghost: that clash is real.
-                    if (reply.id == ErrorId.JOIN_NAME_TAKEN && everLive && ghostRetries < MAX_GHOST_RETRIES) {
+                    if (reply.id == ErrorId.JOIN_NAME_TAKEN && everLive && ghostWaitedMillis < GHOST_WINDOW_MILLIS) {
                         throw GhostNickException()
                     }
                     if (!reply.isWrongAnswer()) {
@@ -565,11 +581,15 @@ private fun Inbound.Warn.isWrongAnswer(): Boolean =
     id == ErrorId.BAD_CAPTCHA || id == ErrorId.INVALID_PASSWORD
 
 /**
- * How many reconnects to spend waiting for the server to drop our previous
- * socket. With [Backoff]'s defaults that is roughly three minutes; past it, the
- * nick is more likely someone else's than our ghost's.
+ * How long to keep waiting for the server to drop our previous socket.
+ *
+ * hackchat-server pings every 16 s but never acts on a missing pong, and
+ * hack.chat is plain nginx on one host with no CDN in front, so a phone that
+ * vanished is only noticed when the server's TCP gives up retransmitting:
+ * about 15½ minutes at Linux's default `tcp_retries2`. Past this, the nick is
+ * someone else's.
  */
-private const val MAX_GHOST_RETRIES = 9
+private const val GHOST_WINDOW_MILLIS = 16 * 60_000L
 
 /** What `frisk(socket, 7)` charges for a wrong captcha or password. */
 private const val WRONG_ANSWER_COST = 7.0

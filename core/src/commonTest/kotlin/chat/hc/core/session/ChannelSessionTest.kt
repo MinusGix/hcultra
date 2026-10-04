@@ -320,8 +320,39 @@ class ChannelSessionTest {
         advanceUntilIdle()
 
         assertTrue(s.state.value is SessionState.Failed, "expected Failed, got ${s.state.value}")
-        // The first socket, nine ghost retries, and the one that gives up.
-        assertEquals(11, transport.connections.size)
+        // Sixteen minutes of backoff — enough to outlast the server's TCP
+        // noticing a dead phone (~15½ min). With the default Backoff that is
+        // waits of 1.5, 3, 6, 12, 24 s then 21 at the 45 s cap: 26 refused
+        // rejoins after the first socket, then the one that gives up. Not
+        // asserted on currentTime: RateGovernor decays by the wall clock, so
+        // under virtual time its pacing inflates the total.
+        assertEquals(28, transport.connections.size)
+        s.stop()
+    }
+
+    /**
+     * A lock turns a join away without a warn: the server re-joins the socket
+     * to ?purgatory under a random nick, and that onlineSet is all we get.
+     * It must not be taken as admission, and it must not be retried.
+     */
+    @Test
+    fun purgatoryIsALockNotAnAdmission() = runTest {
+        val transport = FakeTransport()
+        transport.onSend = { raw ->
+            when (cmdOf(raw)) {
+                "session" -> serverSends("""{"cmd":"session","restored":false,"token":"","channels":[]}""")
+                "join" -> serverSends("""{"cmd":"onlineSet","users":[{"isme":true,"nick":"x7k2q9a1b3c4","userid":99,"channel":"purgatory"}],"channel":"purgatory"}""")
+            }
+        }
+        val s = session(transport)
+        s.start(this)
+        advanceUntilIdle()
+
+        val state = s.state.value
+        assertTrue(state is SessionState.Failed, "expected Failed, got $state")
+        assertTrue("locked" in state.reason, state.reason)
+        assertEquals(1, transport.connections.size, "must not have retried")
+        assertTrue(s.roster.isEmpty(), "purgatory's roster leaked in: ${s.roster}")
         s.stop()
     }
 

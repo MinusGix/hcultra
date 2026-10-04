@@ -13,7 +13,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -140,10 +139,8 @@ class PhantomTest {
 
     /**
      * Turned away by a lock, the server re-joins you to ?purgatory under a
-     * random nick and sends *that* onlineSet. Known gap: we take it as
-     * admission to the channel we asked for.
+     * random nick and sends *that* onlineSet, with no warn. It is a refusal.
      */
-    @Ignore
     @Test
     fun lockedChannelIsNotMistakenForPurgatory() = phantom { sessions ->
         val ch = Phantom.channel("locked")
@@ -151,5 +148,14 @@ class PhantomTest {
         val s = Phantom.session(this, ch, Credentials(Phantom.nick("lk"))).also { sessions += it }
         val state = s.awaitState(label = "settled") { it is SessionState.Live || it is SessionState.Failed }
         assertTrue(state is SessionState.Failed, "admitted to purgatory as ?$ch")
+    }
+
+    /** A lock below our level is no lock to us: a channel owner's lock lets a global mod in. */
+    @Test
+    fun lockBelowOurLevelAdmits() = phantom { sessions ->
+        val ch = Phantom.channel("locked")
+        Phantom.admin(ch, "lock", "level" to "channelOwner")
+        val s = Phantom.session(this, ch, Credentials(Phantom.nick("md"), Phantom.MOD_PASS)).also { sessions += it }
+        s.awaitLive()
     }
 }
