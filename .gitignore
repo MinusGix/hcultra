@@ -20,6 +20,10 @@ probe/.governor.json
 # `ws` for probe/fakeserver.mjs; installed with --no-save, see probe/README.
 node_modules/
 
+# The phantom server's exported, installed copy of upstream; see probe/phantom.
+probe/phantom/srv/
+probe/phantom/.node_modules.keep/
+
 # Nix
 result
 result-*

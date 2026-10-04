@@ -20,6 +20,13 @@ sends route through a local mirror of the server's rate limiter — which
 persists its score to `.governor.json`, since the server's score for your
 address outlives the process.
 
+## `phantom/` — the real server, locally, with an admin
+
+The upstream server itself, run from `../hc` with a known admin password and a
+proxy that can freeze connections. For locks and purgatory, captchas, channel
+passwords, muzzles and ghost sockets on demand, and behind
+`./gradlew :core:phantomTest`. See `phantom/README.md`.
+
 ## `fakeserver.mjs` — a deliberately misbehaving server
 
 For client paths the real server will not produce on demand. Needs `ws`:

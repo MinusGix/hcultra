@@ -1,3 +1,7 @@
+import java.util.concurrent.TimeUnit
+import org.gradle.api.services.BuildService
+import org.gradle.api.services.BuildServiceParameters
+
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.kotlin.serialization)
@@ -54,6 +58,82 @@ tasks.register<JavaExec>("liveSmoke") {
         kotlin.jvm().compilations.getByName("main").output.allOutputs,
         configurations.getByName("jvmRuntimeClasspath"),
     )
+}
+
+/**
+ * The phantom server (probe/phantom): real upstream hack.chat run locally, with
+ * an admin the tests control. One process per build, shut down when the build
+ * ends — including when tests fail, which a `doLast` would not survive.
+ */
+abstract class PhantomService : BuildService<PhantomService.Params>, AutoCloseable {
+    interface Params : BuildServiceParameters {
+        val dir: DirectoryProperty
+        val port: Property<Int>
+        val serverPort: Property<Int>
+        val controlPort: Property<Int>
+        val log: RegularFileProperty
+    }
+
+    private var process: Process? = null
+
+    @Synchronized
+    fun ensureStarted() {
+        if (process?.isAlive == true) return
+        val dir = parameters.dir.get().asFile
+        if (!dir.resolve("srv/config.json").exists()) {
+            val setup = ProcessBuilder("node", "phantom.mjs", "setup").directory(dir).inheritIO().start()
+            check(setup.waitFor() == 0) { "phantom setup failed; see probe/phantom/README.md" }
+        }
+        val log = parameters.log.get().asFile.also { it.parentFile.mkdirs() }
+        val p = ProcessBuilder(
+            "node", "phantom.mjs", "serve",
+            "--port", "${parameters.port.get()}",
+            "--server-port", "${parameters.serverPort.get()}",
+            "--control-port", "${parameters.controlPort.get()}",
+        ).directory(dir).redirectError(log).start()
+        process = p
+        // phantom prints one JSON line on stdout once every port is listening.
+        val ready = p.inputStream.bufferedReader().readLine()
+        check(ready != null && "\"ready\":true" in ready) { "phantom did not start; see $log" }
+    }
+
+    override fun close() {
+        process?.let {
+            it.destroy()
+            it.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+}
+
+val phantom = gradle.sharedServices.registerIfAbsent("phantom", PhantomService::class) {
+    parameters.dir.set(rootProject.layout.projectDirectory.dir("probe/phantom"))
+    // Off the defaults (6070/6071/6079) so a phantom you run by hand is not disturbed.
+    parameters.port.set(6170)
+    parameters.serverPort.set(6171)
+    parameters.controlPort.set(6179)
+    parameters.log.set(layout.buildDirectory.file("phantom/phantom.log"))
+}
+
+val phantomPackage = "chat.hc.core.phantom.*"
+
+// The phantom tests need the server; plain jvmTest must not try to reach it.
+tasks.named<Test>("jvmTest") {
+    filter { excludeTestsMatching(phantomPackage) }
+}
+
+tasks.register<Test>("phantomTest") {
+    group = "verification"
+    description = "Run the client against a local upstream server with a controllable admin (needs node)."
+    val jvmTest = tasks.named<Test>("jvmTest").get()
+    testClassesDirs = jvmTest.testClassesDirs
+    classpath = jvmTest.classpath
+    filter { includeTestsMatching(phantomPackage) }
+    // The server is the input that matters, and Gradle cannot see it.
+    outputs.upToDateWhen { false }
+    usesService(phantom)
+    environment("PHANTOM_URL", "ws://127.0.0.1:6170")
+    environment("PHANTOM_CONTROL", "http://127.0.0.1:6179")
+    doFirst { phantom.get().ensureStarted() }
 }
 
 /** Per-message native cost by history length; see TranscriptBench.kt. */
