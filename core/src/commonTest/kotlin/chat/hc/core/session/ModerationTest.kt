@@ -120,12 +120,16 @@ class ModerationTest {
         assertEquals("dumb", f["cmd"]?.jsonPrimitive?.content)
     }
 
-    /** `speak` takes a hash and no channel — the ban outlives their presence. */
+    /**
+     * `speak` takes a hash, not a userid — the muzzle outlives their presence —
+     * but must still name a channel the sender is in, or it is frisked silently.
+     */
     @Test
     fun unmuzzleUsesHashNotUserid() {
         val f = encoded(Moderation.frameFor(ModAction.Unmuzzle, "room", user(42, hash = "deadbeef"))!!)
         assertEquals("speak", f["cmd"]?.jsonPrimitive?.content)
         assertEquals("deadbeef", f["hash"]?.jsonPrimitive?.content)
+        assertEquals("room", f["channel"]?.jsonPrimitive?.content)
         assertTrue("userid" !in f)
     }
 }

@@ -18,9 +18,9 @@ import chat.hc.core.protocol.User
  *    user cannot perform would rate-limit them after two taps, with the server
  *    replying nothing at all. Gating client-side is not cosmetic.
  *
- * These commands are API-only — unlike `/me` or `/w`, most have no text hook,
- * so they cannot be typed into the composer. On the website they are reached
- * through the browser console.
+ * Muzzle and Unmuzzle (`dumb`/`speak`) are API-only — they have no text hook,
+ * so they cannot be typed into the composer. Kick and Ban can be typed as
+ * `/kick` and `/ban` too, but typing them skips this level gate.
  */
 enum class ModAction(val label: String, val minimumLevel: Int, val destructive: Boolean) {
     /** Boot from the channel; they can rejoin. */
@@ -71,6 +71,6 @@ object Moderation {
         ModAction.Kick -> Outbound.Kick(channel = channel, userid = target.userid)
         ModAction.Ban -> Outbound.Ban(channel = channel, userid = target.userid)
         ModAction.Muzzle -> Outbound.Muzzle(channel = channel, userid = target.userid)
-        ModAction.Unmuzzle -> target.hash?.takeIf { it.isNotBlank() }?.let { Outbound.Unmuzzle(it) }
+        ModAction.Unmuzzle -> target.hash?.takeIf { it.isNotBlank() }?.let { Outbound.Unmuzzle(channel = channel, hash = it) }
     }
 }

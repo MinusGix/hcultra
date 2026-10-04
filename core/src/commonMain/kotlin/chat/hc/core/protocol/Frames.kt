@@ -336,9 +336,8 @@ sealed class Outbound {
 
     // --- moderation -------------------------------------------------------
     //
-    // These are API-only: unlike /me or /w, most have no text hook, so they
-    // cannot be typed into the composer at all. On the website they are
-    // reached from the browser console.
+    // `dumb` and `speak` are API-only — they have no text hook, so they cannot
+    // be typed into the composer. `/kick` and `/ban` can be typed too.
     //
     // v2 targets by numeric `userid` and requires an explicit `channel`,
     // except `speak`, which keys on the target's `hash`.
@@ -375,10 +374,14 @@ sealed class Outbound {
         override val cmd: String get() = "dumb"
     }
 
-    /** Un-muzzle. Keyed by hash, not userid. Requires global moderator. */
+    /**
+     * Un-muzzle. Keyed by hash, not userid. Requires global moderator, and —
+     * since upstream 450aeba — a `channel` the sender is in: without one the
+     * server frisks for 10 and replies nothing.
+     */
     @Serializable
     @SerialName("speak")
-    data class Unmuzzle(val hash: String) : Outbound() {
+    data class Unmuzzle(val channel: String, val hash: String) : Outbound() {
         override val cmd: String get() = "speak"
     }
 }

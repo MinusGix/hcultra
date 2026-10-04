@@ -651,26 +651,36 @@ resetting to hack.chat and rejoining a channel that still reported `resumed`.
 
 ## Moderation
 
-Mod commands are **API-only**: unlike `/me` or `/w`, most register no text
-hook, so `/ban someone` just returns "Unknown command". On the website they are
-reached from the browser console. Native UI is therefore a genuine capability
-gain rather than a convenience.
+Most mod commands now have a text hook as well as the API form (upstream
+`450aeba`): `/kick`, `/ban`, `/lockroom`, `/unlockroom`, `/forcecolor`,
+`/forceflair`, `/setpassword`, and the exact texts `/enablecaptcha`,
+`/disablecaptcha`, `/clearpassword`. Since the composer sends slash text raw,
+these work typed. `dumb`, `speak`, `unban` and `hack` remain API-only, so native
+UI is still a genuine capability gain for those. A non-mod typing `/ban x` is
+now frisked rather than told "Unknown command".
 
 Two things make the permission model worth modelling rather than eyeballing:
 
-- **The gates differ per command.** `kick` (and `lockroom`, `unlockroom`, `hack`)
-  need only `isChannelModerator` — level 9 999 — while `ban`, `dumb`, `speak`,
-  `unban`, `forcecolor`, `forceflair` and the captcha commands need
-  `isModerator`, level 999 999. Assuming one "mod" threshold would be wrong in
-  both directions.
+- **The gates differ per command, and levels are per channel.** `kick`,
+  `lockroom`, `unlockroom`, `hack`, `forcecolor`, `forceflair`, the captcha
+  commands and `setpassword`/`clearpassword` need channel moderator — level
+  9 999 *in that channel* (`getUserLevel(socket, channel)`; global mods
+  override). `ban`, `dumb`, `speak`, `unban` and `unbanall` still need a global
+  `isModerator`, level 999 999. Our own roster entry carries the per-channel
+  level, which is what the server checks. Assuming one "mod" threshold would be
+  wrong in both directions.
 - **Failing a gate is expensive.** A rejected command costs `frisk(socket, 10)`
-  of a 25 threshold and the server replies *nothing*, so an over-permissive UI
-  would rate-limit the user after two taps with no explanation. `SessionManager`
-  re-checks the level before sending, so a stale button cannot spend the budget.
+  of a 25 threshold. Most still reply *nothing*; `forcecolor`, `forceflair` and
+  `hack` now also send a `warn`, and targeting someone at or above your level
+  gets `warn` id 13. An over-permissive UI would still rate-limit the user after
+  two taps. `SessionManager` re-checks the level before sending, so a stale
+  button cannot spend the budget.
 
 Wire shapes (v2): `kick`/`ban`/`dumb` take a numeric `userid` plus an explicit
 `channel`; `speak` and `unban` key on the target's **hash** instead, because a
-ban outlives their presence in the channel. `unban` is not offered from the
+ban outlives their presence in the channel. Every channel-scoped mod command —
+`speak` and `unban` included since `450aeba` — must also name a `channel` the
+sender is in, or it is frisked silently; only `unbanall` is exempt. `unban` is not offered from the
 roster for that reason — by the time you want it, they are gone and their hash
 with them.
 
