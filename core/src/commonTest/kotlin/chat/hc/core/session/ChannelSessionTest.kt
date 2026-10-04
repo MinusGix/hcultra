@@ -528,6 +528,40 @@ class ChannelSessionTest {
     }
 
     /**
+     * Losing a flair — a cleared `forceflair`, or a demotion — is an
+     * `updateUser` saying `flair: false`. It must not decode to "unchanged" and
+     * leave the old one in the roster, where every later message would pick it up.
+     */
+    @Test
+    fun clearedFlairIsDropped() = runTest {
+        val transport = FakeTransport()
+        transport.onSend = { raw ->
+            when (cmdOf(raw)) {
+                "session" -> serverSends("""{"cmd":"session","restored":false,"token":"","channels":[]}""")
+                "join" -> {
+                    serverSends("""{"cmd":"onlineSet","users":[{"isme":true,"nick":"tester","userid":99},{"nick":"peer","userid":7,"flair":false},{"nick":"cmod","userid":8,"level":9999,"flair":"💫"}],"channel":"testroom"}""")
+                    serverSends("""{"cmd":"updateUser","nick":"peer","userid":7,"level":100,"flair":"🦊","online":true,"channel":"testroom"}""")
+                    serverSends("""{"cmd":"updateUser","nick":"peer","userid":7,"level":100,"flair":false,"online":true,"channel":"testroom"}""")
+                    serverSends("""{"cmd":"updateUser","nick":"cmod","userid":8,"level":100,"flair":false,"online":true,"channel":"testroom"}""")
+                    serverSends("""{"cmd":"chat","nick":"peer","userid":7,"level":100,"flair":false,"text":"hi","channel":"testroom"}""")
+                    serverSends("""{"cmd":"chat","nick":"cmod","userid":8,"level":100,"flair":false,"text":"hi","channel":"testroom"}""")
+                }
+            }
+        }
+        val s = session(transport)
+        val seen = mutableListOf<SessionEvent>()
+        val collector = this.launchCollect(s, seen)
+        s.start(this)
+        advanceUntilIdle()
+
+        assertTrue(s.roster.none { it.flair != null }, "roster still has ${s.roster.map { it.flair }}")
+        val flairs = seen.filterIsInstance<SessionEvent.Message>().map { it.frame.flair }
+        assertEquals(listOf<String?>(null, null), flairs)
+        collector.cancel()
+        s.stop()
+    }
+
+    /**
      * Deferring those frames must not become a way to lose them: a handshake
      * that fails has no resume notice to order against, so whatever arrived is
      * delivered rather than discarded.

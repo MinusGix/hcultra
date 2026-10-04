@@ -38,6 +38,13 @@ class PresenceTracker {
     /**
      * `updateUser` carries partial state — it is how a silent resume and a
      * privilege change both arrive — so merge rather than overwrite.
+     *
+     * Except flair, which is always replaced. Every `updateUser` upstream sends
+     * is `getUserDetails()` in full, and that says "none" as `flair: false`,
+     * which decodes to the same null as an absent key. Merging it would make a
+     * flair impossible to lose: a cleared `forceflair`, or a demoted channel
+     * moderator's 💫, would stay in the roster — and so on every message, which
+     * takes its flair from here — until the next `onlineSet`.
      */
     fun update(f: Inbound.UpdateUser) {
         val existing = users[f.userid]
@@ -48,7 +55,7 @@ class PresenceTracker {
             hash = f.hash ?: existing?.hash,
             level = if (f.level != 0) f.level else existing?.level ?: 0,
             color = f.color ?: existing?.color,
-            flair = f.flair ?: existing?.flair,
+            flair = f.flair,
             uType = f.uType ?: existing?.uType,
             isBot = f.isBot,
             channel = existing?.channel,
@@ -57,13 +64,13 @@ class PresenceTracker {
         )
     }
 
+    /** `onlineSet` and `onlineAdd` are full records too; flair as in [update]. */
     private fun mergeInto(existing: User?, incoming: User): User =
         if (existing == null) incoming
         else incoming.copy(
             trip = incoming.trip ?: existing.trip,
             hash = incoming.hash ?: existing.hash,
             color = incoming.color ?: existing.color,
-            flair = incoming.flair ?: existing.flair,
             uType = incoming.uType ?: existing.uType,
             channel = incoming.channel ?: existing.channel,
             isme = incoming.isme || existing.isme,

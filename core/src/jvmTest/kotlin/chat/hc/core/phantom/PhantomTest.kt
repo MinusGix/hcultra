@@ -67,6 +67,39 @@ class PhantomTest {
         assertEquals("🦊", msg.frame.flair)
     }
 
+    /**
+     * Clearing a forced flair arrives as `updateUser` with `flair: false`, the
+     * same way the server says "none" everywhere. It must take the flair away,
+     * from the roster and from the messages that follow.
+     */
+    @Test
+    fun clearedFlairLeavesTheRosterAndMessages() = phantom { sessions ->
+        val ch = Phantom.channel("unflair")
+        val observer = Phantom.session(this, ch, Credentials(Phantom.nick("obs"))).also { sessions += it }
+        val targetNick = Phantom.nick("tgt")
+        val target = Phantom.session(this, ch, Credentials(targetNick)).also { sessions += it }
+        observer.awaitLive()
+        target.awaitLive()
+
+        Phantom.admin(ch, "flair", "nick" to targetNick, "flair" to "🦊")
+        waitUntil(label = "updateUser with the flair") {
+            observer.session.roster.any { it.nick == targetNick && it.flair == "🦊" }
+        }
+        val updates = observer.seen<SessionEvent.RosterChanged>().size
+        Phantom.admin(ch, "flair", "nick" to targetNick, "flair" to "")
+        waitUntil(label = "updateUser clearing the flair") {
+            observer.seen<SessionEvent.RosterChanged>().size > updates
+        }
+        assertEquals(null, observer.session.roster.first { it.nick == targetNick }.flair)
+
+        target.session.sendChat("hello")
+        waitUntil(label = "the target's chat") {
+            observer.seen<SessionEvent.Message>().any { it.frame.nick == targetNick }
+        }
+        val msg = observer.seen<SessionEvent.Message>().first { it.frame.nick == targetNick }
+        assertEquals(null, msg.frame.flair)
+    }
+
     /** `speak` must name its channel, or the server frisks silently and replies nothing. */
     @Test
     fun unmuzzleIsAcknowledged() = phantom { sessions ->
