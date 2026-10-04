@@ -172,7 +172,7 @@ private fun UserRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             // The server's own decoration, shown verbatim — `forceflair` allows any
-            // string of up to two characters, so this is not a fixed icon set. It is
+            // string of up to four code points, so this is not a fixed icon set. It is
             // also the fastest read on who can actually moderate.
             user.flair?.takeIf { it.isNotBlank() }?.let {
                 Text(text = it, style = MaterialTheme.typography.labelMedium)

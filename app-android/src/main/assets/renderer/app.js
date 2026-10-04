@@ -268,7 +268,7 @@
     /*
      * Flair and trip share the .trip span, in the site's own order — see
      * client.js: flair alone, trip alone, or "flair trip". Flair is whatever
-     * the server says (forceflair allows any string up to 2 chars), so it is
+     * the server says (forceflair allows any string up to 4 code points), so it is
      * escaped and rendered as text rather than mapped to an icon.
      */
     function tripSpan(m) {

@@ -480,7 +480,15 @@ class ChannelSession(
                 emit(SessionEvent.RosterChanged(channel, presence.roster))
             }
 
-            is Inbound.Chat -> emit(SessionEvent.Message(channel, frame))
+            // `chat` carries only the level's default flair: upstream's chat.js
+            // builds it from getAppearance(level) and ignores the per-channel
+            // override `forceflair` stores. The roster comes from
+            // getUserDetails(), which applies it, so prefer that — it is what
+            // the site's own client renders from too.
+            is Inbound.Chat -> {
+                val flair = presence[frame.userid]?.flair ?: frame.flair
+                emit(SessionEvent.Message(channel, frame.copy(flair = flair)))
+            }
             is Inbound.Emote -> emit(SessionEvent.Emote(channel, frame))
             is Inbound.Whisper -> emit(SessionEvent.Whisper(channel, frame))
             is Inbound.Invite -> emit(SessionEvent.Invited(channel, frame))

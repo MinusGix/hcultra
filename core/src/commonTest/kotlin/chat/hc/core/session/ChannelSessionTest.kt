@@ -301,6 +301,41 @@ class ChannelSessionTest {
     }
 
     /**
+     * A `forceflair` reaches peers only as `updateUser`; the chat frames that
+     * follow still carry the level default (`false` for an ordinary user). The
+     * message must show the forced flair, not lose it to the frame.
+     */
+    @Test
+    fun chatTakesFlairFromTheRoster() = runTest {
+        val transport = FakeTransport()
+        transport.onSend = { raw ->
+            when (cmdOf(raw)) {
+                "session" -> serverSends("""{"cmd":"session","restored":false,"token":"","channels":[]}""")
+                "join" -> {
+                    serverSends("""{"cmd":"onlineSet","users":[{"isme":true,"nick":"tester","userid":99},{"nick":"peer","userid":7,"flair":false},{"nick":"amod","userid":8,"level":999999,"flair":"⭐"}],"channel":"testroom"}""")
+                    serverSends("""{"cmd":"updateUser","nick":"peer","userid":7,"level":100,"flair":"🦊🦊","online":true,"channel":"testroom"}""")
+                    serverSends("""{"cmd":"chat","nick":"peer","userid":7,"level":100,"flair":false,"text":"hi","channel":"testroom"}""")
+                    serverSends("""{"cmd":"chat","nick":"amod","userid":8,"level":999999,"flair":"⭐","text":"hi","channel":"testroom"}""")
+                    serverSends("""{"cmd":"chat","nick":"ghost","userid":5,"level":9999,"flair":"💫","text":"hi","channel":"testroom"}""")
+                }
+            }
+        }
+        val s = session(transport)
+        val seen = mutableListOf<SessionEvent>()
+        val collector = this.launchCollect(s, seen)
+        s.start(this)
+        advanceUntilIdle()
+
+        val flairs = seen.filterIsInstance<SessionEvent.Message>().associate { it.frame.nick to it.frame.flair }
+        assertEquals("🦊🦊", flairs["peer"])
+        assertEquals("⭐", flairs["amod"])
+        // Not in the roster (yet): the frame's own flair is all there is.
+        assertEquals("💫", flairs["ghost"])
+        collector.cancel()
+        s.stop()
+    }
+
+    /**
      * Deferring those frames must not become a way to lose them: a handshake
      * that fails has no resume notice to order against, so whatever arrived is
      * delivered rather than discarded.

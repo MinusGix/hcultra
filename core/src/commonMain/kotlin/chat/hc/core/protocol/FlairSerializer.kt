@@ -47,7 +47,7 @@ internal object FlairSerializer : KSerializer<String?> {
 
     /**
      * Leniency can still hand us a bare `false` as an unquoted string. A real
-     * flair is capped at two characters by `forceflair`, so the literal can
+     * flair is capped at four code points by `forceflair`, so the literal can
      * never collide with one.
      */
     private fun String.normalizeFlair(): String? =

@@ -35,7 +35,7 @@ data class ChatMessage(
     val color: String? = null,
     /**
      * The server's own nick decoration — 🌟 admin, ⭐ mod, 👑 owner, 💫 channel
-     * mod, 🤖 bot by default, but `forceflair` can set any string of up to two
+     * mod, 🤖 bot by default, but `forceflair` can set any string of up to four
      * characters. Rendered as text for exactly that reason: it is not an enum
      * and cannot be mapped to a fixed icon set.
      */

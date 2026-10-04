@@ -98,7 +98,7 @@ body { font-size: 1rem; }
  *
  * Stacking them removes the problem rather than tuning around it, and it is
  * also simply what a fixed column wants: three short right-aligned runs. Both
- * flair and trip are bounded (2 chars and 6), so neither ever needs to wrap.
+ * flair and trip are bounded (4 code points and 6), so neither ever needs to wrap.
  */
 /*
  * column-reverse puts the nick — the bare text node, an anonymous flex item —
