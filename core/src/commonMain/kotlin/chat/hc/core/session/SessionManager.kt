@@ -47,7 +47,8 @@ data class ChannelUi(
  * re-reads state from here rather than reconnecting. That is what makes
  * backgrounding and returning feel seamless while history stays in memory only.
  *
- * One socket per channel — the server rejects a second `join` per socket.
+ * One socket per channel, by choice since the 2026-10 server update (a v2
+ * socket may now join several); see [ChannelSession].
  */
 class SessionManager(
     /** Owns every session and the pending-echo timers; supplied by the service. */
@@ -370,10 +371,12 @@ class SessionManager(
      * going arrives through the ordinary receive path and is reported by
      * exactly one piece of code.
      *
-     * A userid, never a nick. `invite.js` requires a numeric `userid` from a v2
-     * socket and *silently drops* a nick-only payload — no reply at all, and
-     * the rate-limit points spent anyway (see probe/FINDINGS.md §2), which is
-     * the worst failure shape there is: indistinguishable from success.
+     * A userid, never a nick. `invite.js` used to require a numeric `userid`
+     * from a v2 socket and *silently drop* a nick-only payload; since the
+     * 2026-10 update it accepts either, but a userid cannot be ambiguous, and a
+     * payload naming no one is still dropped with no reply and the rate-limit
+     * points spent (see probe/FINDINGS.md §2) — the worst failure shape there
+     * is: indistinguishable from success.
      *
      * Re-checked rather than trusting the UI, as [moderate] is. Inviting
      * yourself is legal server-side and merely useless, so the guard is against

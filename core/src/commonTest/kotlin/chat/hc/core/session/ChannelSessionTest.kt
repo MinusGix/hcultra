@@ -397,6 +397,42 @@ class ChannelSessionTest {
         s.stop()
     }
 
+    /**
+     * An address over the threshold has *every* frame refused with warn
+     * 987654323 instead — the `session` reply included. That must back off at
+     * once, not wait out the handshake timeout for a reply that is not coming.
+     */
+    @Test
+    fun blockedAddressBacksOffFromTheFirstFrame() = runTest {
+        var sessions = 0
+        val transport = FakeTransport()
+        transport.onSend = { raw ->
+            when (cmdOf(raw)) {
+                "session" -> {
+                    sessions += 1
+                    if (sessions == 1) {
+                        serverSends("""{"cmd":"warn","text":"You are being rate-limited or blocked.","id":987654323,"channel":false}""")
+                    } else {
+                        serverSends("""{"cmd":"session","restored":false,"token":"","channels":[]}""")
+                    }
+                }
+                "join" -> serverSends("""{"cmd":"onlineSet","users":[{"isme":true,"nick":"tester","userid":99}],"channel":"testroom"}""")
+            }
+        }
+        val s = session(transport)
+        val seen = mutableListOf<SessionEvent>()
+        val collector = this.launchCollect(s, seen)
+        s.start(this)
+        advanceUntilIdle()
+
+        assertEquals(SessionState.Live(restored = false), s.state.value)
+        assertEquals(2, transport.connections.size)
+        assertTrue(currentTime < 10_000, "retried only after ${currentTime}ms")
+        assertTrue(seen.any { it is SessionEvent.Warning && it.frame.id == 987654323 }, "the block was swallowed")
+        collector.cancel()
+        s.stop()
+    }
+
     /** A dropped socket reconnects and presents the token it earned. */
     @Test
     fun reconnectsAfterDropUsingToken() = runTest {

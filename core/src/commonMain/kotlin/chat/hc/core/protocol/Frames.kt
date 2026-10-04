@@ -239,7 +239,7 @@ enum class UpdateMode {
  *  - a v2 socket must name `channel` explicitly on targeted commands; unlike v1
  *    it is not filled in from the socket;
  *  - [Whisper] requires `nick` and rejects a userid-only payload, while
- *    [Invite] requires a numeric `userid` and silently drops a nick-only one.
+ *    [Invite] accepts either and silently drops a payload with neither.
  */
 @Serializable
 sealed class Outbound {
@@ -294,7 +294,11 @@ sealed class Outbound {
         override val cmd: String get() = "whisper"
     }
 
-    /** Requires numeric `userid`; a nick-only payload is silently dropped. */
+    /**
+     * Takes a numeric `userid` or a `nick` since the 2026-10 update; we send
+     * the userid, which cannot be ambiguous. A payload with neither is still
+     * dropped without a reply.
+     */
     @Serializable
     @SerialName("invite")
     data class Invite(
@@ -305,9 +309,14 @@ sealed class Outbound {
         override val cmd: String get() = "invite"
     }
 
+    /**
+     * Must name a channel the sender is in, like every channel-scoped command
+     * since the 2026-10 update: without one the server frisks for 1 and
+     * replies nothing.
+     */
     @Serializable
     @SerialName("changenick")
-    data class ChangeNick(val nick: String) : Outbound() {
+    data class ChangeNick(val channel: String, val nick: String) : Outbound() {
         override val cmd: String get() = "changenick"
     }
 

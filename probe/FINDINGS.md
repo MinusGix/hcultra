@@ -38,6 +38,8 @@ commands disagree:
   with `warn id 14: missing required nick`. Send `{cmd, channel, nick, text}`.
 - `invite` — requires **numeric `userid`** and string `channel`; a nick-only
   payload is silently dropped (`invite.js` `return true`, no reply at all).
+  *Since `450aeba` (2026-10-03) it accepts `nick` or `userid`; a payload with
+  neither is still dropped silently.*
 
 Since the 2026-10 server update this covers `chat`, `emote` and `updateMessage`
 too. `chat.js#run` still falls back to the socket's first channel, so plain text

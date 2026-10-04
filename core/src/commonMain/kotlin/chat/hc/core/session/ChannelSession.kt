@@ -32,11 +32,12 @@ import kotlinx.coroutines.withTimeout
 /**
  * One channel, one socket.
  *
- * The server rejects a second `join` on an established socket
- * (`warn id 33`, verified on live), so multi-channel means multiple sessions.
- * The session token already carries a `channels` array and `session.js`
- * restores every entry, so if upstream finishes multichannel this collapses to
- * one socket without the layers above noticing.
+ * Since the 2026-10 update the server accepts a second `join` on a v2 socket
+ * (legacy sockets get warn 35), keeping the first join's nick and password for
+ * every channel. We still hold one socket per channel: it lets each tab carry
+ * its own identity, and a drop costs one channel rather than all of them. The
+ * session token already carries a `channels` array and `session.js` restores
+ * every entry, so moving to one socket would not disturb the layers above.
  *
  * Lifecycle rules this class exists to enforce, all verified in probe/FINDINGS.md:
  *  1. The **first frame on every socket must be `session`** — that is what
@@ -276,9 +277,17 @@ class ChannelSession(
             governor.spend(RateGovernor.Cost.SESSION)
             opened.send(FrameCodec.encode(Outbound.Session(token)))
 
-            val session = awaitFrame(frames, "session reply", deferred) {
-                it is Inbound.Session
-            } as Inbound.Session
+            val session = when (val reply = awaitFrame(frames, "session reply", deferred) {
+                it is Inbound.Session || (it is Inbound.Warn && it.isRateLimited())
+            }) {
+                is Inbound.Session -> reply
+                // Blocked before the handshake even starts: the reply to
+                // `session` is replaced by the warn. Back off like a refused join.
+                else -> {
+                    deferred += reply
+                    throw JoinRateLimitedException()
+                }
+            }
             if (session.token.isNotEmpty()) tokenStore.save(url, channel, credentials, session.token)
 
             // session.js restores each channel *before* it replies, so `channels`
@@ -360,7 +369,7 @@ class ChannelSession(
         while (true) {
             val reply = awaitFrame(frames, "onlineSet", deferred) {
                 it is Inbound.OnlineSet || it is Inbound.Captcha || it is Inbound.PasswordReq ||
-                    (it is Inbound.Warn && (it.isJoinFailure() || it.isWrongAnswer() || it.id == ErrorId.RATELIMIT))
+                    (it is Inbound.Warn && (it.isJoinFailure() || it.isWrongAnswer() || it.isRateLimited()))
             }
             when (reply) {
                 is Inbound.OnlineSet -> {
@@ -377,10 +386,11 @@ class ChannelSession(
 
                 is Inbound.Warn -> {
                     // join.js reports its own rate limit as Global.RATELIMIT
-                    // since the 2026-10 update, not from the Join block. Not
-                    // fatal: hand it back as deferred so dispatch() both shows
-                    // it and resyncs the governor, and let supervise() back off.
-                    if (reply.id == ErrorId.RATELIMIT) {
+                    // since the 2026-10 update, not from the Join block, and an
+                    // address over the threshold gets BLOCKED for any frame.
+                    // Not fatal: hand it back as deferred so dispatch() both
+                    // shows it and resyncs the governor, and let supervise() back off.
+                    if (reply.isRateLimited()) {
                         deferred += reply
                         throw JoinRateLimitedException()
                     }
@@ -546,7 +556,7 @@ class ChannelSession(
 
             is Inbound.Warn -> {
                 // Our local rate model was optimistic; resync before we make it worse.
-                if (frame.id == ErrorId.RATELIMIT) governor.penalize(RateGovernor.Cost.JOIN)
+                if (frame.isRateLimited()) governor.penalize(RateGovernor.Cost.JOIN)
                 emit(SessionEvent.Warning(channel, frame))
             }
 
@@ -577,6 +587,10 @@ class ChannelSession(
 private fun Inbound.Warn.isJoinFailure(): Boolean =
     id in ErrorId.JOIN_INVALID_NICK..ErrorId.JOIN_LEGACY_RESTRICT || text.contains("may not join")
 
+/** A command's own rate limit, or the server refusing every frame from our address. */
+private fun Inbound.Warn.isRateLimited(): Boolean =
+    id == ErrorId.RATELIMIT || id == ErrorId.BLOCKED
+
 private fun Inbound.Warn.isWrongAnswer(): Boolean =
     id == ErrorId.BAD_CAPTCHA || id == ErrorId.INVALID_PASSWORD
 
@@ -596,7 +610,7 @@ private const val WRONG_ANSWER_COST = 7.0
 
 class FatalSessionException(message: String) : Exception(message)
 
-/** The server rate-limited our join. Retryable; the backoff is the remedy. */
+/** The server rate-limited our join, or blocked our address. Retryable; the backoff is the remedy. */
 private class JoinRateLimitedException : Exception("join rate-limited")
 
 /** A rejoin collided with our own not-yet-reaped previous socket. Retryable. */

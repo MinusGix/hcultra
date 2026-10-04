@@ -186,9 +186,12 @@ class ChannelBuffer(capacity: Int = HistoryLimit.DEFAULT_LINES) {
      * the target may have aged out of the ring, and a partial edit applied to
      * the wrong message is worse than a dropped one.
      *
-     * The edit is scoped to the sender, as the server scopes it: a customId is
-     * at most six characters and is only unique per user, so an unscoped match
-     * would let one user's stream rewrite a message someone else sent.
+     * The edit is scoped to the sender. The server no longer does that itself
+     * (the 2026-10 update dropped its record of active messages, and with it
+     * the author check, the five-minute expiry and the refusal after
+     * `complete`), so this is the only check left: a customId is at most six
+     * characters and only unique per user, so an unscoped match would let one
+     * user's stream rewrite a message someone else sent.
      *
      * Mid-stream is deliberately not tracked. A stream has no reliable end —
      * `complete` is optional in practice, since the reference client discards

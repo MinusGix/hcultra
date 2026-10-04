@@ -134,6 +134,13 @@ object ErrorId {
     /** Password.NO_AUTO_JOIN: a token restore refused because the channel has a password. */
     const val PASSWORD_NO_REJOIN = 221
 
+    /**
+     * Not in `_Constants.js`: hackchat-server's MainServer sends it, through
+     * the `socketreply` command, in place of handling *any* frame while the
+     * address is over the rate threshold or arrested — `session` included.
+     */
+    const val BLOCKED = 987654323
+
     /** Info.Core.MOTD, delivered on every join. Observed as 1304 on live. */
     const val MOTD = 1304
 }
