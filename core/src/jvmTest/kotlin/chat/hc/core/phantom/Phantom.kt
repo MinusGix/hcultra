@@ -98,6 +98,12 @@ object Phantom {
     /** Closes frozen connections, so the server finally lets their ghosts go. */
     fun release() = post("/release", JsonObject(emptyMap()))
 
+    /**
+     * Restarts the server — every channel, lock and rate score forgotten —
+     * with the real 25-point rate limit if [strict], or effectively none.
+     */
+    fun reset(strict: Boolean) = post("/reset", JsonObject(mapOf("strict" to JsonPrimitive(strict))))
+
     private fun post(path: String, body: JsonObject): JsonObject {
         val req = HttpRequest.newBuilder(URI.create("$control$path"))
             .POST(HttpRequest.BodyPublishers.ofString(body.toString()))

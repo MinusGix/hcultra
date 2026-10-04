@@ -22,10 +22,16 @@ import kotlin.math.pow
 class RateGovernor(
     private val halflifeMillis: Long = 30_000,
     /**
-     * Server threshold is 25. We hold well under it because we do not model
-     * every command's weight, and other clients on the same NAT share the score.
+     * The server's threshold. A frame is refused once the score *reaches* it
+     * (`score >= threshold`), and a refused frame is still scored, so we keep
+     * every frame strictly below it rather than at it.
+     *
+     * No margin beyond that. What it does not cover: other clients behind the
+     * same NAT, commands whose weight we do not model, and frames that left
+     * spaced out but arrived bunched (a network stall), which the server
+     * decays less between than we did.
      */
-    private val ceiling: Double = 12.0,
+    private val ceiling: Double = 25.0,
     private val now: () -> Long = { currentTimeMillis() },
     private val sleep: suspend (Long) -> Unit = { delay(it) },
 ) {
@@ -37,25 +43,33 @@ class RateGovernor(
     fun projected(at: Long = now()): Double =
         score * 2.0.pow(-(at - stamp).toDouble() / halflifeMillis)
 
-    /** Milliseconds to wait before [cost] can be spent without crossing the ceiling. */
+    /**
+     * Milliseconds to wait before a frame of total weight [cost] — the frame
+     * point included — leaves the score strictly below the ceiling.
+     */
     fun waitMillis(cost: Double, at: Long = now()): Long {
         val headroom = ceiling - cost
         require(headroom > 0) { "cost $cost exceeds ceiling $ceiling" }
         val current = projected(at)
-        if (current <= headroom) return 0
-        return ceil(halflifeMillis * log2(current / headroom)).toLong()
+        if (current < headroom) return 0
+        // At exactly this long the score would land *on* the ceiling; one more
+        // millisecond puts it under.
+        return ceil(halflifeMillis * log2(current / headroom)).toLong() + 1
     }
 
-    /** Suspends until [cost] is affordable, then records it. */
-    suspend fun spend(cost: Double) {
-        if (cost <= 0.0) return
-        mutex.withLock {
-            val wait = waitMillis(cost)
-            if (wait > 0) sleep(wait)
-            val t = now()
-            score = projected(t) + cost
-            stamp = t
-        }
+    /**
+     * Suspends until one frame carrying a command of weight [cost] is
+     * affordable, then records it. Call exactly once per frame sent: the
+     * server's per-frame point ([Cost.FRAME]) is added here, so [cost] is only
+     * the command's own weight and may be zero.
+     */
+    suspend fun spend(cost: Double) = mutex.withLock {
+        val total = cost + Cost.FRAME
+        val wait = waitMillis(total)
+        if (wait > 0) sleep(wait)
+        val t = now()
+        score = projected(t) + total
+        stamp = t
     }
 
     /**
@@ -70,6 +84,13 @@ class RateGovernor(
 
     /** Command weights, from the server command modules. */
     object Cost {
+        /**
+         * What every frame costs before its command runs: MainServer's
+         * `handleData` does `frisk(socket, 1)` on each one received — even one
+         * that is then refused or malformed. Added by [spend], not by callers.
+         */
+        const val FRAME = 1.0
+
         const val JOIN = 3.0
         const val HELP = 2.0
         const val INVITE = 2.0
@@ -88,7 +109,7 @@ class RateGovernor(
 
         const val DEFAULT = 1.0
 
-        /** chat.js: `text.length / 83 / 4` */
+        /** chat.js: `text.length / 83 / 4`, on top of [FRAME]. */
         fun chat(text: String): Double = text.length / 83.0 / 4.0
     }
 }

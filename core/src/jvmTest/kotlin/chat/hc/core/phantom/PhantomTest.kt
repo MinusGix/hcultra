@@ -29,7 +29,7 @@ class PhantomTest {
         val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         val sessions = mutableListOf<Recorded>()
         try {
-            withTimeout(60_000) { scope.block(sessions) }
+            withTimeout(90_000) { scope.block(sessions) }
         } finally {
             sessions.forEach { it.session.stop() }
             scope.cancel()
@@ -84,6 +84,31 @@ class PhantomTest {
         mod.session.send(Moderation.frameFor(ModAction.Unmuzzle, ch, user)!!)
         waitUntil(label = "unmuzzle notice (Info.Mod.UNMUZZLED_DETAILED)") {
             mod.seen<SessionEvent.Notice>().any { it.frame.id == 1208 }
+        }
+    }
+
+    /**
+     * Under the real limit, a burst of short messages must be paced by our
+     * governor, not discovered by the server. Every frame costs a point before
+     * its command runs, so ~25 quick "hi"s reach the threshold; a model that
+     * charged only chat.js's `length / 83 / 4` let them all through.
+     */
+    @Test
+    fun burstOfShortChatsStaysUnderTheRealLimit() = phantom { sessions ->
+        Phantom.reset(strict = true)
+        try {
+            val ch = Phantom.channel("burst")
+            val s = Phantom.session(this, ch, Credentials(Phantom.nick("bu"))).also { sessions += it }
+            s.awaitLive()
+            val count = 30
+            repeat(count) { s.session.sendChat("hi $it") }
+            waitUntil(timeoutMillis = 45_000, label = "all $count echoes") {
+                s.seen<SessionEvent.Message>().size >= count
+            }
+            val warned = s.seen<SessionEvent.Warning>().map { it.frame.id }
+            assertTrue(warned.none { it == 11 || it == 987654323 }, "the server rate-limited us: $warned")
+        } finally {
+            Phantom.reset(strict = false)
         }
     }
 
