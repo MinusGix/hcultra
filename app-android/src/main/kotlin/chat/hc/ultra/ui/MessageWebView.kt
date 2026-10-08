@@ -47,6 +47,8 @@ import chat.hc.core.render.NickLayout
 import chat.hc.core.render.RendererBridge
 import chat.hc.core.render.TranscriptSync
 import chat.hc.core.store.ChatMessage
+import chat.hc.core.store.MessageKind
+import org.json.JSONObject
 
 /**
  * Message transcript rendered by the site's own markdown + KaTeX + highlight.js
@@ -62,6 +64,8 @@ data class RendererCallbacks(
     val onChannelTap: (String) -> Unit = {},
     /** A tapped nick: mention them in the composer. */
     val onNickTap: (String) -> Unit = {},
+    /** A held nick: everything else about them, and when the message was sent. */
+    val onNickHold: (NickHold) -> Unit = {},
     /** A tapped embedded image, by its URL: show it full screen. */
     val onImageTap: (String) -> Unit = {},
     /** A message's whole text, to go into the composer. */
@@ -108,6 +112,16 @@ private class Bridge(
     @JavascriptInterface
     fun onNickTap(nick: String) {
         Handler(Looper.getMainLooper()).post { callbacks.onNickTap(nick) }
+    }
+
+    /**
+     * A held nick, as JSON: the page has more to say than one string. Main
+     * thread, as [onNickTap]: it opens a sheet.
+     */
+    @JavascriptInterface
+    fun onNickHold(json: String) {
+        val hold = NickHold.parse(json) ?: return
+        Handler(Looper.getMainLooper()).post { callbacks.onNickHold(hold) }
     }
 
     /**
@@ -169,6 +183,37 @@ private class Bridge(
         val atBottom = state.substringBefore(':') == "1"
         val unseen = state.substringAfter(':').toIntOrNull() ?: 0
         Handler(Looper.getMainLooper()).post { scrolled(ScrollState(atBottom, unseen)) }
+    }
+}
+
+/**
+ * Who a held nick belongs to, and the message it was held on.
+ *
+ * [nick] is the person the nick names, which for an outgoing whisper is whom
+ * it went to, not who sent it — so [isMine] alone does not mean "this is you".
+ */
+data class NickHold(
+    val nick: String,
+    val kind: MessageKind,
+    val userid: Long,
+    val trip: String?,
+    /** Epoch millis; 0 when unknown. */
+    val at: Long,
+    val isMine: Boolean,
+) {
+    companion object {
+        /** Null for anything malformed: the page renders untrusted text. */
+        fun parse(json: String): NickHold? = runCatching {
+            val o = JSONObject(json)
+            NickHold(
+                nick = o.getString("nick").takeIf(String::isNotEmpty) ?: return null,
+                kind = MessageKind.valueOf(o.getString("kind")),
+                userid = o.optLong("userid"),
+                trip = o.optString("trip").takeIf { !o.isNull("trip") && it.isNotBlank() },
+                at = o.optLong("at"),
+                isMine = o.optBoolean("isMine"),
+            )
+        }.getOrNull()
     }
 }
 

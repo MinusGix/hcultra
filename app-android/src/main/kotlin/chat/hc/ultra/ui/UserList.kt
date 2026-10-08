@@ -59,23 +59,18 @@ fun UserList(
     /** Actions this user may take against a target; empty for ordinary users. */
     modActionsFor: (User) -> List<ModAction> = { emptyList() },
     onModerate: (ModAction, User) -> Unit = { _, _ -> },
+    /** Whether this user's messages are being hidden. */
+    isIgnored: (User) -> Boolean = { false },
+    onToggleIgnore: (User) -> Unit = {},
 ) {
     var confirming by remember { mutableStateOf<Pair<ModAction, User>?>(null) }
 
     confirming?.let { (action, target) ->
-        AlertDialog(
-            onDismissRequest = { confirming = null },
-            title = { Text("${action.label} ${target.nick}?") },
-            text = { Text(describe(action, target.nick)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    onModerate(action, target)
-                    confirming = null
-                }) { Text(action.label) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirming = null }) { Text("Cancel") }
-            },
+        ConfirmModeration(
+            action = action,
+            nick = target.nick,
+            onConfirm = { onModerate(action, target) },
+            onDismiss = { confirming = null },
         )
     }
 
@@ -111,6 +106,8 @@ fun UserList(
                     onClick = { onMention(user.nick) },
                     onWhisper = { onWhisper(user.nick) },
                     onInvite = { onInvite(user) },
+                    ignored = isIgnored(user),
+                    onToggleIgnore = { onToggleIgnore(user) },
                     modActions = modActionsFor(user),
                     onModAction = { action ->
                         // Destructive actions confirm; Unmuzzle is trivially
@@ -122,6 +119,33 @@ fun UserList(
             }
         }
     }
+}
+
+/**
+ * The confirmation every destructive moderation action goes through, from the
+ * roster or from a held nick: the dialog is where the target is named.
+ */
+@Composable
+internal fun ConfirmModeration(
+    action: ModAction,
+    nick: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${action.label} $nick?") },
+        text = { Text(describe(action, nick)) },
+        confirmButton = {
+            TextButton(onClick = {
+                onConfirm()
+                onDismiss()
+            }) { Text(action.label) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 private fun describe(action: ModAction, nick: String): String = when (action) {
@@ -138,6 +162,8 @@ private fun UserRow(
     onClick: () -> Unit,
     onWhisper: () -> Unit,
     onInvite: () -> Unit,
+    ignored: Boolean,
+    onToggleIgnore: () -> Unit,
     modActions: List<ModAction>,
     onModAction: (ModAction) -> Unit,
 ) {
@@ -225,6 +251,16 @@ private fun UserRow(
                 onClick = {
                     menuOpen = false
                     onInvite()
+                },
+            )
+            // Here as well as on a held nick, because an ignored person's
+            // messages are gone from the transcript: their nick there is no
+            // longer something you can hold.
+            DropdownMenuItem(
+                text = { Text(if (ignored) "Stop ignoring" else "Ignore") },
+                onClick = {
+                    menuOpen = false
+                    onToggleIgnore()
                 },
             )
             // Gated, so usually none of these. Destructive ones still route

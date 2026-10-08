@@ -1,6 +1,15 @@
 package chat.hc.ultra
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import chat.hc.ultra.ui.ConfirmModeration
+import chat.hc.ultra.ui.NickHold
+import chat.hc.ultra.ui.NickSheet
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -676,6 +685,18 @@ private fun AppScreen(
     // Held as a TextFieldValue rather than a String so a mention can be dropped
     // at the cursor instead of always at the end.
     val drafts = remember { mutableStateMapOf<String, TextFieldValue>() }
+    // Whose messages to hide, by nick, as the site's own ignore does: a
+    // userid is per connection, so keying on it would let anyone back in by
+    // reconnecting. Saveable, so a rotation does not unignore anyone; never
+    // written anywhere else, so it lasts no longer than the site's either.
+    var ignored by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val toggleIgnore: (String) -> Unit = { nick ->
+        ignored = if (nick in ignored) ignored - nick else ignored + nick
+    }
+    // A held nick, and the channel it was held in: the sheet must act on that
+    // channel even if a notification switches tabs underneath it.
+    var holding by remember { mutableStateOf<Pair<String, NickHold>?>(null) }
+    var confirmingMod by remember { mutableStateOf<Triple<String, ModAction, User>?>(null) }
 
     // A closing channel is hidden the instant it is closed, but stays in the map
     // — and on the wire — until its grace period runs out. Everything the tab
@@ -731,12 +752,22 @@ private fun AppScreen(
         }
     }
     val currentCompose by rememberUpdatedState(compose)
+    val haptics = LocalHapticFeedback.current
+    val hold: (NickHold) -> Unit = { h ->
+        active?.channel?.let { channel ->
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            holding = channel to h
+        }
+    }
+    val currentHold by rememberUpdatedState(hold)
     val webCallbacks = remember(rendererCallbacks) {
         rendererCallbacks.copy(
             onNickTap = { nick -> currentMention(nick) },
+            onNickHold = { h -> currentHold(h) },
             onCompose = { text -> currentCompose(text) },
         )
     }
+    val context = LocalContext.current
 
     LaunchedEffect(pendingChannel) {
         if (pendingChannel != null) showJoin = true
@@ -850,9 +881,51 @@ private fun AppScreen(
                     }
                 }
 
+                holding?.takeIf { (channel, _) -> channel == active.channel }?.let { (channel, h) ->
+                    val me = active.roster.firstOrNull { it.isme }
+                    // Moderation must reach the connection that sent the
+                    // message, so only a userid match will do for it. Whisper
+                    // and invite go by whoever holds the nick now, which is
+                    // what typing `/w nick` would reach anyway.
+                    val sameConnection = active.roster.firstOrNull { h.userid != 0L && it.userid == h.userid }
+                    val online = sameConnection ?: active.roster.firstOrNull { it.nick == h.nick }
+                    // An outgoing whisper's nick is the recipient's, so being
+                    // ours does not make the nick ours.
+                    val isSelf = (me != null && online?.userid == me.userid) ||
+                        (h.isMine && h.kind != MessageKind.WhisperSent)
+                    NickSheet(
+                        hold = h,
+                        isSelf = isSelf,
+                        online = online,
+                        modActions = sameConnection?.let { Moderation.available(me, it) }.orEmpty(),
+                        ignored = h.nick in ignored,
+                        onMention = { mention(h.nick) },
+                        onWhisper = { drafts[channel] = fieldValue("/w ${h.nick} ") },
+                        onInvite = { online?.let { onInvite(channel, it) } },
+                        onCopy = { text -> copyToClipboard(context, text) },
+                        onToggleIgnore = { toggleIgnore(h.nick) },
+                        onModerate = { action ->
+                            if (sameConnection == null) return@NickSheet
+                            if (action.destructive) confirmingMod = Triple(channel, action, sameConnection)
+                            else onModerate(channel, action, sameConnection)
+                        },
+                        onDismiss = { holding = null },
+                    )
+                }
+                confirmingMod?.let { (channel, action, target) ->
+                    ConfirmModeration(
+                        action = action,
+                        nick = target.nick,
+                        onConfirm = { onModerate(channel, action, target) },
+                        onDismiss = { confirmingMod = null },
+                    )
+                }
+
                 if (openRoster == active.channel) {
                     UserList(
                         users = active.roster,
+                        isIgnored = { it.nick in ignored },
+                        onToggleIgnore = { toggleIgnore(it.nick) },
                         modActionsFor = { target ->
                             Moderation.available(active.roster.firstOrNull { it.isme }, target)
                         },
@@ -879,10 +952,14 @@ private fun AppScreen(
                     )
                 }
 
-                val visible = remember(active.messages, joinLeave) {
-                    if (joinLeave) active.messages
+                val visible = remember(active.messages, joinLeave, ignored) {
+                    if (joinLeave && ignored.isEmpty()) active.messages
                     else active.messages.filterNot {
-                        it.kind == MessageKind.Join || it.kind == MessageKind.Leave
+                        (!joinLeave && (it.kind == MessageKind.Join || it.kind == MessageKind.Leave)) ||
+                            // What they say, not that they came and went: the
+                            // join/leave line is where their nick can still be
+                            // held to stop ignoring them.
+                            (it.nick in ignored && !it.isMine && it.kind in IGNORABLE)
                     }
                 }
 
@@ -1352,4 +1429,16 @@ private fun describe(state: SessionState): String? = when (state) {
     is SessionState.Challenged -> null
     SessionState.Connecting, SessionState.Handshaking -> "Connecting…"
     SessionState.Idle -> null
+}
+
+/** Kinds an ignored nick's messages are hidden from: what they say to the room or to you. */
+private val IGNORABLE = setOf(MessageKind.Chat, MessageKind.Emote, MessageKind.Whisper)
+
+private fun copyToClipboard(context: Context, text: String) {
+    context.getSystemService(ClipboardManager::class.java)
+        ?.setPrimaryClip(ClipData.newPlainText("nick", text))
+    // Android only confirms a copy on its own from 13 on.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+        Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+    }
 }

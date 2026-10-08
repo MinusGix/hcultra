@@ -27,6 +27,14 @@ internal data class WireMessage(
     val level: Int = 0,
     val delivery: String,
     val isMine: Boolean,
+    /**
+     * Not drawn: a held nick hands both back to native for the menu, which is
+     * the only place the time is shown. Every row costs a few bytes more so
+     * that the page never has to ask for them.
+     */
+    val userid: Long = 0L,
+    /** Epoch millis, the server's `time` where it sent one. */
+    val at: Long = 0L,
 )
 
 /**
@@ -83,6 +91,8 @@ object RendererBridge {
         level = m.level,
         delivery = m.delivery.name,
         isMine = m.isMine,
+        userid = m.userid,
+        at = m.at,
     )
 
     /** The message list as a JSON array. */

@@ -294,7 +294,9 @@
       var style = m.color ? ' style="color:#' + esc(m.color).replace(/[^0-9a-fA-F]/g, '') + '"' : '';
       head = '<span class="nick"' + nickAttr(m) + style + '>' + tripSpan(m) + esc(m.nick) + '</span>';
     } else if (m.kind === 'Emote') {
-      head = '<span class="nick">*</span>';
+      // The name is in the text ("@nick waves"), but the text is selectable
+      // and this is not, so the star is what stands for them here.
+      head = '<span class="nick"' + nickAttr(m) + '>*</span>';
     } else if (m.kind === 'Whisper') {
       // Incoming: who it came from.
       head = '<span class="wtag">whisper from</span> <span class="nick"' + nickAttr(m) + '>' +
@@ -339,6 +341,10 @@
     }
 
     row.innerHTML = head + '<span class="text">' + body + '</span>' + flag;
+
+    // What a held nick tells native about: who, and when. Refilled with the
+    // row, so an edit or a confirmed echo is reflected.
+    row._hcMsg = m;
 
     // What Copy puts on the clipboard: the message as it was sent, not as it
     // was rendered. The point is resending a bot command, and a command that
@@ -679,6 +685,47 @@
     var row = e.target.closest('.message');
     if (row && row !== selected) select(row);
     else deselect();
+  });
+
+  /*
+   * Holding a nick opens a menu about that person, with when the message was
+   * sent — which is shown nowhere else, so it does not crowd the transcript.
+   *
+   * Blink runs a long-press's word selection *before* it sends `contextmenu`
+   * (GestureManager::HandleGestureLongPress), so cancelling `contextmenu` alone
+   * would still leave the nick selected under the menu. The selection is
+   * stopped where it starts instead, by cancelling a `selectstart` that begins
+   * inside a nick. Nothing else changes: `user-select` is untouched, so a
+   * selection begun in the text and dragged across lines still copies the
+   * nicks with it, and a long-press anywhere else selects as it always did.
+   *
+   * No `click` follows a long press in Blink, so the tap handler above does
+   * not also mention them.
+   */
+  function nickOf(target) {
+    var el = target && target.nodeType === 3 ? target.parentNode : target;
+    return el && el.closest ? el.closest('[data-nick]') : null;
+  }
+
+  document.addEventListener('selectstart', function (e) {
+    if (nickOf(e.target)) e.preventDefault();
+  });
+
+  document.addEventListener('contextmenu', function (e) {
+    var n = nickOf(e.target);
+    if (!n) return;
+    e.preventDefault();
+    var row = n.closest('.message');
+    var m = row && row._hcMsg;
+    if (!m) return;
+    post('onNickHold', JSON.stringify({
+      nick: n.getAttribute('data-nick'),
+      kind: m.kind,
+      userid: m.userid || 0,
+      trip: m.trip || null,
+      at: m.at || 0,
+      isMine: !!m.isMine
+    }));
   });
 
   function setHref(id, href) {
