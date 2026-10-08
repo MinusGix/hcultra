@@ -214,8 +214,10 @@ kick.js comments as "trigger client-side resync".
 
 What follows, observed against the phantom:
 
-- Still connected, the target's `chat` goes to the destination, where nobody
-  hears it, and the echo comes back tagged with that channel.
+- Still connected, the target's `chat` naming the original channel reaches
+  nobody else, but is echoed back to the target alone, tagged with the
+  original channel. On their screen it looks sent: a quiet ban, as intended.
+  The `session` frame is the one leak (upstream-asks §4).
 - A token restore with the new token puts the socket in the destination alone:
   `onlineSet {channel: dest, users: [self]}` arrives before
   `session {restored:true, channels:[dest]}`. A cold join back on the same

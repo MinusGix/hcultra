@@ -5,9 +5,9 @@ stores message content and none weakens the no-logging design — see "Why this
 doesn't weaken no-logging" under each.
 
 Evidence and reproduction for 1 and 2: `../probe/FINDINGS.md`, scenarios in
-`../probe/run.mjs` (`resume`, `overlap`), measured against live 2.2.3b. Item 3
-was found against hack-chat/main `450aeba` (2026-10-03, hackchat-server 2.3.4)
-and reproduces on `../probe/phantom`.
+`../probe/run.mjs` (`resume`, `overlap`), measured against live 2.2.3b. Items 3
+and 4 were found against hack-chat/main `450aeba` (2026-10-03, hackchat-server
+2.3.4) and reproduce on `../probe/phantom`.
 
 Status: **not filed yet.** The client is being designed to work correctly
 *without* any of these; see "If this never lands" under each.
@@ -209,7 +209,46 @@ watches "Reconnecting" for the whole of that time.
 
 ---
 
-## 4. Smaller items (not worth a PR on their own)
+## 4. Bug: a kick is no longer silent to the target
+
+### The problem
+
+`kick` is meant as a quiet ban. Its own header says it "silently forces target
+client(s) into another channel": peers and mods are told, and the target goes
+on seeing the room as it was. What they say is echoed back only to them, so
+nothing on their screen changes.
+
+Since `450aeba`, `kick.js` line 201 also sends the target a fresh `session`
+frame, commented "trigger client-side resync". Its `channels` lists only the
+destination. Any v2 client that looks at it can now tell it was kicked, and
+where to. And a client that stores the token, as every client must to resume,
+is restored into the destination on its next reconnect: alone, and visibly
+somewhere else.
+
+Reproduce with `../probe/phantom`: two clients in a channel, `POST /admin`
+`{verb: "kick"}` on one, and watch it receive
+`session {restored: false, channels: ["<dest>"]}`.
+
+### The ask
+
+Do not send the kicked socket a `session` frame. Nothing else in the kick needs
+it: the target is not meant to resync, it is meant not to notice.
+
+### Why this doesn't weaken no-logging
+
+It removes one frame. Nothing is stored either way.
+
+### If this never lands
+
+The client ignores a token that does not name its channel, and ignores frames
+tagged with another channel (FINDINGS §8b). The kick is then invisible again,
+and a reconnect restores the previous token into the original channel, as it
+did before `450aeba`. Without that guard, the restore into the destination
+used to replace the roster with one listing only the kicked user.
+
+---
+
+## 5. Smaller items (not worth a PR on their own)
 
 - **`help` usage strings are stale for v2.** `help` advertises
   `invite` as `{ cmd: 'invite', nick: '<target nickname>' }`. Since `450aeba`

@@ -275,4 +275,19 @@ class PhantomTest {
             observer.seen<SessionEvent.Message>().any { it.frame.text == "back" }
         }
     }
+
+    /**
+     * A kick is a quiet ban: the target must not be able to tell. What they
+     * say afterwards reaches nobody, but on their screen it has to look sent.
+     */
+    @Test
+    fun aKickedUsersOwnMessagesStillLookSent() = phantom { sessions ->
+        val (_, observer, target) = kicked(sessions, "kick", InMemoryTokenStore())
+        target.session.sendChat("into the void")
+        waitUntil(label = "the kicked user's own message, delivered on their screen") {
+            target.seen<SessionEvent.Message>().any { it.frame.text == "into the void" }
+        }
+        delay(500)
+        assertTrue(observer.seen<SessionEvent.Message>().none { it.frame.text == "into the void" }, "the kick leaked a message")
+    }
 }
