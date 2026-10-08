@@ -204,6 +204,32 @@ also arrives before the `session` reply. Cold-joining on the same socket is how
 to get the challenge. The whitelist lives on the socket, so every reconnect is
 challenged again.
 
+## 8b. Kick moves the socket, and tells it only by a token (phantom, `450aeba`)
+
+`kick` sets the target's channel to a random 8-character one (or the mod's
+`to`) without closing anything. Peers get `onlineRemove`, and mods an `info`
+naming the destination. The target gets no `onlineRemove` or `info`; its only
+frame is a fresh `session {restored:false, token, channels:[dest]}`, which
+kick.js comments as "trigger client-side resync".
+
+What follows, observed against the phantom:
+
+- Still connected, the target's `chat` goes to the destination, where nobody
+  hears it, and the echo comes back tagged with that channel.
+- A token restore with the new token puts the socket in the destination alone:
+  `onlineSet {channel: dest, users: [self]}` arrives before
+  `session {restored:true, channels:[dest]}`. A cold join back on the same
+  socket succeeds, and the socket is then in **both** channels; the next token
+  names both, and a restore sends an `onlineSet` for each.
+- The previous token still names the original channel and still restores into
+  it. A kick is not a ban.
+
+So a client must check frames' `channel`. The client used to take any
+`onlineSet` as its own, and the destination's, replayed after the cold join,
+emptied the roster. It now ignores frames for other channels and keeps a token
+only if it names our channel. Upstream also marks global frames
+`channel: false`, which a lenient decoder reads as the string `"false"`.
+
 ## 9. Untested / open
 
 - `changenick` — hit a per-socket "changing nicknames too fast" cooldown on both

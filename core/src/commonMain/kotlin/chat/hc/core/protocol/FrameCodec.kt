@@ -2,6 +2,7 @@ package chat.hc.core.protocol
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -39,7 +40,7 @@ object FrameCodec {
     fun encode(frame: Outbound): String = json.encodeToString(Outbound.serializer(), frame)
 
     fun decode(text: String): Inbound {
-        val root = reader.parseToJsonElement(text).jsonObject
+        val root = withoutGlobalChannel(reader.parseToJsonElement(text).jsonObject)
         val cmd = root["cmd"]?.jsonPrimitive?.content
             ?: return Inbound.Unknown("", root, timeOf(root))
 
@@ -69,6 +70,17 @@ object FrameCodec {
     }
 
     private fun timeOf(o: JsonObject): Long? = o["time"]?.jsonPrimitive?.longOrNull
+
+    /**
+     * Upstream marks a frame for no channel in particular with `channel: false`
+     * — every join refusal and rate-limit warn. The lenient reader would decode
+     * that as the channel named "false", which a session then takes for some
+     * other channel and ignores. Absent is what it means.
+     */
+    private fun withoutGlobalChannel(o: JsonObject): JsonObject {
+        val ch = o["channel"] as? JsonPrimitive ?: return o
+        return if (ch.isString) o else JsonObject(o - "channel")
+    }
 }
 
 /**

@@ -164,6 +164,108 @@ class ChannelSessionTest {
         s.stop()
     }
 
+    /**
+     * A kick moves our socket to a random channel and sends a `session` frame
+     * whose token lists only that one (kick.js, "trigger client-side resync").
+     * Saved, it restored us into the random channel on the next connect — where
+     * we are alone — and that channel's onlineSet, held back mid-handshake, was
+     * replayed over the real one after the cold join: an empty userlist.
+     * Exactly the frames the phantom sends; see PhantomTest.
+     */
+    @Test
+    fun aTokenThatMovedUsElsewhereIsNotKept() = runTest {
+        val store = InMemoryTokenStore()
+        val transport = FakeTransport().apply { scriptColdJoin(issueToken = "tok-1") }
+        val s = session(transport, store)
+        s.start(this)
+        advanceUntilIdle()
+
+        transport.latest.serverSends("""{"cmd":"session","restored":false,"token":"tok-moved","channels":["r7hyvv"]}""")
+        advanceUntilIdle()
+
+        assertEquals("tok-1", store.load(TEST_URL, "testroom", TESTER))
+        s.stop()
+    }
+
+    /** The same, already saved by a build without the guard above. */
+    @Test
+    fun aRestoreIntoAnotherChannelDoesNotOverwriteTheRoster() = runTest {
+        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", TESTER, "tok-moved") }
+        val transport = FakeTransport()
+        transport.onSend = { raw ->
+            when (cmdOf(raw)) {
+                "session" -> {
+                    serverSends("""{"cmd":"onlineSet","users":[{"isme":true,"nick":"tester","userid":99}],"channel":"r7hyvv"}""")
+                    serverSends("""{"cmd":"session","restored":true,"token":"tok-elsewhere","channels":["r7hyvv"]}""")
+                }
+                "join" -> {
+                    serverSends(
+                        """{"cmd":"onlineSet","users":[{"nick":"peer","userid":7,"channel":"testroom"},""" +
+                            """{"isme":true,"nick":"tester","userid":99,"channel":"testroom"}],"channel":"testroom"}"""
+                    )
+                    serverSends("""{"cmd":"session","restored":false,"token":"tok-both","channels":["r7hyvv","testroom"]}""")
+                }
+            }
+        }
+        val s = session(transport, store)
+        s.start(this)
+        advanceUntilIdle()
+
+        assertEquals(listOf("peer", "tester"), s.roster.map { it.nick })
+        // The restore reply's token names only the other channel; the join's
+        // names ours too, and is the one worth keeping.
+        assertEquals("tok-both", store.load(TEST_URL, "testroom", TESTER))
+        s.stop()
+    }
+
+    /** A socket in two channels gets both onlineSets on restore; only ours is our roster. */
+    @Test
+    fun aRestoreOfSeveralChannelsTakesOurOnlineSet() = runTest {
+        val store = InMemoryTokenStore().apply { save(TEST_URL, "testroom", TESTER, "tok-both") }
+        val transport = FakeTransport()
+        transport.onSend = { raw ->
+            // Ours first: whichever comes second was replayed over the first.
+            if (cmdOf(raw) == "session") {
+                serverSends(
+                    """{"cmd":"onlineSet","users":[{"nick":"peer","userid":7},""" +
+                        """{"isme":true,"nick":"tester","userid":99}],"channel":"testroom"}"""
+                )
+                serverSends("""{"cmd":"onlineSet","users":[{"isme":true,"nick":"tester","userid":99}],"channel":"r7hyvv"}""")
+                serverSends("""{"cmd":"session","restored":true,"token":"tok-both-2","channels":["testroom","r7hyvv"]}""")
+            }
+        }
+        val s = session(transport, store)
+        s.start(this)
+        advanceUntilIdle()
+
+        assertEquals(SessionState.Live(restored = true), s.state.value)
+        assertEquals(listOf("peer", "tester"), s.roster.map { it.nick })
+        s.stop()
+    }
+
+    /** What is said in another channel the socket is in is not said here. */
+    @Test
+    fun framesForAnotherChannelAreIgnored() = runTest {
+        val transport = FakeTransport().apply { scriptColdJoin() }
+        val s = session(transport)
+        val events = mutableListOf<SessionEvent>()
+        val job = launch { s.events.collect { events += it } }
+        s.start(this)
+        advanceUntilIdle()
+
+        transport.latest.serverSends("""{"cmd":"onlineAdd","nick":"stranger","userid":5,"channel":"r7hyvv"}""")
+        transport.latest.serverSends("""{"cmd":"chat","nick":"stranger","userid":5,"text":"hi","channel":"r7hyvv"}""")
+        // A global warn names no channel (`channel: false` upstream) and is ours.
+        transport.latest.serverSends("""{"cmd":"warn","text":"global","channel":false}""")
+        advanceUntilIdle()
+
+        assertTrue(s.roster.none { it.nick == "stranger" }, "a stranger in another channel joined our roster")
+        assertTrue(events.none { it is SessionEvent.Message }, "another channel's chat was delivered here")
+        assertTrue(events.any { it is SessionEvent.Warning }, "a global warn was dropped")
+        job.cancel()
+        s.stop()
+    }
+
     /** The token we hold must actually be presented on reconnect. */
     @Test
     fun presentsStoredTokenOnConnect() = runTest {

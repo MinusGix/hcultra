@@ -2,6 +2,7 @@ package chat.hc.core.phantom
 
 import chat.hc.core.session.Challenge
 import chat.hc.core.session.Credentials
+import chat.hc.core.session.InMemoryTokenStore
 import chat.hc.core.session.ModAction
 import chat.hc.core.session.Moderation
 import chat.hc.core.session.SessionEvent
@@ -215,5 +216,63 @@ class PhantomTest {
         Phantom.admin(ch, "lock", "level" to "channelOwner")
         val s = Phantom.session(this, ch, Credentials(Phantom.nick("md"), Phantom.MOD_PASS)).also { sessions += it }
         s.awaitLive()
+    }
+
+    /**
+     * A kick moves the target's socket to a random channel, silently, and sends
+     * it a token naming only that channel. Reconnecting with that token restored
+     * it there — alone — and that onlineSet was replayed over the real channel's
+     * after the cold join back: the kicked user rejoined to an empty userlist.
+     */
+    private suspend fun CoroutineScope.kicked(
+        sessions: MutableList<Recorded>,
+        tag: String,
+        tokens: InMemoryTokenStore,
+    ): Triple<String, Recorded, Recorded> {
+        val ch = Phantom.channel(tag)
+        val observer = Phantom.session(this, ch, Credentials(Phantom.nick("obs"))).also { sessions += it }
+        observer.awaitLive()
+        // Joined last, so it is the connection Phantom.freeze(1) takes.
+        val target = Phantom.session(this, ch, Credentials(Phantom.nick("tgt")), tokenStore = tokens).also { sessions += it }
+        target.awaitLive()
+        val kickedNick = target.session.credentials.nick
+        Phantom.admin(ch, "kick", "nick" to kickedNick)
+        waitUntil(label = "the kick, as the observer sees it") {
+            observer.session.roster.none { it.nick == kickedNick }
+        }
+        return Triple(ch, observer, target)
+    }
+
+    @Test
+    fun kickedUserReconnectsToTheWholeRoster() = phantom { sessions ->
+        val (_, observer, target) = kicked(sessions, "kick", InMemoryTokenStore())
+        val reconnects = target.seen<SessionEvent.Resumed>().size
+        Phantom.freeze(1)
+        waitUntil(timeoutMillis = 10_000, label = "the reconnect") {
+            target.seen<SessionEvent.Resumed>().size > reconnects && target.session.state.value is SessionState.Live
+        }
+        val observerNick = observer.session.credentials.nick
+        waitUntil(label = "the observer in the reconnected roster; have ${target.session.roster.map { it.nick }}") {
+            target.session.roster.any { it.nick == observerNick }
+        }
+        Phantom.release()
+    }
+
+    @Test
+    fun kickedUserRejoinsToTheWholeRoster() = phantom { sessions ->
+        val tokens = InMemoryTokenStore()
+        val (ch, observer, target) = kicked(sessions, "kick", tokens)
+        target.session.stop()
+        val again = Phantom.session(this, ch, target.session.credentials, tokenStore = tokens).also { sessions += it }
+        again.awaitLive()
+        val observerNick = observer.session.credentials.nick
+        waitUntil(label = "the observer in the rejoined roster; have ${again.session.roster.map { it.nick }}") {
+            again.session.roster.any { it.nick == observerNick }
+        }
+        // And back in the channel for real, where the observer can hear them.
+        again.session.sendChat("back")
+        waitUntil(label = "the rejoined user's chat reaching the observer") {
+            observer.seen<SessionEvent.Message>().any { it.frame.text == "back" }
+        }
     }
 }

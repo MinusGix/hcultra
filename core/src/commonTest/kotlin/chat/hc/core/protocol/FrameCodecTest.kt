@@ -161,4 +161,13 @@ class FrameCodecTest {
         assertEquals("ch", i["channel"]?.jsonPrimitive?.content)
         assertEquals(42L, i["userid"]?.jsonPrimitive?.content?.toLong())
     }
+
+    /** `channel: false` is upstream for "no channel in particular", not a channel named "false". */
+    @Test
+    fun aFalseChannelIsNoChannel() {
+        val warn = FrameCodec.decode("""{"cmd":"warn","text":"You are joining channels too fast.","id":11,"channel":false}""")
+        assertEquals(null, (warn as Inbound.Warn).channel)
+        val info = FrameCodec.decode("""{"cmd":"info","text":"hi","channel":"lounge"}""")
+        assertEquals("lounge", (info as Inbound.Info).channel)
+    }
 }

@@ -288,7 +288,7 @@ class ChannelSession(
                     throw JoinRateLimitedException()
                 }
             }
-            if (session.token.isNotEmpty()) tokenStore.save(url, channel, credentials, session.token)
+            keepToken(session)
 
             // session.js restores each channel *before* it replies, so `channels`
             // is the server's verdict: a channel missing from it was refused —
@@ -299,9 +299,12 @@ class ChannelSession(
             if (session.restored && channel in session.channels) {
                 // Usually already here for the same reason; waited for only in
                 // case a server ever replies first.
-                val set = deferred.firstOrNull { it is Inbound.OnlineSet }?.also { deferred.remove(it) }
+                // Ours: a socket in several channels is sent an onlineSet for
+                // each, and any other one replayed later would replace this.
+                val ours = { f: Inbound -> f is Inbound.OnlineSet && isOurs(f) }
+                val set = deferred.firstOrNull(ours)?.also { deferred.remove(it) }
                     ?: runCatching {
-                        awaitFrame(frames, "restored onlineSet", deferred) { it is Inbound.OnlineSet }
+                        awaitFrame(frames, "restored onlineSet", deferred, ours)
                     }.getOrNull()
                 // Dispatched immediately, not deferred: the roster and our own
                 // userid have to be current before any held-back chat is
@@ -322,7 +325,7 @@ class ChannelSession(
                     val tok = awaitFrame(frames, "post-join token", deferred) {
                         it is Inbound.Session && it.token.isNotEmpty()
                     } as Inbound.Session
-                    tokenStore.save(url, channel, credentials, tok.token)
+                    keepToken(tok)
                 }
             } catch (_: TimeoutCancellationException) {
                 // Leave the old token in place; a later frame may still carry one.
@@ -514,6 +517,7 @@ class ChannelSession(
     }
 
     private suspend fun dispatch(frame: Inbound) {
+        if (!isOurs(frame)) return
         when (frame) {
             is Inbound.OnlineSet -> {
                 presence.reset(frame.users)
@@ -560,12 +564,58 @@ class ChannelSession(
                 emit(SessionEvent.Warning(channel, frame))
             }
 
-            is Inbound.Session ->
-                if (frame.token.isNotEmpty()) tokenStore.save(url, channel, credentials, frame.token)
+            is Inbound.Session -> keepToken(frame)
             // Only meaningful mid-join, where awaitAdmission consumes them.
             is Inbound.Captcha, is Inbound.PasswordReq -> Unit
             is Inbound.Unknown -> emit(SessionEvent.UnknownFrame(channel, frame))
         }
+    }
+
+    /**
+     * Whether [frame] is about this channel.
+     *
+     * One socket can be in more than one channel: a kick moves it to a random
+     * one without telling it, and a token restore rejoins every channel the
+     * token names. Frames say which channel they are about; one that names
+     * another is not ours to show, and an onlineSet from it would replace our
+     * roster with a channel we are alone in. A frame naming none — a global
+     * warn, `channel: false` upstream — is for every channel, so ours too.
+     */
+    private fun isOurs(frame: Inbound): Boolean {
+        val named = when (frame) {
+            is Inbound.OnlineSet -> frame.channel
+            is Inbound.OnlineAdd -> frame.channel
+            is Inbound.OnlineRemove -> frame.channel
+            is Inbound.UpdateUser -> frame.channel
+            is Inbound.Chat -> frame.channel
+            is Inbound.Emote -> frame.channel
+            is Inbound.UpdateMessage -> frame.channel
+            is Inbound.Whisper -> frame.channel
+            is Inbound.Invite -> frame.channel
+            is Inbound.Info -> frame.channel
+            is Inbound.Warn -> frame.channel
+            is Inbound.Captcha -> frame.channel
+            is Inbound.PasswordReq -> frame.channel
+            is Inbound.Session, is Inbound.Unknown -> null
+        }
+        return named == null || named == channel
+    }
+
+    /**
+     * Saves a token, unless it would not bring us back here.
+     *
+     * After a kick the server sends a token naming only the channel we were
+     * moved to (kick.js, "trigger client-side resync"). Restoring it put the
+     * socket there, alone, and cost a cold join to get back. The token we
+     * already hold still names this channel and is still valid, so keep it:
+     * a kick is not a ban, and rejoining is what the user asked for by
+     * reconnecting. A token naming no channels at all is older than that
+     * field and is kept as before.
+     */
+    private suspend fun keepToken(frame: Inbound.Session) {
+        if (frame.token.isEmpty()) return
+        if (frame.channels.isNotEmpty() && channel !in frame.channels) return
+        tokenStore.save(url, channel, credentials, frame.token)
     }
 
     private suspend fun emit(event: SessionEvent) = _events.emit(event)

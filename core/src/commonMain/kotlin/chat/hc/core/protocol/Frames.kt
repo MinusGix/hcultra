@@ -91,6 +91,7 @@ sealed interface Inbound {
         val uType: String? = null,
         val isBot: Boolean = false,
         val online: Boolean = true,
+        val channel: String? = null,
         override val time: Long? = null,
     ) : Inbound
 
