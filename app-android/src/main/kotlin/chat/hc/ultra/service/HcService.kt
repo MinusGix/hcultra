@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
@@ -104,11 +105,14 @@ class HcService : Service() {
             // The map is empty before the first join too, and that must not be
             // read as "the last channel just left".
             var everJoined = false
-            sessions.channels.collect { channels ->
+            // With the ignore list, so that ignoring someone takes their
+            // lines out of the notification at once rather than at the next
+            // message.
+            sessions.channels.combine(sessions.ignored, ::Pair).collect { (channels, ignored) ->
                 // A closing channel is already gone as far as the user is
                 // concerned; it should not be listed, and its unread should not
                 // be counted, while it waits out its grace period.
-                notifications.update(channels.filterValues { !it.closing })
+                notifications.update(channels.filterValues { !it.closing }, ignored)
                 if (channels.isNotEmpty()) everJoined = true
                 // The last channel leaving for real is what stops the service.
                 // Checked here rather than at ACTION_LEAVE because the leave now
@@ -152,7 +156,7 @@ class HcService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(
             ChatNotifications.ONGOING_ID,
-            notifications.build(sessions.channels.value.filterValues { !it.closing }),
+            notifications.build(sessions.channels.value.filterValues { !it.closing }, sessions.ignored.value),
         )
 
         when (intent?.action) {

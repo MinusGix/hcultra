@@ -94,6 +94,7 @@ import chat.hc.core.session.Challenge
 import chat.hc.core.session.ChannelUi
 import chat.hc.ultra.data.ChannelHistory
 import chat.hc.ultra.data.ChannelIdentity
+import chat.hc.core.session.Ignore
 import chat.hc.core.session.ModAction
 import chat.hc.core.session.Moderation
 import chat.hc.core.session.SessionState
@@ -126,6 +127,8 @@ class MainActivity : ComponentActivity() {
 
     private var service: HcService? = null
     private val channels = MutableStateFlow<Map<String, ChannelUi>>(emptyMap())
+    /** The service's ignore list, mirrored like [channels]. */
+    private val ignored = MutableStateFlow<Set<String>>(emptySet())
     private var bound = false
 
     private val serverPrefs by lazy { ServerPrefs(this) }
@@ -162,6 +165,9 @@ class MainActivity : ComponentActivity() {
             // Re-read the service's state; do not reconnect.
             lifecycleScope.launch {
                 svc.sessions.channels.collect { channels.value = it }
+            }
+            lifecycleScope.launch {
+                svc.sessions.ignored.collect { ignored.value = it }
             }
         }
 
@@ -358,6 +364,8 @@ class MainActivity : ComponentActivity() {
                     }
                     AppScreen(
                         channelsFlow = channels,
+                        ignoredFlow = ignored,
+                        onSetIgnored = { nick, ignore -> service?.sessions?.setIgnored(nick, ignore) },
                         onJoin = { channel, nick, pass -> startJoin(channel, nick, pass) },
                         onSend = { channel, text -> startSend(channel, text) },
                         onLeave = { channel -> startLeave(channel) },
@@ -620,6 +628,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppScreen(
     channelsFlow: StateFlow<Map<String, ChannelUi>>,
+    /** Nicks whose messages are hidden; the service owns the list. */
+    ignoredFlow: StateFlow<Set<String>>,
+    onSetIgnored: (nick: String, ignore: Boolean) -> Unit,
     onJoin: (String, String, String?) -> Unit,
     onSend: (String, String) -> Unit,
     onLeave: (String) -> Unit,
@@ -685,14 +696,10 @@ private fun AppScreen(
     // Held as a TextFieldValue rather than a String so a mention can be dropped
     // at the cursor instead of always at the end.
     val drafts = remember { mutableStateMapOf<String, TextFieldValue>() }
-    // Whose messages to hide, by nick, as the site's own ignore does: a
-    // userid is per connection, so keying on it would let anyone back in by
-    // reconnecting. Saveable, so a rotation does not unignore anyone; never
-    // written anywhere else, so it lasts no longer than the site's either.
-    var ignored by rememberSaveable { mutableStateOf(emptyList<String>()) }
-    val toggleIgnore: (String) -> Unit = { nick ->
-        ignored = if (nick in ignored) ignored - nick else ignored + nick
-    }
+    // Owned by the service, which also decides unread counts and alerts from
+    // it; see SessionManager.ignored.
+    val ignored by ignoredFlow.collectAsStateWithLifecycle()
+    val toggleIgnore: (String) -> Unit = { nick -> onSetIgnored(nick, nick !in ignored) }
     // A held nick, and the channel it was held in: the sheet must act on that
     // channel even if a notification switches tabs underneath it.
     var holding by remember { mutableStateOf<Pair<String, NickHold>?>(null) }
@@ -956,10 +963,7 @@ private fun AppScreen(
                     if (joinLeave && ignored.isEmpty()) active.messages
                     else active.messages.filterNot {
                         (!joinLeave && (it.kind == MessageKind.Join || it.kind == MessageKind.Leave)) ||
-                            // What they say, not that they came and went: the
-                            // join/leave line is where their nick can still be
-                            // held to stop ignoring them.
-                            (it.nick in ignored && !it.isMine && it.kind in IGNORABLE)
+                            Ignore.hides(it, ignored)
                     }
                 }
 
@@ -1430,9 +1434,6 @@ private fun describe(state: SessionState): String? = when (state) {
     SessionState.Connecting, SessionState.Handshaking -> "Connecting…"
     SessionState.Idle -> null
 }
-
-/** Kinds an ignored nick's messages are hidden from: what they say to the room or to you. */
-private val IGNORABLE = setOf(MessageKind.Chat, MessageKind.Emote, MessageKind.Whisper)
 
 private fun copyToClipboard(context: Context, text: String) {
     context.getSystemService(ClipboardManager::class.java)

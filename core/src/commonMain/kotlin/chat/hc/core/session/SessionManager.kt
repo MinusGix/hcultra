@@ -137,6 +137,29 @@ class SessionManager(
     )
     val alerts: SharedFlow<Alert> = _alerts.asSharedFlow()
 
+    private val _ignored = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * Nicks whose messages the user has asked not to hear about.
+     *
+     * By nick, as the site's own ignore is: a userid is per connection, so
+     * keying on one would let anyone back in by reconnecting. Held here rather
+     * than in the UI because this is what decides unread counts and [alerts],
+     * and the service outlives every Activity; it lasts as long as the
+     * manager, which is roughly as long as the site's lasts in a tab.
+     *
+     * Their messages are still buffered. Hiding them is the renderer's job, so
+     * that stopping ignoring someone shows what they said in the meantime; what
+     * is decided here is only that none of it marks a tab unread or alerts.
+     */
+    val ignored: StateFlow<Set<String>> = _ignored.asStateFlow()
+
+    fun setIgnored(nick: String, ignore: Boolean) {
+        _ignored.update { if (ignore) it + nick else it - nick }
+    }
+
+    private fun isIgnored(nick: String) = nick in _ignored.value
+
     /** Channel the UI is currently showing; its messages never count as unread. */
     var activeChannel: String? = null
         set(value) {
@@ -399,7 +422,7 @@ class SessionManager(
         when (event) {
             is SessionEvent.Message -> {
                 val msg = buffer.applyChat(event.frame, session.userid, receivedAt = now())
-                if (!msg.isMine) {
+                if (!msg.isMine && !isIgnored(msg.nick)) {
                     if (channel != activeChannel) {
                         mutate(channel) { it.copy(unread = it.unread + 1) }
                     }
@@ -416,7 +439,7 @@ class SessionManager(
                 buffer.add(
                     ChatMessage(0, MessageKind.Emote, event.frame.nick, event.frame.userid, text = event.frame.text, at = event.frame.time ?: now())
                 )
-                if (event.frame.userid != session.userid) {
+                if (event.frame.userid != session.userid && !isIgnored(event.frame.nick)) {
                     alertIfMentioned(session, event.frame.nick, event.frame.text, event.frame.time ?: now())
                 }
             }
@@ -446,7 +469,7 @@ class SessionManager(
                     )
                 )
                 // Our own outgoing whisper must not mark the channel unread.
-                if (!who.outgoing) {
+                if (!who.outgoing && !isIgnored(who.nick)) {
                     if (channel != activeChannel) {
                         mutate(channel) { ui -> ui.copy(unread = ui.unread + 1) }
                     }
@@ -572,8 +595,11 @@ class SessionManager(
                 )
 
                 // Our own invite comes back to us too; it must not mark the
-                // channel unread or buzz us about what we just did.
-                if (!who.outgoing) {
+                // channel unread or buzz us about what we just did. An ignored
+                // inviter's line is still kept: it is an info line with no
+                // nick of its own, so nothing could hide it and then show it
+                // again, and dropping it outright would be unrecoverable.
+                if (!who.outgoing && !isIgnored(who.nick)) {
                     if (channel != activeChannel) {
                         mutate(channel) { ui -> ui.copy(unread = ui.unread + 1) }
                     }

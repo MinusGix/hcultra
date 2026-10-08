@@ -13,6 +13,7 @@ import androidx.core.app.RemoteInput
 import chat.hc.core.session.Alert
 import chat.hc.core.session.ChannelUi
 import chat.hc.core.session.Challenge
+import chat.hc.core.session.Ignore
 import chat.hc.core.session.SessionState
 import chat.hc.core.store.MessageKind
 import chat.hc.ultra.MainActivity
@@ -96,7 +97,7 @@ class ChatNotifications(private val context: Context) {
         manager.deleteNotificationChannel(CHANNEL_LEGACY_MESSAGES)
     }
 
-    fun build(channels: Map<String, ChannelUi>): Notification {
+    fun build(channels: Map<String, ChannelUi>, ignored: Set<String> = emptySet()): Notification {
         val connected = channels.values.count { it.state is SessionState.Live }
         val unread = channels.values.sumOf { it.unread }
         val reconnecting = channels.values.any { it.state is SessionState.Reconnecting }
@@ -122,7 +123,7 @@ class ChatNotifications(private val context: Context) {
             }
         }
 
-        val recent = recentLines(channels)
+        val recent = recentLines(channels, ignored)
 
         // Tapping this opens the channel the unread is *in*, not whichever tab
         // happened to be selected last. Only the channel on screen is ever
@@ -182,8 +183,8 @@ class ChatNotifications(private val context: Context) {
         return builder.build()
     }
 
-    fun update(channels: Map<String, ChannelUi>) {
-        manager.notify(ONGOING_ID, build(channels))
+    fun update(channels: Map<String, ChannelUi>, ignored: Set<String> = emptySet()) {
+        manager.notify(ONGOING_ID, build(channels, ignored))
     }
 
     /**
@@ -317,11 +318,11 @@ class ChatNotifications(private val context: Context) {
      * channel is named only when more than one is open, since prefixing every
      * line with the only channel there is wastes the width on a phone.
      */
-    private fun recentLines(channels: Map<String, ChannelUi>): List<String> {
+    private fun recentLines(channels: Map<String, ChannelUi>, ignored: Set<String>): List<String> {
         val labelled = channels.size > 1
         return channels.values
             .flatMap { ui -> ui.messages.map { ui.channel to it } }
-            .filter { (_, m) -> m.kind in GLANCEABLE }
+            .filter { (_, m) -> m.kind in GLANCEABLE && !Ignore.hides(m, ignored) }
             .sortedBy { (_, m) -> m.at }
             .takeLast(RECENT_LINES)
             .map { (channel, m) ->
