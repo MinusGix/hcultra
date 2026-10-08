@@ -109,9 +109,7 @@ class SessionManagerIgnoreTest {
             listOf(Alert.Kind.Mention, Alert.Kind.Mention, Alert.Kind.Whisper),
             seen.map { it.kind },
         )
-        // The chat and the whisper. Emotes have never counted as unread,
-        // ignored or not; that is not this test's business.
-        assertEquals(2, sessions.channels.value.getValue("testroom").unread)
+        assertEquals(3, sessions.channels.value.getValue("testroom").unread)
         collector.cancel()
         sessions.stopAll()
     }

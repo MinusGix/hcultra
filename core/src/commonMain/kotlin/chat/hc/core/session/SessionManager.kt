@@ -432,14 +432,22 @@ class SessionManager(
 
             is SessionEvent.MessageUpdated -> buffer.applyUpdate(event.frame)
 
-            // Emotes are alerted on too: `/me pokes @you` is someone talking to
-            // you, and the third person is a grammatical choice rather than a
-            // quieter one.
+            // Emotes are chat in the third person, and are treated as chat:
+            // `/me pokes @you` is someone talking to you, so it alerts, and
+            // `/me` is saying something to the room, so it counts as unread.
+            // The grammar is a choice of voice, not a quieter kind of message.
             is SessionEvent.Emote -> {
+                val mine = event.frame.userid == session.userid
                 buffer.add(
-                    ChatMessage(0, MessageKind.Emote, event.frame.nick, event.frame.userid, text = event.frame.text, at = event.frame.time ?: now())
+                    ChatMessage(
+                        0, MessageKind.Emote, event.frame.nick, event.frame.userid,
+                        text = event.frame.text, at = event.frame.time ?: now(), isMine = mine,
+                    )
                 )
-                if (event.frame.userid != session.userid && !isIgnored(event.frame.nick)) {
+                if (!mine && !isIgnored(event.frame.nick)) {
+                    if (channel != activeChannel) {
+                        mutate(channel) { it.copy(unread = it.unread + 1) }
+                    }
                     alertIfMentioned(session, event.frame.nick, event.frame.text, event.frame.time ?: now())
                 }
             }
