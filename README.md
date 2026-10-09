@@ -107,7 +107,9 @@ why. A few that bite hardest:
 
 - The **first frame you send picks the dialect for that socket's entire life**.
   `session` selects v2; `join` first permanently downgrades you to the 2015-era
-  protocol where whispers arrive as prose.
+  protocol where whispers arrive as prose. Older instances speak only that one
+  and silently drop `session`; `Dialect` and `LegacyAdapter` cover them, tested
+  against the real thing in `probe/legacy`.
 - The **session token arrives *after* `onlineSet`**. Treat `onlineSet` as
   "handshake done" and you never capture one.
 - A token **is an identity** — presenting one overrides the nick you asked to

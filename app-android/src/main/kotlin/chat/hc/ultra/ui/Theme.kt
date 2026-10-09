@@ -11,6 +11,7 @@ import chat.hc.core.render.ImageHosts
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
+import chat.hc.core.session.Dialect
 import chat.hc.core.session.Servers
 import chat.hc.core.store.HistoryLimit
 import chat.hc.ultra.data.ImageSources
@@ -99,16 +100,53 @@ private fun Color.isLight(): Boolean =
  */
 const val BASE_TEXT_SP = 15f
 
-/** Persisted server endpoint. Plain prefs: an address is not a secret. */
+/** A server the user joins channels on, and the protocol to speak to it. */
+data class ServerEntry(val url: String, val dialect: Dialect = Dialect.Auto)
+
+/**
+ * The servers the user has added, in the order they added them. Plain prefs:
+ * an address is not a secret.
+ *
+ * Never empty — the join form has to offer somewhere — and hack.chat is the
+ * one there is until the user says otherwise.
+ */
 class ServerPrefs(context: Context) {
     private val prefs = context.getSharedPreferences("hc_server", Context.MODE_PRIVATE)
 
-    var url: String
-        get() = prefs.getString(KEY_URL, Servers.DEFAULT_URL) ?: Servers.DEFAULT_URL
-        set(value) = prefs.edit().putString(KEY_URL, value).apply()
+    var servers: List<ServerEntry>
+        get() = prefs.getString(KEY_SERVERS, null)
+            ?.split(RECORD)
+            ?.mapNotNull(::decode)
+            ?.takeIf { it.isNotEmpty() }
+            // Before there was a list there was one address; it becomes the first.
+            ?: listOf(ServerEntry(prefs.getString(KEY_URL, null) ?: Servers.DEFAULT_URL))
+        set(value) = prefs.edit()
+            .putString(KEY_SERVERS, value.distinctBy { it.url }.joinToString(RECORD) { "${it.url}$FIELD${it.dialect.name}" })
+            .apply()
+
+    /** Read per connection by the service, so a change applies to the next one. */
+    fun dialectFor(url: String): Dialect = servers.firstOrNull { it.url == url }?.dialect ?: Dialect.Auto
+
+    /** Where the join form starts: wherever the user last joined. */
+    var lastUsed: String
+        get() = prefs.getString(KEY_LAST, null)?.takeIf { url -> servers.any { it.url == url } }
+            ?: servers.first().url
+        set(value) = prefs.edit().putString(KEY_LAST, value).apply()
+
+    private fun decode(raw: String): ServerEntry? {
+        val f = raw.split(FIELD)
+        val url = f[0].takeIf(String::isNotEmpty) ?: return null
+        return ServerEntry(url, f.getOrNull(1)?.let { name -> Dialect.entries.firstOrNull { it.name == name } } ?: Dialect.Auto)
+    }
 
     private companion object {
+        /** The single address of builds before the list; read once, to migrate. */
         const val KEY_URL = "url"
+        const val KEY_SERVERS = "servers"
+        const val KEY_LAST = "last_used"
+        // Control characters, as ChannelHistory uses: no URL can contain them.
+        const val FIELD = "\u0001"
+        const val RECORD = "\u0002"
     }
 }
 

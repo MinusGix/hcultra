@@ -3,9 +3,9 @@ package chat.hc.core.session
 /**
  * Server endpoint handling.
  *
- * Only one server is in use at a time — the UI has no notion of several — but
- * tokens are already keyed by server, so making this a list later does not
- * require rewriting storage.
+ * Several servers can be in use at once — hack.chat and an older instance,
+ * say, with people in common — so everything a server owns (tokens, MOTD,
+ * remembered identities) is keyed by its URL.
  */
 object Servers {
 
@@ -53,6 +53,13 @@ object Servers {
         val url = if (hasPath) withScheme else withScheme.trimEnd('/') + DEFAULT_PATH
         return Result.Valid(url)
     }
+
+    /**
+     * What to call a server where there is no room for its URL: the host, and
+     * the port if one was given. The scheme and the WebSocket path say nothing
+     * a person would use to tell two servers apart.
+     */
+    fun label(url: String): String = url.substringAfter("://").substringBefore('/')
 
     /** True when the endpoint is unencrypted — worth warning about in the UI. */
     fun isPlaintext(url: String): Boolean = url.startsWith("ws://")

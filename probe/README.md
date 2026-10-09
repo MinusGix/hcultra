@@ -27,6 +27,12 @@ proxy that can freeze connections. For locks and purgatory, captchas, channel
 passwords, muzzles and ghost sockets on demand, and behind
 `./gradlew :core:phantomTest`. See `phantom/README.md`.
 
+## `legacy/` — hack.chat as it was in 2019
+
+2.1.91, exported from `../hc` and run unmodified on today's node, for the v1
+dialect: no `session`, no userids, whispers and invites as prose. Behind
+`./gradlew :core:legacyTest`. See `legacy/legacy.mjs`.
+
 ## `fakeserver.mjs` — a deliberately misbehaving server
 
 For client paths the real server will not produce on demand. Needs `ws`:

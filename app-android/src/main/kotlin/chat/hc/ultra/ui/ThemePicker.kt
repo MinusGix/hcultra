@@ -55,6 +55,7 @@ import chat.hc.core.render.ImageHosts
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
+import chat.hc.core.session.Dialect
 import chat.hc.core.session.Servers
 import chat.hc.core.store.HistoryLimit
 import chat.hc.core.translate.GoogleTranslate
@@ -80,8 +81,8 @@ import java.util.Locale
 @Composable
 fun ThemeSheet(
     schemes: List<Scheme>,
-    currentServer: String,
-    onServerChanged: (String) -> Unit,
+    servers: List<ServerEntry>,
+    onServersChanged: (List<ServerEntry>) -> Unit,
     currentScheme: String,
     /** null means "follow the scheme's paired default". */
     highlightOverride: String?,
@@ -131,7 +132,7 @@ fun ThemeSheet(
                 .padding(bottom = 24.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
-            ServerSetting(currentServer, onServerChanged)
+            ServerSetting(servers, onServersChanged)
 
             FontSizeSetting(fontScale, onFontScaleChanged)
 
@@ -846,26 +847,50 @@ private fun HistorySetting(lines: Int, days: Int?, onChanged: (Int, Int?) -> Uni
     }
 }
 
+/**
+ * The servers channels can be joined on, each with the protocol to speak.
+ *
+ * A list because people use more than one: hack.chat, and instances that never
+ * updated past 2019 and only speak v1. [Dialect.Auto] tells them apart on its
+ * own; the choice is here for a server it gets wrong, or to skip the few
+ * seconds it spends finding out the first time.
+ */
 @Composable
-private fun ServerSetting(current: String, onChanged: (String) -> Unit) {
-    var input by remember(current) { mutableStateOf(current) }
+private fun ServerSetting(servers: List<ServerEntry>, onChanged: (List<ServerEntry>) -> Unit) {
+    var input by remember { mutableStateOf("") }
     val result = remember(input) { Servers.normalize(input) }
     val valid = result as? Servers.Result.Valid
-    val changed = valid != null && valid.url != current
+    val duplicate = valid != null && servers.any { it.url == valid.url }
 
     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Server", style = MaterialTheme.typography.titleSmall)
+        Text("Servers", style = MaterialTheme.typography.titleSmall)
+        servers.forEach { entry ->
+            ServerRow(
+                entry = entry,
+                // Somewhere has to be left to join.
+                removable = servers.size > 1,
+                onDialect = { d -> onChanged(servers.map { if (it == entry) it.copy(dialect = d) else it }) },
+                onRemove = { onChanged(servers - entry) },
+            )
+        }
+        Text(
+            "Changing a server's protocol, or removing it, leaves the channels open on it.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         OutlinedTextField(
             value = input,
             onValueChange = { input = it },
             singleLine = true,
-            isError = result is Servers.Result.Invalid,
+            label = { Text("Add a server") },
+            isError = input.isNotBlank() && (result is Servers.Result.Invalid || duplicate),
             supportingText = {
                 when {
+                    input.isBlank() -> Unit
                     result is Servers.Result.Invalid -> Text(result.reason)
+                    duplicate -> Text("Already added")
                     valid != null && Servers.isPlaintext(valid.url) ->
                         Text("Unencrypted — fine for a local server, not over the internet")
-                    changed -> Text("Reconnects: joined channels will be left")
                     else -> Text(valid?.url ?: "")
                 }
             },
@@ -873,13 +898,70 @@ private fun ServerSetting(current: String, onChanged: (String) -> Unit) {
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(
-                onClick = { valid?.let { onChanged(it.url) } },
-                enabled = changed,
-            ) { Text("Connect") }
-            TextButton(
-                onClick = { input = Servers.DEFAULT_URL },
-                enabled = current != Servers.DEFAULT_URL || input != Servers.DEFAULT_URL,
-            ) { Text("Reset to hack.chat") }
+                onClick = {
+                    valid?.let { onChanged(servers + ServerEntry(it.url)) }
+                    input = ""
+                },
+                enabled = valid != null && !duplicate,
+            ) { Text("Add") }
+            if (servers.none { it.url == Servers.DEFAULT_URL }) {
+                TextButton(onClick = { onChanged(servers + ServerEntry(Servers.DEFAULT_URL)) }) {
+                    Text("Add hack.chat")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServerRow(
+    entry: ServerEntry,
+    removable: Boolean,
+    onDialect: (Dialect) -> Unit,
+    onRemove: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                Servers.label(entry.url),
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            if (removable) {
+                Text(
+                    "×",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable(onClick = onRemove)
+                        .semantics { contentDescription = "Remove ${Servers.label(entry.url)}" }
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Dialect.entries.forEach { option ->
+                val selected = option == entry.dialect
+                Text(
+                    text = when (option) {
+                        Dialect.Auto -> "Auto"
+                        Dialect.V2 -> "v2"
+                        Dialect.V1 -> "v1 (old servers)"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        .clickable { onDialect(option) }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                )
+            }
         }
     }
 }

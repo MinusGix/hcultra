@@ -600,14 +600,23 @@ without echoing. The message went `sending…` → `unconfirmed` exactly as
 designed. This was previously unreachable: killing the network disables the
 composer, and emulator shaping does not affect an established socket.
 
-## Server setting
+## Servers
 
-The endpoint is configurable (Settings → Server), defaulting to
-`wss://hack.chat/chat-ws`. Only one server at a time — the UI has no notion of
-several — but **tokens are keyed by server**, which is the part that would be
-painful to retrofit. Trying a local server therefore costs nothing: the
-hack.chat tokens survive untouched, and a cold rejoin there would be visible to
-the whole channel as a leave/join pair.
+Settings → Servers is a list, starting with `wss://hack.chat/chat-ws` (a build
+from before the list migrates its single address into it). Channels on several
+servers can be open at once: everything is keyed by `ChannelKey` (server and
+channel), tabs show the server under the name once more than one is open, and
+the join form picks the server first, since remembered identities and "Resume
+last" are per server — a trip is derived from a server-side salt.
+
+Each server has a protocol: **Auto** (the default), **v2**, or **v1** for
+instances that predate `session` (2019's 2.1.91 still runs somewhere). Auto
+sends `session` and, if nothing answers within 4 s, `join` on the same socket;
+see `Dialect`. What it finds is remembered per server for the life of the
+service. A v1 server has no tokens, so every reconnect there is a cold join.
+
+Tokens are keyed by server too, so trying a local server costs nothing: the
+hack.chat tokens survive untouched.
 
 `Servers.normalize` accepts what a person would actually type (`localhost:6060`,
 `hack.chat`, `https://…`) and appends `/chat-ws` when no path is given. A bare
@@ -615,8 +624,8 @@ host is assumed **secure**: it never silently downgrades to plaintext, so a
 local plaintext server needs an explicit `ws://`. The UI warns when the
 resulting endpoint is unencrypted.
 
-Changing server tears down every channel — the channels, nicks and tokens all
-belong to the old endpoint.
+Removing a server, or changing its protocol, leaves the channels open on it and
+nothing else.
 
 ### Local test server
 

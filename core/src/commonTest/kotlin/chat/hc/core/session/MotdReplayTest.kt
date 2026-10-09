@@ -63,7 +63,6 @@ class MotdReplayTest {
         motds: MotdStore,
     ) = SessionManager(
         scope = scope,
-        initialUrl = TEST_URL,
         transport = transport,
         tokenStore = tokens,
         motdStore = motds,
@@ -72,7 +71,7 @@ class MotdReplayTest {
     )
 
     private fun infoTexts(sessions: SessionManager) =
-        sessions.channels.value["testroom"]!!.messages
+        sessions.channels.value[key("testroom")]!!.messages
             .filter { it.kind == MessageKind.Info }
             .map { it.text }
 
@@ -80,7 +79,7 @@ class MotdReplayTest {
     fun aColdJoinShowsTheMotdItWasSent() = runTest {
         val transport = FakeTransport().apply { scriptColdJoin() }
         val sessions = manager(transport, this, InMemoryTokenStore(), InMemoryMotdStore())
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         assertEquals(listOf("Users online: alice", motd), infoTexts(sessions))
@@ -98,7 +97,7 @@ class MotdReplayTest {
 
         val first = FakeTransport().apply { scriptColdJoin() }
         val one = manager(first, this, tokens, motds)
-        one.join("testroom", Credentials("alice"))
+        one.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
         one.stopAll()
         advanceUntilIdle()
@@ -106,7 +105,7 @@ class MotdReplayTest {
         // A new process: fresh manager and empty buffers, persistent stores.
         val second = FakeTransport().apply { scriptRestore() }
         val two = manager(second, this, tokens, motds)
-        two.join("testroom", Credentials("alice"))
+        two.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         assertTrue(
@@ -124,7 +123,7 @@ class MotdReplayTest {
     fun anEmptyStoreAddsNothing() = runTest {
         val transport = FakeTransport().apply { scriptRestore() }
         val sessions = manager(transport, this, InMemoryTokenStore(), InMemoryMotdStore())
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         assertEquals(listOf("Reconnected.", "Users online: alice"), infoTexts(sessions))
@@ -136,7 +135,7 @@ class MotdReplayTest {
     fun aReconnectDoesNotRepeatIt() = runTest {
         val transport = FakeTransport().apply { scriptColdJoin() }
         val sessions = manager(transport, this, InMemoryTokenStore(), InMemoryMotdStore())
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         transport.scriptRestore()

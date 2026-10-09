@@ -7,8 +7,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -695,6 +697,28 @@ class ChannelSessionTest {
         s.stop()
     }
 
+    /**
+     * A server that never answers is a failed attempt, not the end of the
+     * session. The handshake timeout is a CancellationException underneath, and
+     * it used to escape as one — ending the reconnect loop silently and leaving
+     * the tab on "Connecting…" for good, with no retry ever made.
+     */
+    @Test
+    fun silentServerIsRetried() = runTest {
+        val transport = FakeTransport() // replies to nothing
+        val s = session(transport)
+        s.start(this)
+
+        advanceTimeBy(10_001)
+        runCurrent()
+        assertTrue(s.state.value is SessionState.Reconnecting, "state is ${s.state.value}")
+
+        advanceTimeBy(60_000)
+        runCurrent()
+        assertTrue(transport.connections.size >= 2, "never retried")
+        s.stop()
+    }
+
     /** Unknown frames reach the UI layer rather than being swallowed. */
     @Test
     fun surfacesUnknownFrames() = runTest {
@@ -718,3 +742,6 @@ internal fun CoroutineScope.launchCollect(
     s: ChannelSession,
     into: MutableList<SessionEvent>,
 ): Job = launch { s.events.collect { into += it } }
+
+/** A channel on the server every test talks to. */
+internal fun key(channel: String) = ChannelKey(TEST_URL, channel)

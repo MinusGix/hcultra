@@ -24,6 +24,9 @@ node_modules/
 probe/phantom/srv/
 probe/phantom/.node_modules.keep/
 
+# The legacy server's exported 2019 copy; see probe/legacy.
+probe/legacy/srv/
+
 # Nix
 result
 result-*

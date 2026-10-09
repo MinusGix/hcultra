@@ -3,6 +3,15 @@ package chat.hc.core.session
 import chat.hc.core.protocol.Inbound
 import chat.hc.core.protocol.User
 
+/**
+ * A channel on a server: what every tab, buffer and socket is keyed by.
+ *
+ * The name alone stopped being enough once more than one server could be open
+ * at a time — `?programming` on hack.chat and on an older instance are two
+ * different rooms with two different crowds, and people sit in both.
+ */
+data class ChannelKey(val server: String, val channel: String)
+
 /** Credentials for one channel. `pass` is what produces the trip. */
 data class Credentials(
     val nick: String,
@@ -161,13 +170,15 @@ sealed interface SessionEvent {
  * the channel — is not this layer's call.
  */
 data class Alert(
-    val channel: String,
+    val key: ChannelKey,
     val kind: Kind,
     /** Who said it. */
     val nick: String,
     val text: String,
     val at: Long,
 ) {
+    val channel: String get() = key.channel
+
     /**
      * Each is something aimed at one person. An invite belongs here for the
      * same reason a whisper does — it names you — and is worth its own kind

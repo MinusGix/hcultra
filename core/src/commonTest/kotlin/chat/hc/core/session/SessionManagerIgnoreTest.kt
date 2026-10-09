@@ -45,7 +45,6 @@ class SessionManagerIgnoreTest {
     private fun manager(transport: FakeTransport, scope: kotlinx.coroutines.CoroutineScope) =
         SessionManager(
             scope = scope,
-            initialUrl = TEST_URL,
             transport = transport,
             now = { 0L },
             customIdFactory = { "abc123" },
@@ -70,15 +69,15 @@ class SessionManagerIgnoreTest {
         val sessions = manager(transport, this)
         val seen = mutableListOf<Alert>()
         val collector = launch { sessions.alerts.collect { seen += it } }
-        sessions.activeChannel = "elsewhere"
-        sessions.join("testroom", Credentials("alice"))
+        sessions.activeChannel = key("elsewhere")
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         sessions.setIgnored("bob", true)
         transport.bobAddressesUs()
         advanceUntilIdle()
 
-        val ui = sessions.channels.value.getValue("testroom")
+        val ui = sessions.channels.value.getValue(key("testroom"))
         assertEquals(emptyList(), seen, "an ignored nick alerted")
         assertEquals(0, ui.unread, "an ignored nick marked the tab unread")
         assertEquals(
@@ -96,8 +95,8 @@ class SessionManagerIgnoreTest {
         val sessions = manager(transport, this)
         val seen = mutableListOf<Alert>()
         val collector = launch { sessions.alerts.collect { seen += it } }
-        sessions.activeChannel = "elsewhere"
-        sessions.join("testroom", Credentials("alice"))
+        sessions.activeChannel = key("elsewhere")
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         sessions.setIgnored("bob", true)
@@ -109,7 +108,7 @@ class SessionManagerIgnoreTest {
             listOf(Alert.Kind.Mention, Alert.Kind.Mention, Alert.Kind.Whisper),
             seen.map { it.kind },
         )
-        assertEquals(3, sessions.channels.value.getValue("testroom").unread)
+        assertEquals(3, sessions.channels.value.getValue(key("testroom")).unread)
         collector.cancel()
         sessions.stopAll()
     }
@@ -121,7 +120,7 @@ class SessionManagerIgnoreTest {
         val sessions = manager(transport, this)
         val seen = mutableListOf<Alert>()
         val collector = launch { sessions.alerts.collect { seen += it } }
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         sessions.setIgnored("carol", true)

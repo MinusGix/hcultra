@@ -66,11 +66,19 @@ object Moderation {
     /**
      * Builds the frame for an action, or null when the target lacks what the
      * command needs (only [ModAction.Unmuzzle], which requires a hash).
+     *
+     * A [legacy] (v1) connection names the target by nick: that is all a v1
+     * `kick`, `ban` or `dumb` reads, and a 2019 server has no userids to offer.
+     * `speak` keys on the hash in both.
      */
-    fun frameFor(action: ModAction, channel: String, target: User): Outbound? = when (action) {
-        ModAction.Kick -> Outbound.Kick(channel = channel, userid = target.userid)
-        ModAction.Ban -> Outbound.Ban(channel = channel, userid = target.userid)
-        ModAction.Muzzle -> Outbound.Muzzle(channel = channel, userid = target.userid)
-        ModAction.Unmuzzle -> target.hash?.takeIf { it.isNotBlank() }?.let { Outbound.Unmuzzle(channel = channel, hash = it) }
+    fun frameFor(action: ModAction, channel: String, target: User, legacy: Boolean = false): Outbound? {
+        val userid = target.userid.takeUnless { legacy }
+        val nick = target.nick.takeIf { legacy }
+        return when (action) {
+            ModAction.Kick -> Outbound.Kick(channel = channel, userid = userid, nick = nick)
+            ModAction.Ban -> Outbound.Ban(channel = channel, userid = userid, nick = nick)
+            ModAction.Muzzle -> Outbound.Muzzle(channel = channel, userid = userid, nick = nick)
+            ModAction.Unmuzzle -> target.hash?.takeIf { it.isNotBlank() }?.let { Outbound.Unmuzzle(channel = channel, hash = it) }
+        }
     }
 }

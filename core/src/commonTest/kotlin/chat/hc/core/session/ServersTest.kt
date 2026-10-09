@@ -84,4 +84,11 @@ class ServersTest {
         assertNull(store.load("ws://localhost:6060/chat-ws", "lounge", me))
         assertEquals("live-token", store.load("wss://hack.chat/chat-ws", "lounge", me))
     }
+
+    @Test
+    fun labelIsTheHost() {
+        assertEquals("hack.chat", Servers.label(Servers.DEFAULT_URL))
+        assertEquals("localhost:6060", Servers.label(valid("localhost:6060")))
+        assertEquals("old.example", Servers.label("ws://old.example"))
+    }
 }

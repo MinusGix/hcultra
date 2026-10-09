@@ -47,7 +47,6 @@ class SessionManagerInviteTest {
     private fun manager(transport: FakeTransport, scope: kotlinx.coroutines.CoroutineScope) =
         SessionManager(
             scope = scope,
-            initialUrl = TEST_URL,
             transport = transport,
             now = { 0L },
             customIdFactory = { "abc123" },
@@ -57,7 +56,7 @@ class SessionManagerInviteTest {
     fun anIncomingInviteLandsInTheTranscript() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         transport.connections[0].serverSends(
@@ -65,7 +64,7 @@ class SessionManagerInviteTest {
         )
         advanceUntilIdle()
 
-        val info = sessions.channels.value.getValue("testroom").messages
+        val info = sessions.channels.value.getValue(key("testroom")).messages
             .filter { it.kind == MessageKind.Info }
             .map { it.text }
         assertTrue(
@@ -83,7 +82,7 @@ class SessionManagerInviteTest {
     fun anInviterWhoIsNotInTheRosterStillReads() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         transport.connections[0].serverSends(
@@ -91,7 +90,7 @@ class SessionManagerInviteTest {
         )
         advanceUntilIdle()
 
-        val info = sessions.channels.value.getValue("testroom").messages.map { it.text }
+        val info = sessions.channels.value.getValue(key("testroom")).messages.map { it.text }
         assertTrue(
             "user 404 invited you to ?x" in info,
             "an unknown inviter should still produce a line; got $info",
@@ -104,7 +103,7 @@ class SessionManagerInviteTest {
     fun theOfferedChannelIsWrittenAsAChannelReference() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         transport.connections[0].serverSends(
@@ -112,7 +111,7 @@ class SessionManagerInviteTest {
         )
         advanceUntilIdle()
 
-        val line = sessions.channels.value.getValue("testroom").messages
+        val line = sessions.channels.value.getValue(key("testroom")).messages
             .first { it.text.contains("invited") }
         assertTrue("?somewhere" in line.text, "no channel reference to tap in: ${line.text}")
         sessions.stopAll()
@@ -124,7 +123,7 @@ class SessionManagerInviteTest {
         val sessions = manager(transport, this)
         val seen = mutableListOf<Alert>()
         val collector = launch { sessions.alerts.collect { seen += it } }
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         transport.connections[0].serverSends(
@@ -146,8 +145,8 @@ class SessionManagerInviteTest {
     fun anIncomingInviteMarksTheChannelUnread() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.activeChannel = "elsewhere"
-        sessions.join("testroom", Credentials("alice"))
+        sessions.activeChannel = key("elsewhere")
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         transport.connections[0].serverSends(
@@ -155,7 +154,7 @@ class SessionManagerInviteTest {
         )
         advanceUntilIdle()
 
-        assertEquals(1, sessions.channels.value.getValue("testroom").unread)
+        assertEquals(1, sessions.channels.value.getValue(key("testroom")).unread)
         sessions.stopAll()
     }
 
@@ -175,11 +174,11 @@ class SessionManagerInviteTest {
     fun sendingAnInviteNamesTheTargetByUserid() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
-        val bob = sessions.channels.value.getValue("testroom").roster.first { it.nick == "bob" }
-        assertTrue(sessions.invite("testroom", bob), "the invite was not sent")
+        val bob = sessions.channels.value.getValue(key("testroom")).roster.first { it.nick == "bob" }
+        assertTrue(sessions.invite(key("testroom"), bob), "the invite was not sent")
         advanceUntilIdle()
 
         val sent = transport.connections[0].sent.invites()
@@ -198,11 +197,11 @@ class SessionManagerInviteTest {
     fun sendingAnInviteLetsTheServerNameTheChannel() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
-        val bob = sessions.channels.value.getValue("testroom").roster.first { it.nick == "bob" }
-        sessions.invite("testroom", bob)
+        val bob = sessions.channels.value.getValue(key("testroom")).roster.first { it.nick == "bob" }
+        sessions.invite(key("testroom"), bob)
         advanceUntilIdle()
 
         val frame = transport.connections[0].sent.invites().single()
@@ -215,11 +214,11 @@ class SessionManagerInviteTest {
     fun invitingYourselfIsNotSent() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
-        val me = sessions.channels.value.getValue("testroom").roster.first { it.isme }
-        assertFalse(sessions.invite("testroom", me), "a self-invite reported success")
+        val me = sessions.channels.value.getValue(key("testroom")).roster.first { it.isme }
+        assertFalse(sessions.invite(key("testroom"), me), "a self-invite reported success")
         advanceUntilIdle()
 
         assertTrue(
@@ -233,11 +232,11 @@ class SessionManagerInviteTest {
     fun invitingIntoAChannelWeAreNotInIsNotSent() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
-        val bob = sessions.channels.value.getValue("testroom").roster.first { it.nick == "bob" }
-        assertFalse(sessions.invite("elsewhere", bob), "an invite into a channel we have not joined")
+        val bob = sessions.channels.value.getValue(key("testroom")).roster.first { it.nick == "bob" }
+        assertFalse(sessions.invite(key("elsewhere"), bob), "an invite into a channel we have not joined")
         sessions.stopAll()
     }
 
@@ -252,8 +251,8 @@ class SessionManagerInviteTest {
         val sessions = manager(transport, this)
         val seen = mutableListOf<Alert>()
         val collector = launch { sessions.alerts.collect { seen += it } }
-        sessions.activeChannel = "elsewhere"
-        sessions.join("testroom", Credentials("alice"))
+        sessions.activeChannel = key("elsewhere")
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         transport.connections[0].serverSends(
@@ -261,7 +260,7 @@ class SessionManagerInviteTest {
         )
         advanceUntilIdle()
 
-        val info = sessions.channels.value.getValue("testroom").messages.map { it.text }
+        val info = sessions.channels.value.getValue(key("testroom")).messages.map { it.text }
         assertTrue(
             "You invited bob to ?p7rl8pem" in info,
             "our own invite should be recorded from our side; got $info",
@@ -269,7 +268,7 @@ class SessionManagerInviteTest {
         assertTrue(seen.isEmpty(), "our own invite alerted us: $seen")
         assertEquals(
             0,
-            sessions.channels.value.getValue("testroom").unread,
+            sessions.channels.value.getValue(key("testroom")).unread,
             "our own invite marked the channel unread",
         )
         collector.cancel()

@@ -25,7 +25,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Column
+import chat.hc.core.session.ChannelKey
 import chat.hc.core.session.ChannelUi
+import chat.hc.core.session.Servers
 import chat.hc.core.session.SessionState
 
 /**
@@ -38,17 +41,20 @@ import chat.hc.core.session.SessionState
 @Composable
 fun ChannelTabs(
     channels: List<ChannelUi>,
-    active: String?,
-    onSelect: (String) -> Unit,
-    onClose: (String) -> Unit,
+    active: ChannelKey?,
+    onSelect: (ChannelKey) -> Unit,
+    onClose: (ChannelKey) -> Unit,
     onAdd: () -> Unit,
     /** Tapping the channel you are on — or any tab's online count — opens its roster. */
-    onShowRoster: (String) -> Unit,
+    onShowRoster: (ChannelKey) -> Unit,
     /** The channel whose roster is open, so its count can show as pressed. */
-    rosterOpenFor: String?,
+    rosterOpenFor: ChannelKey?,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Only once there is a second server to tell apart: until then the label
+    // would say "hack.chat" on every tab, which is width spent saying nothing.
+    val showServer = channels.mapTo(HashSet()) { it.server }.size > 1
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -58,14 +64,15 @@ fun ChannelTabs(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            items(channels, key = { it.channel }) { ui ->
+            items(channels, key = { it.key.server + "\u0000" + it.key.channel }) { ui ->
                 ChannelTab(
                     ui = ui,
-                    selected = ui.channel == active,
-                    onSelect = { onSelect(ui.channel) },
-                    onClose = { onClose(ui.channel) },
-                    onShowRoster = { onShowRoster(ui.channel) },
-                    rosterOpen = ui.channel == rosterOpenFor,
+                    showServer = showServer,
+                    selected = ui.key == active,
+                    onSelect = { onSelect(ui.key) },
+                    onClose = { onClose(ui.key) },
+                    onShowRoster = { onShowRoster(ui.key) },
+                    rosterOpen = ui.key == rosterOpenFor,
                 )
             }
             item {
@@ -102,6 +109,7 @@ fun ChannelTabs(
 @Composable
 private fun ChannelTab(
     ui: ChannelUi,
+    showServer: Boolean,
     selected: Boolean,
     onSelect: () -> Unit,
     onClose: () -> Unit,
@@ -140,12 +148,23 @@ private fun ChannelTab(
         // but "this channel is reconnecting" still has to be visible.
         StatusDot(ui.state, selected)
 
-        Text(
-            text = "?${ui.channel}",
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            color = if (selected) colors.onPrimary else colors.onSurface,
-        )
+        Column {
+            Text(
+                text = "?${ui.channel}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (selected) colors.onPrimary else colors.onSurface,
+            )
+            // Under the name rather than beside it: the strip scrolls
+            // sideways, and a tab twice as wide shows half as many channels.
+            if (showServer) {
+                Text(
+                    text = Servers.label(ui.server),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = (if (selected) colors.onPrimary else colors.onSurface).copy(alpha = 0.7f),
+                )
+            }
+        }
 
         if (ui.unread > 0 && !selected) {
             Text(

@@ -160,9 +160,12 @@ sealed interface Inbound {
     ) : Inbound
 
     /**
-     * Carries MOTD, and — for v1 sockets — whisper/invite rendered as prose.
-     * We always negotiate v2, so `type` should never appear; if it does, we are
-     * accidentally speaking the legacy dialect.
+     * Carries MOTD, and — for v1 sockets — whisper, invite and (on 2019-era
+     * servers) emote rendered as prose, told apart by `type`. A v2 socket never
+     * sees `type`; on a v1 one [LegacyAdapter] reads these back into the
+     * structured frames, which is what the extra fields are for: `from` is a
+     * nick there rather than a userid, and an invite's destination is `invite`
+     * on 2019's server and `inviteChannel` on today's.
      */
     @Serializable
     data class Info(
@@ -170,6 +173,10 @@ sealed interface Inbound {
         val id: Int? = null,
         val type: String? = null,
         val from: String? = null,
+        val nick: String? = null,
+        val trip: String? = null,
+        val invite: String? = null,
+        val inviteChannel: String? = null,
         val channel: String? = null,
         override val time: Long? = null,
     ) : Inbound
@@ -298,13 +305,15 @@ sealed class Outbound {
     /**
      * Takes a numeric `userid` or a `nick` since the 2026-10 update; we send
      * the userid, which cannot be ambiguous. A payload with neither is still
-     * dropped without a reply.
+     * dropped without a reply. A v1 server knows only `nick`, and has no
+     * userids to give us anyway.
      */
     @Serializable
     @SerialName("invite")
     data class Invite(
         val channel: String,
-        val userid: Long,
+        val userid: Long? = null,
+        val nick: String? = null,
         val to: String? = null,
     ) : Outbound() {
         override val cmd: String get() = "invite"
@@ -350,14 +359,16 @@ sealed class Outbound {
     // be typed into the composer. `/kick` and `/ban` can be typed too.
     //
     // v2 targets by numeric `userid` and requires an explicit `channel`,
-    // except `speak`, which keys on the target's `hash`.
+    // except `speak`, which keys on the target's `hash`. v1 targets by `nick`
+    // and takes the channel from the socket; one or the other is set.
 
     /** Requires channel-moderator. Optional `to` re-homes them to another channel. */
     @Serializable
     @SerialName("kick")
     data class Kick(
         val channel: String,
-        val userid: Long,
+        val userid: Long? = null,
+        val nick: String? = null,
         val to: String? = null,
     ) : Outbound() {
         override val cmd: String get() = "kick"
@@ -368,7 +379,8 @@ sealed class Outbound {
     @SerialName("ban")
     data class Ban(
         val channel: String,
-        val userid: Long,
+        val userid: Long? = null,
+        val nick: String? = null,
     ) : Outbound() {
         override val cmd: String get() = "ban"
     }
@@ -378,7 +390,8 @@ sealed class Outbound {
     @SerialName("dumb")
     data class Muzzle(
         val channel: String,
-        val userid: Long,
+        val userid: Long? = null,
+        val nick: String? = null,
         val allies: List<String>? = null,
     ) : Outbound() {
         override val cmd: String get() = "dumb"

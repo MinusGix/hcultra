@@ -6,6 +6,7 @@ import android.os.Binder
 import android.os.IBinder
 import android.util.Log
 import chat.hc.core.net.ManagedTransport
+import chat.hc.core.session.ChannelKey
 import chat.hc.core.session.Credentials
 import chat.hc.core.session.ModAction
 import chat.hc.core.session.SessionManager
@@ -67,7 +68,7 @@ class HcService : Service() {
      * through the notification, the tab strip, or by returning to an app that
      * was already on it.
      */
-    fun showing(channel: String?) {
+    fun showing(channel: ChannelKey?) {
         sessions.activeChannel = channel
         channel?.let { notifications.clearAlerts(it) }
     }
@@ -79,9 +80,9 @@ class HcService : Service() {
         // the Activity while this manager lives on in the service, and a
         // SharedPreferences read is cheaper than the wiring to observe one.
         val display = ThemePrefs(this)
+        val servers = ServerPrefs(this)
         sessions = SessionManager(
             scope = scope,
-            initialUrl = ServerPrefs(this).url,
             transport = net.transport,
             tokenStore = KeystoreTokenStore(this),
             motdStore = MotdPrefs(this),
@@ -92,6 +93,7 @@ class HcService : Service() {
             // charges 13 rate-limit points of 25. 36^6 is ample for correlating
             // an echo against even a history of tens of thousands.
             customIdFactory = { Random.nextLong(0, 2_176_782_336L).toString(36).padStart(6, '0') },
+            dialectFor = servers::dialectFor,
         )
         // Channels are registered in HcApp, which has already run by now.
         notifications = ChatNotifications(this)
@@ -141,11 +143,11 @@ class HcService : Service() {
                 if (!prefs.wants(alert.kind)) return@collect
                 // A channel the user has closed does not get to buzz them on its
                 // way out, even though its socket is briefly still live.
-                if (sessions.channels.value[alert.channel]?.closing == true) return@collect
+                if (sessions.channels.value[alert.key]?.closing == true) return@collect
                 if (uiForeground) {
                     // The channel on screen never alerts: the message is
                     // already in front of the user.
-                    if (alert.channel == sessions.activeChannel) return@collect
+                    if (alert.key == sessions.activeChannel) return@collect
                     if (!prefs.otherChannels) return@collect
                 }
                 notifications.alert(alert)
@@ -161,14 +163,14 @@ class HcService : Service() {
 
         when (intent?.action) {
             ACTION_JOIN -> {
-                val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
+                val channel = intent.channelKey() ?: return START_STICKY
                 val nick = intent.getStringExtra(EXTRA_NICK) ?: return START_STICKY
                 val pass = intent.getStringExtra(EXTRA_PASS)
                 scope.launch { sessions.join(channel, Credentials(nick, pass)) }
             }
 
             ACTION_LEAVE -> {
-                val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
+                val channel = intent.channelKey() ?: return START_STICKY
                 notifications.clearAlerts(channel)
                 // Deferred: the socket stays up for the grace period so an undo
                 // costs the channel nothing. stopSelf is not called here — the
@@ -178,12 +180,12 @@ class HcService : Service() {
             }
 
             ACTION_UNDO_LEAVE -> {
-                val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
+                val channel = intent.channelKey() ?: return START_STICKY
                 scope.launch { sessions.undoLeave(channel) }
             }
 
             ACTION_SEND -> {
-                val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
+                val channel = intent.channelKey() ?: return START_STICKY
                 val text = intent.getStringExtra(EXTRA_TEXT) ?: return START_STICKY
                 // Answering is dealing with it. This is what dismisses the
                 // notification after a direct reply from the shade, which would
@@ -195,13 +197,13 @@ class HcService : Service() {
             // Not ACTION_SEND: the answer to a captcha or password is not a
             // message — it gets no bubble, no echo, and clears no alerts.
             ACTION_ANSWER -> {
-                val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
+                val channel = intent.channelKey() ?: return START_STICKY
                 val text = intent.getStringExtra(EXTRA_TEXT) ?: return START_STICKY
                 sessions.answerChallenge(channel, text)
             }
 
             ACTION_MODERATE -> {
-                val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
+                val channel = intent.channelKey() ?: return START_STICKY
                 val action = intent.getStringExtra(EXTRA_MOD_ACTION) ?: return START_STICKY
                 val userid = intent.getLongExtra(EXTRA_USERID, 0L)
                 scope.launch {
@@ -217,22 +219,12 @@ class HcService : Service() {
             // does it: the roster is the server's word on who is there, and the
             // invite needs a numeric userid the server will actually match.
             ACTION_INVITE -> {
-                val channel = intent.getStringExtra(EXTRA_CHANNEL) ?: return START_STICKY
+                val channel = intent.channelKey() ?: return START_STICKY
                 val userid = intent.getLongExtra(EXTRA_USERID, 0L)
                 scope.launch {
                     val target = sessions.channels.value[channel]?.roster
                         ?.firstOrNull { it.userid == userid } ?: return@launch
                     sessions.invite(channel, target)
-                }
-            }
-
-            ACTION_SET_SERVER -> {
-                val url = intent.getStringExtra(EXTRA_URL) ?: return START_STICKY
-                // Changing server disconnects every channel: the channels, the
-                // nicks and the tokens all belong to the old endpoint.
-                scope.launch {
-                    sessions.setServer(url)
-                    stopSelf()
                 }
             }
 
@@ -267,18 +259,28 @@ class HcService : Service() {
         const val ACTION_UNDO_LEAVE = "chat.hc.ultra.UNDO_LEAVE"
         const val ACTION_SEND = "chat.hc.ultra.SEND"
         const val ACTION_STOP = "chat.hc.ultra.STOP"
-        const val ACTION_SET_SERVER = "chat.hc.ultra.SET_SERVER"
         const val ACTION_MODERATE = "chat.hc.ultra.MODERATE"
         const val ACTION_INVITE = "chat.hc.ultra.INVITE"
         const val ACTION_ANSWER = "chat.hc.ultra.ANSWER"
 
         private const val HISTORY_SWEEP_MILLIS = 5 * 60 * 1000L
 
+        /** Puts [key] on an intent, as [channelKey] reads it back. */
+        fun Intent.putChannel(key: ChannelKey): Intent =
+            putExtra(EXTRA_SERVER, key.server).putExtra(EXTRA_CHANNEL, key.channel)
+
+        fun Intent.channelKey(): ChannelKey? {
+            val server = getStringExtra(EXTRA_SERVER) ?: return null
+            val channel = getStringExtra(EXTRA_CHANNEL) ?: return null
+            return ChannelKey(server, channel)
+        }
+
+        /** With [EXTRA_SERVER]: a channel's name alone is ambiguous across servers. */
         const val EXTRA_CHANNEL = "channel"
+        const val EXTRA_SERVER = "server"
         const val EXTRA_NICK = "nick"
         const val EXTRA_PASS = "pass"
         const val EXTRA_TEXT = "text"
-        const val EXTRA_URL = "url"
         const val EXTRA_MOD_ACTION = "modAction"
         const val EXTRA_USERID = "userid"
     }

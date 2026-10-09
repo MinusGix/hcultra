@@ -7,6 +7,7 @@ import chat.hc.core.net.Transport
 import chat.hc.core.protocol.ErrorId
 import chat.hc.core.protocol.FrameCodec
 import chat.hc.core.protocol.Inbound
+import chat.hc.core.protocol.LegacyAdapter
 import chat.hc.core.protocol.Limits
 import chat.hc.core.protocol.Outbound
 import kotlinx.coroutines.CancellationException
@@ -24,9 +25,12 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.produceIn
+import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -57,6 +61,11 @@ import kotlinx.coroutines.withTimeout
  *     challenge instead of `onlineSet`; the answer is a `chat`, and the server
  *     re-runs the join itself. A token restore into such a channel is refused
  *     outright, so every reconnect cold-joins and is challenged again.
+ *
+ * Rule 1 bends for servers that predate `session`; see [Dialect]. A socket
+ * that ends up speaking v1 ([legacy]) has no token and no silent resume — every
+ * connection is a cold `join` — and its frames are read through
+ * [LegacyAdapter], so the layers above see the same events either way.
  */
 class ChannelSession(
     val channel: String,
@@ -69,6 +78,21 @@ class ChannelSession(
     private val backoff: Backoff = Backoff(),
     private val handshakeTimeoutMillis: Long = 10_000,
     private val tokenGraceMillis: Long = 5_000,
+    /**
+     * What to speak, asked afresh for each connection. A supplier because
+     * under [Dialect.Auto] the answer is learned — by this session or another
+     * on the same server — and the next connection should skip the guessing.
+     */
+    private val dialect: () -> Dialect = { Dialect.V2 },
+    /** Told what an [Dialect.Auto] connection turned out to be. */
+    private val onDialect: (Dialect) -> Unit = {},
+    /**
+     * How long [Dialect.Auto] waits for `session` to be answered before
+     * concluding it may never be. hack.chat answers within a round trip; this
+     * only has to outlast a slow one, since guessing wrong costs nothing but a
+     * `join` sent a little early.
+     */
+    private val probeMillis: Long = 4_000,
 ) {
     private val _state = MutableStateFlow<SessionState>(SessionState.Idle)
     val state: StateFlow<SessionState> = _state.asStateFlow()
@@ -95,6 +119,21 @@ class ChannelSession(
     /** Our own userid, learned at join and stable across restores. */
     var userid: Long? = null
         private set
+
+    /**
+     * Whether the current connection speaks v1. Moderation and invites are
+     * addressed by nick there, and there is nothing to resume.
+     */
+    var legacy: Boolean = false
+        private set
+
+    /**
+     * Chats sent on a v1 connection that have not come back yet, oldest first,
+     * as (text the server will echo, customId). A v1 server echoes no customId,
+     * so this is how our own message is still recognised as ours; see [send].
+     */
+    private val echoes = ArrayDeque<Pair<String, String>>()
+    private val echoLock = Mutex()
 
     private var current: Connection? = null
     private var supervisor: Job? = null
@@ -133,7 +172,35 @@ class ChannelSession(
         validate(frame)
         val conn = current ?: throw ConnectionClosedException("$channel: not connected")
         governor.spend(costOf(frame))
-        conn.send(FrameCodec.encode(frame))
+        // Recorded before sending: the echo can beat send() back.
+        val echo = (frame as? Outbound.Chat)?.takeIf { legacy }?.customId
+            ?.let { id -> echoLock.withLock { echoes.addLast(LegacyEcho.expected(frame.text) to id) } }
+        try {
+            conn.send(FrameCodec.encode(frame))
+        } catch (e: Throwable) {
+            if (echo != null) echoLock.withLock { echoes.removeLastOrNull() }
+            throw e
+        }
+    }
+
+    /**
+     * Gives our own v1 echo back the customId it was sent with, so the buffer
+     * reconciles it with the bubble already showing instead of adding a copy.
+     *
+     * Matched by text, oldest first: the server echoes in the order it was
+     * sent, and one that was refused (rate limited, say) never comes back, so
+     * anything older than the match is given up on rather than left to claim
+     * a later message that happens to say the same thing.
+     */
+    private suspend fun withOurCustomId(frame: Inbound.Chat): Inbound.Chat {
+        if (!legacy || frame.customId != null || frame.userid != userid) return frame
+        return echoLock.withLock {
+            val at = echoes.indexOfFirst { it.first == frame.text }
+            if (at < 0) return@withLock frame
+            val id = echoes[at].second
+            repeat(at + 1) { echoes.removeFirst() }
+            frame.copy(customId = id)
+        }
     }
 
     /**
@@ -175,6 +242,9 @@ class ChannelSession(
      */
     suspend fun handoff(scope: CoroutineScope, reason: HandoffReason) {
         if (reason == HandoffReason.Dropped) return
+        // Nothing to hand off with: no token to restore, and a second `join`
+        // under our nick is refused while the old socket still holds it.
+        if (legacy) return
         val old = current ?: return
         if (!old.isOpen) return
         expectSilentResume = true
@@ -271,15 +341,72 @@ class ChannelSession(
             _state.value = SessionState.Handshaking
             val opened = transport.open(url)
             conn = opened
-            val frames = opened.incoming.map(FrameCodec::decode).produceIn(scope)
+            // Through the adapter whatever the dialect: it fills in only what a
+            // frame lacks, and under Auto the dialect is not known until the
+            // onlineSet — which itself needs filling in if it turns out to be v1.
+            val adapter = LegacyAdapter()
+            val frames = opened.incoming
+                .map(FrameCodec::decode)
+                .transform { frame -> adapter.adapt(frame).forEach { emit(it) } }
+                .produceIn(scope)
+            val mode = dialect()
+            legacy = false
+            echoes.clear()
 
-            // Frame 1, always: declares protocol v2 whether or not we hold a token.
+            if (mode == Dialect.V1) {
+                legacy = true
+                coldJoin(opened, frames, deferred, interactive)
+                return LiveConnection(opened, frames, restored = false, deferred = deferred.toList())
+            }
+
+            // Frame 1: declares protocol v2 whether or not we hold a token.
             governor.spend(RateGovernor.Cost.SESSION)
             opened.send(FrameCodec.encode(Outbound.Session(token)))
 
-            val session = when (val reply = awaitFrame(frames, "session reply", deferred) {
-                it is Inbound.Session || (it is Inbound.Warn && it.isRateLimited())
-            }) {
+            val reply = try {
+                awaitFrame(
+                    frames,
+                    "session reply",
+                    deferred,
+                    timeoutMillis = if (mode == Dialect.Auto) probeMillis else handshakeTimeoutMillis,
+                ) {
+                    it is Inbound.Session || (it is Inbound.Warn && it.isRateLimited())
+                }
+            } catch (e: HandshakeTimeoutException) {
+                if (mode != Dialect.Auto) throw e
+                null
+            }
+
+            // Silence under Auto. Either a server that predates `session`, and
+            // drops everything but `join` until we have joined, or a slow v2
+            // one. A `join` is right for both — see [Dialect.Auto] — and
+            // whichever it was shows in what came back first: a v2 server
+            // answers `session` before it reads the `join`.
+            //
+            // Shaped for v1, the likelier of the two after that long: only a
+            // v1 server reads the trip password out of `nick#password`, and
+            // joining without it would be joining as someone else. A slow v2
+            // server refuses that as a nick — after its `session` reply, which
+            // is how the refusal is told from a real one — and gets the v2
+            // shape on the same socket instead.
+            if (reply == null) {
+                legacy = true
+                try {
+                    coldJoin(opened, frames, deferred, interactive)
+                } catch (e: FatalSessionException) {
+                    if (credentials.pass == null || deferred.none { it is Inbound.Session }) throw e
+                    deferred.removeAll { it is Inbound.Warn && it.id == ErrorId.JOIN_INVALID_NICK }
+                    legacy = false
+                    coldJoin(opened, frames, deferred, interactive)
+                }
+                legacy = deferred.none { it is Inbound.Session }
+                onDialect(if (legacy) Dialect.V1 else Dialect.V2)
+                if (!legacy) awaitToken(frames, deferred)
+                return LiveConnection(opened, frames, restored = false, deferred = deferred.toList())
+            }
+            if (mode == Dialect.Auto) onDialect(Dialect.V2)
+
+            val session = when (reply) {
                 is Inbound.Session -> reply
                 // Blocked before the handshake even starts: the reply to
                 // `session` is replaced by the warn. Back off like a refused join.
@@ -304,7 +431,7 @@ class ChannelSession(
                 val ours = { f: Inbound -> f is Inbound.OnlineSet && isOurs(f) }
                 val set = deferred.firstOrNull(ours)?.also { deferred.remove(it) }
                     ?: runCatching {
-                        awaitFrame(frames, "restored onlineSet", deferred, ours)
+                        awaitFrame(frames, "restored onlineSet", deferred, predicate = ours)
                     }.getOrNull()
                 // Dispatched immediately, not deferred: the roster and our own
                 // userid have to be current before any held-back chat is
@@ -313,24 +440,8 @@ class ChannelSession(
                 return LiveConnection(opened, frames, restored = true, deferred = deferred.toList())
             }
 
-            governor.spend(RateGovernor.Cost.JOIN)
-            opened.send(FrameCodec.encode(Outbound.Join(channel, credentials.nick, credentials.pass)))
-
-            dispatch(awaitAdmission(opened, frames, deferred, interactive))
-
-            // The token trails onlineSet and the MOTD. Missing it is not fatal —
-            // we simply lose silent-resume until the next token arrives.
-            try {
-                withTimeout(tokenGraceMillis) {
-                    val tok = awaitFrame(frames, "post-join token", deferred) {
-                        it is Inbound.Session && it.token.isNotEmpty()
-                    } as Inbound.Session
-                    keepToken(tok)
-                }
-            } catch (_: TimeoutCancellationException) {
-                // Leave the old token in place; a later frame may still carry one.
-            }
-
+            coldJoin(opened, frames, deferred, interactive)
+            awaitToken(frames, deferred)
             return LiveConnection(opened, frames, restored = false, deferred = deferred.toList())
         } catch (c: CancellationException) {
             conn?.close()
@@ -343,6 +454,47 @@ class ChannelSession(
             // preceded by the info frames explaining why.
             deferred.forEach { dispatch(it) }
             throw e
+        }
+    }
+
+    /** Sends `join` and waits until we are let in, dispatching the onlineSet. */
+    private suspend fun coldJoin(
+        conn: Connection,
+        frames: ReceiveChannel<Inbound>,
+        deferred: MutableList<Inbound>,
+        interactive: Boolean,
+    ) {
+        governor.spend(RateGovernor.Cost.JOIN)
+        conn.send(FrameCodec.encode(joinFrame()))
+        dispatch(awaitAdmission(conn, frames, deferred, interactive))
+    }
+
+    /**
+     * The `join` for this socket's dialect. A 2019 server reads the trip
+     * password only from `nick#password`, as the site's own join box is typed;
+     * it has no `pass` field. Today's server reads either, but a v2 socket
+     * keeps the field it has always been sent.
+     */
+    private fun joinFrame(): Outbound.Join =
+        if (legacy) Outbound.Join(channel, credentials.nick + (credentials.pass?.let { "#$it" } ?: ""))
+        else Outbound.Join(channel, credentials.nick, credentials.pass)
+
+    /**
+     * The token trails onlineSet and the MOTD. Missing it is not fatal — we
+     * simply lose silent-resume until the next token arrives.
+     */
+    private suspend fun awaitToken(frames: ReceiveChannel<Inbound>, deferred: MutableList<Inbound>) {
+        try {
+            withTimeout(tokenGraceMillis) {
+                val tok = awaitFrame(frames, "post-join token", deferred) {
+                    it is Inbound.Session && it.token.isNotEmpty()
+                } as Inbound.Session
+                keepToken(tok)
+            }
+        } catch (_: TimeoutCancellationException) {
+            // Leave the old token in place; a later frame may still carry one.
+        } catch (_: HandshakeTimeoutException) {
+            // The same, should the handshake timeout be the shorter of the two.
         }
     }
 
@@ -417,7 +569,7 @@ class ChannelSession(
                     answeredForUser = false
                     offeredPassword = null
                     governor.spend(RateGovernor.Cost.JOIN)
-                    conn.send(FrameCodec.encode(Outbound.Join(channel, credentials.nick, credentials.pass)))
+                    conn.send(FrameCodec.encode(joinFrame()))
                 }
 
                 is Inbound.Captcha -> {
@@ -502,18 +654,29 @@ class ChannelSession(
      * Waits for a matching frame, collecting everything else into [deferred] on
      * the way — the MOTD, peer joins and even chat can arrive mid-handshake and
      * must not be dropped on the floor.
+     *
+     * A timeout is rethrown as an ordinary failure. `withTimeout` throws a
+     * [TimeoutCancellationException], which *is* a [CancellationException]:
+     * left alone it sailed through supervise()'s rethrow-cancellation branch and
+     * ended the reconnect loop without a word, leaving the tab on "Connecting…"
+     * for good. A server that never answers is a failed attempt, not a stop.
      */
     private suspend fun awaitFrame(
         frames: ReceiveChannel<Inbound>,
         label: String,
         deferred: MutableList<Inbound>,
+        timeoutMillis: Long = handshakeTimeoutMillis,
         predicate: (Inbound) -> Boolean,
-    ): Inbound = withTimeout(handshakeTimeoutMillis) {
-        for (frame in frames) {
-            if (predicate(frame)) return@withTimeout frame
-            deferred += frame
+    ): Inbound = try {
+        withTimeout(timeoutMillis) {
+            for (frame in frames) {
+                if (predicate(frame)) return@withTimeout frame
+                deferred += frame
+            }
+            throw ConnectionClosedException("$channel: closed while awaiting $label")
         }
-        throw ConnectionClosedException("$channel: closed while awaiting $label")
+    } catch (_: TimeoutCancellationException) {
+        throw HandshakeTimeoutException(label)
     }
 
     private suspend fun dispatch(frame: Inbound) {
@@ -550,7 +713,7 @@ class ChannelSession(
             // the site's own client renders from too.
             is Inbound.Chat -> {
                 val flair = presence[frame.userid]?.flair ?: frame.flair
-                emit(SessionEvent.Message(channel, frame.copy(flair = flair)))
+                emit(SessionEvent.Message(channel, withOurCustomId(frame).copy(flair = flair)))
             }
             is Inbound.Emote -> emit(SessionEvent.Emote(channel, frame))
             is Inbound.Whisper -> emit(SessionEvent.Whisper(channel, frame))
@@ -665,6 +828,21 @@ private class JoinRateLimitedException : Exception("join rate-limited")
 
 /** A rejoin collided with our own not-yet-reaped previous socket. Retryable. */
 private class GhostNickException : Exception("nick still held by the previous connection")
+
+/**
+ * What a v1 server will echo for a chat we send: its `parseText` strips blank
+ * lines from both ends and squeezes runs of three or more newlines to two, and
+ * the chat hook turns a leading `//` into `/`.
+ */
+internal object LegacyEcho {
+    fun expected(sent: String): String = sent
+        .replace(Regex("""^\s*\n|^\s+$|\n\s*$"""), "")
+        .replace(Regex("\n{3,}"), "\n\n")
+        .let { if (it.startsWith("//")) it.substring(1) else it }
+}
+
+/** The server did not say what the handshake was waiting for in time. Retryable. */
+private class HandshakeTimeoutException(label: String) : Exception("no $label from the server")
 
 /** A non-interactive handshake was asked a question only the user can answer. */
 private class ChallengeRequiredException : Exception("join requires a captcha or password")

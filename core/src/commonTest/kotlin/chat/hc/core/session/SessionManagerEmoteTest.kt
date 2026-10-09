@@ -41,7 +41,6 @@ class SessionManagerEmoteTest {
     private fun manager(transport: FakeTransport, scope: kotlinx.coroutines.CoroutineScope) =
         SessionManager(
             scope = scope,
-            initialUrl = TEST_URL,
             transport = transport,
             now = { 0L },
             customIdFactory = { "abc123" },
@@ -51,8 +50,8 @@ class SessionManagerEmoteTest {
     fun someoneElsesEmoteCountsAsUnread() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.activeChannel = "elsewhere"
-        sessions.join("testroom", Credentials("alice"))
+        sessions.activeChannel = key("elsewhere")
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         transport.connections[0].serverSends(
@@ -60,7 +59,7 @@ class SessionManagerEmoteTest {
         )
         advanceUntilIdle()
 
-        val ui = sessions.channels.value.getValue("testroom")
+        val ui = sessions.channels.value.getValue(key("testroom"))
         assertEquals(1, ui.unread)
         assertFalse(ui.messages.single { it.kind == MessageKind.Emote }.isMine)
         sessions.stopAll()
@@ -70,8 +69,8 @@ class SessionManagerEmoteTest {
     fun ourOwnEmoteIsOursAndNotUnread() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.activeChannel = "elsewhere"
-        sessions.join("testroom", Credentials("alice"))
+        sessions.activeChannel = key("elsewhere")
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         transport.connections[0].serverSends(
@@ -79,7 +78,7 @@ class SessionManagerEmoteTest {
         )
         advanceUntilIdle()
 
-        val ui = sessions.channels.value.getValue("testroom")
+        val ui = sessions.channels.value.getValue(key("testroom"))
         assertEquals(0, ui.unread)
         assertTrue(ui.messages.single { it.kind == MessageKind.Emote }.isMine)
         sessions.stopAll()
@@ -90,8 +89,8 @@ class SessionManagerEmoteTest {
     fun theChannelOnScreenDoesNotCount() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.join("testroom", Credentials("alice"))
-        sessions.activeChannel = "testroom"
+        sessions.join(key("testroom"), Credentials("alice"))
+        sessions.activeChannel = key("testroom")
         advanceUntilIdle()
 
         transport.connections[0].serverSends(
@@ -99,7 +98,7 @@ class SessionManagerEmoteTest {
         )
         advanceUntilIdle()
 
-        assertEquals(0, sessions.channels.value.getValue("testroom").unread)
+        assertEquals(0, sessions.channels.value.getValue(key("testroom")).unread)
         sessions.stopAll()
     }
 }

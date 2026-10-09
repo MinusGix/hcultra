@@ -17,7 +17,7 @@ class FakeTransport : Transport {
     var onSend: suspend FakeConnection.(String) -> Unit = {}
 
     override suspend fun open(url: String): Connection {
-        val c = FakeConnection(this)
+        val c = FakeConnection(this, url)
         connections += c
         return c
     }
@@ -25,7 +25,7 @@ class FakeTransport : Transport {
     val latest: FakeConnection get() = connections.last()
 }
 
-class FakeConnection(private val owner: FakeTransport) : Connection {
+class FakeConnection(private val owner: FakeTransport, val url: String = "") : Connection {
     private val inbox = Channel<String>(Channel.UNLIMITED)
     val sent = mutableListOf<String>()
     private var open = true

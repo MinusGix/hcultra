@@ -11,12 +11,15 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import chat.hc.core.session.Alert
+import chat.hc.core.session.ChannelKey
 import chat.hc.core.session.ChannelUi
 import chat.hc.core.session.Challenge
 import chat.hc.core.session.Ignore
+import chat.hc.core.session.Servers
 import chat.hc.core.session.SessionState
 import chat.hc.core.store.MessageKind
 import chat.hc.ultra.MainActivity
+import chat.hc.ultra.service.HcService.Companion.putChannel
 
 /**
  * The persistent notification is this app's whole background story on Android:
@@ -29,7 +32,18 @@ class ChatNotifications(private val context: Context) {
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     /** One alerting notification per channel *and* kind; see [alert]. */
-    private data class Key(val channel: String, val kind: Alert.Kind)
+    private data class Key(val channel: ChannelKey, val kind: Alert.Kind)
+
+    /**
+     * Whether the open channels span more than one server, as of the last
+     * [update]. Only then is a channel named with its server: `?programming`
+     * is unambiguous until a second server has one too, and the width the
+     * server takes up is wasted on everyone who uses only hack.chat.
+     */
+    private var severalServers = false
+
+    private fun name(key: ChannelKey): String =
+        if (severalServers) "?${key.channel} · ${Servers.label(key.server)}" else "?${key.channel}"
 
     /** What each live alert notification is currently showing, oldest first. */
     private val threads = LinkedHashMap<Key, ArrayDeque<Alert>>()
@@ -97,7 +111,8 @@ class ChatNotifications(private val context: Context) {
         manager.deleteNotificationChannel(CHANNEL_LEGACY_MESSAGES)
     }
 
-    fun build(channels: Map<String, ChannelUi>, ignored: Set<String> = emptySet()): Notification {
+    fun build(channels: Map<ChannelKey, ChannelUi>, ignored: Set<String> = emptySet()): Notification {
+        severalServers = channels.keys.mapTo(HashSet()) { it.server }.size > 1
         val connected = channels.values.count { it.state is SessionState.Live }
         val unread = channels.values.sumOf { it.unread }
         val reconnecting = channels.values.any { it.state is SessionState.Reconnecting }
@@ -108,7 +123,7 @@ class ChatNotifications(private val context: Context) {
 
         val title = when {
             channels.isEmpty() -> "Not connected"
-            challenged != null -> "?${challenged.channel} is waiting for " +
+            challenged != null -> "${name(challenged.key)} is waiting for " +
                 when ((challenged.state as SessionState.Challenged).challenge) {
                     is Challenge.Captcha -> "a captcha"
                     is Challenge.Password -> "its password"
@@ -118,7 +133,7 @@ class ChatNotifications(private val context: Context) {
         }
         val summary = channels.values.joinToString(", ") { ui ->
             buildString {
-                append('?').append(ui.channel)
+                append(name(ui.key))
                 if (ui.unread > 0) append(" (").append(ui.unread).append(')')
             }
         }
@@ -137,7 +152,7 @@ class ChatNotifications(private val context: Context) {
         val unreadChannel = channels.values
             .filter { it.unread > 0 }
             .maxByOrNull { ui -> ui.messages.lastOrNull()?.at ?: 0L }
-            ?.channel
+            ?.key
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ONGOING)
             .setSmallIcon(chat.hc.ultra.R.drawable.ic_notification)
@@ -175,7 +190,7 @@ class ChatNotifications(private val context: Context) {
 
         // Reply straight from the notification, to the most recently active
         // channel — the common case is answering the room you were just in.
-        channels.values.firstOrNull()?.let { builder.addAction(replyAction(it.channel)) }
+        channels.values.firstOrNull()?.let { builder.addAction(replyAction(it.key)) }
         builder.addAction(
             NotificationCompat.Action.Builder(0, "Disconnect", stopIntent()).build()
         )
@@ -183,7 +198,7 @@ class ChatNotifications(private val context: Context) {
         return builder.build()
     }
 
-    fun update(channels: Map<String, ChannelUi>, ignored: Set<String> = emptySet()) {
+    fun update(channels: Map<ChannelKey, ChannelUi>, ignored: Set<String> = emptySet()) {
         manager.notify(ONGOING_ID, build(channels, ignored))
     }
 
@@ -202,7 +217,7 @@ class ChatNotifications(private val context: Context) {
      * inline reply land in the right conversation.
      */
     fun alert(alert: Alert) {
-        val key = Key(alert.channel, alert.kind)
+        val key = Key(alert.key, alert.kind)
         // Swiping a notification away is a statement that the user has seen it,
         // so the next alert must start a fresh conversation rather than
         // resurrecting the lines they just dismissed. Asking the system what is
@@ -220,12 +235,12 @@ class ChatNotifications(private val context: Context) {
         val style = NotificationCompat.MessagingStyle(self)
             .setConversationTitle(
                 when (alert.kind) {
-                    Alert.Kind.Mention -> "?${alert.channel}"
-                    Alert.Kind.Whisper -> "Whisper · ?${alert.channel}"
+                    Alert.Kind.Mention -> name(alert.key)
+                    Alert.Kind.Whisper -> "Whisper · ${name(alert.key)}"
                     // The channel named here is where the invite was *sent*,
                     // not the one being offered: it is the thread this belongs
                     // to, and the offer itself is in the line below it.
-                    Alert.Kind.Invite -> "Invite · ?${alert.channel}"
+                    Alert.Kind.Invite -> "Invite · ${name(alert.key)}"
                 }
             )
             // True even for whispers: the conversation happened inside a
@@ -250,8 +265,8 @@ class ChatNotifications(private val context: Context) {
             .setWhen(alert.at)
             // Opens straight to the channel it is about, rather than to
             // whichever tab happened to be selected last.
-            .setContentIntent(openApp(alert.channel))
-            .addAction(replyAction(alert.channel))
+            .setContentIntent(openApp(alert.key))
+            .addAction(replyAction(alert.key))
         if (thread.size > 1) builder.setNumber(thread.size)
 
         manager.notify(idFor(key), builder.build())
@@ -265,7 +280,7 @@ class ChatNotifications(private val context: Context) {
      * was already showing it. Reaching the conversation is what makes the
      * alert spent; how you got there is not the notification's business.
      */
-    fun clearAlerts(channel: String) {
+    fun clearAlerts(channel: ChannelKey) {
         Alert.Kind.entries.forEach { kind ->
             val key = Key(channel, kind)
             threads.remove(key)
@@ -301,9 +316,21 @@ class ChatNotifications(private val context: Context) {
      * suffix, and it is written as an escape rather than embedded literally:
      * one raw NUL byte is enough to make the whole file "binary" to grep, which
      * silently hides it from every search.
+     *
+     * The server is part of it, after the channel, so that the same channel
+     * name on two servers is two notifications — and so that hack.chat's,
+     * written as before, keeps the id an older build gave it.
      */
     private fun idFor(key: Key): Int =
-        ALERT_ID_BASE + ("${key.channel}\u0000${key.kind.name}".hashCode() and 0xFFFFFF)
+        ALERT_ID_BASE + (idText(key.channel, "\u0000${key.kind.name}").hashCode() and 0xFFFFFF)
+
+    /**
+     * A channel as text for an id: its name, then [suffix], then its server
+     * — unless that is hack.chat, which is left off so the ids hack.chat's
+     * channels had before there were other servers stay what they were.
+     */
+    private fun idText(key: ChannelKey, suffix: String = ""): String =
+        key.channel + suffix + (if (key.server == Servers.DEFAULT_URL) "" else "\u0000${key.server}")
 
     /**
      * The last few messages worth glancing at, oldest first.
@@ -318,10 +345,10 @@ class ChatNotifications(private val context: Context) {
      * channel is named only when more than one is open, since prefixing every
      * line with the only channel there is wastes the width on a phone.
      */
-    private fun recentLines(channels: Map<String, ChannelUi>, ignored: Set<String>): List<String> {
+    private fun recentLines(channels: Map<ChannelKey, ChannelUi>, ignored: Set<String>): List<String> {
         val labelled = channels.size > 1
         return channels.values
-            .flatMap { ui -> ui.messages.map { ui.channel to it } }
+            .flatMap { ui -> ui.messages.map { ui.key to it } }
             .filter { (_, m) -> m.kind in GLANCEABLE && !Ignore.hides(m, ignored) }
             .sortedBy { (_, m) -> m.at }
             .takeLast(RECENT_LINES)
@@ -334,24 +361,24 @@ class ChatNotifications(private val context: Context) {
                     else -> m.nick
                 }
                 buildString {
-                    if (labelled) append('?').append(channel).append(' ')
+                    if (labelled) append(name(channel)).append(' ')
                     append(who).append(": ").append(body)
                 }
             }
     }
 
-    private fun replyAction(channel: String): NotificationCompat.Action {
+    private fun replyAction(channel: ChannelKey): NotificationCompat.Action {
         val remoteInput = RemoteInput.Builder(KEY_REPLY)
-            .setLabel("Message ?$channel")
+            .setLabel("Message ${name(channel)}")
             .build()
 
         val intent = Intent(context, ReplyReceiver::class.java).apply {
             action = ReplyReceiver.ACTION_REPLY
-            putExtra(HcService.EXTRA_CHANNEL, channel)
+            putChannel(channel)
         }
         val pending = PendingIntent.getBroadcast(
             context,
-            channel.hashCode(),
+            idText(channel).hashCode(),
             intent,
             // Mutable is required: the system fills the reply text in for us.
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
@@ -373,12 +400,12 @@ class ChatNotifications(private val context: Context) {
      * so a single code would hand every notification whichever channel was
      * registered first.
      */
-    private fun openApp(channel: String? = null): PendingIntent = PendingIntent.getActivity(
+    private fun openApp(channel: ChannelKey? = null): PendingIntent = PendingIntent.getActivity(
         context,
-        channel?.let { OPEN_CODE_BASE + (it.hashCode() and 0xFFFFFF) } ?: 0,
+        channel?.let { OPEN_CODE_BASE + (idText(it).hashCode() and 0xFFFFFF) } ?: 0,
         Intent(context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            .apply { channel?.let { putExtra(MainActivity.EXTRA_SHOW_CHANNEL, it) } },
+            .apply { channel?.let { putChannel(it) } },
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 

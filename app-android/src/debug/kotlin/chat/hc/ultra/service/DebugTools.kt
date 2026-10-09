@@ -47,7 +47,10 @@ internal object DebugTools {
             Log.i(TAG, "service not running; open the app and join a channel first")
             return
         }
-        val channel = intent.getStringExtra("channel")
+        // By name, on whichever server has it open first: typing a server URL
+        // into an adb command is a chore, and testing rarely has two open.
+        val name = intent.getStringExtra("channel")
+        val channel = sessions.channels.value.keys.firstOrNull { it.channel == name }
         when (intent.action) {
             "chat.hc.ultra.DEBUG_SEED" -> {
                 val count = intent.getIntExtra("count", 10_000)
@@ -57,7 +60,7 @@ internal object DebugTools {
                 val step = if (days > 0) days * 86_400_000L / count else 1_000L
                 val messages = (0 until count).map { i -> sample(now - (count - i) * step) }
                 val ok = channel != null && sessions.injectForTesting(channel, messages)
-                Log.i(TAG, if (ok) "seeded $count into ?$channel" else "no open channel ?$channel")
+                Log.i(TAG, if (ok) "seeded $count into ?$name" else "no open channel ?$name")
             }
             "chat.hc.ultra.DEBUG_FLOOD" -> {
                 val count = intent.getIntExtra("count", 200)
@@ -66,11 +69,11 @@ internal object DebugTools {
                 flood = scope.launch {
                     repeat(count) {
                         if (channel == null || !sessions.injectForTesting(channel, listOf(sample(System.currentTimeMillis())))) {
-                            Log.i(TAG, "no open channel ?$channel"); return@launch
+                            Log.i(TAG, "no open channel ?$name"); return@launch
                         }
                         delay(interval)
                     }
-                    Log.i(TAG, "flood of $count into ?$channel done")
+                    Log.i(TAG, "flood of $count into ?$name done")
                 }
             }
             "chat.hc.ultra.DEBUG_STOP" -> flood?.cancel()

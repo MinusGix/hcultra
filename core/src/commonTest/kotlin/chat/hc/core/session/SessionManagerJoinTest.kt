@@ -44,7 +44,6 @@ class SessionManagerJoinTest {
     private fun manager(transport: FakeTransport, scope: kotlinx.coroutines.CoroutineScope) =
         SessionManager(
             scope = scope,
-            initialUrl = TEST_URL,
             transport = transport,
             now = { 0L },
             customIdFactory = { "abc123" },
@@ -55,9 +54,9 @@ class SessionManagerJoinTest {
     fun rejoiningAsTheSamePersonIsANoOp() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
 
         assertEquals(1, transport.connections.size, "opened a second socket for the same identity")
@@ -72,9 +71,9 @@ class SessionManagerJoinTest {
     fun joiningAsSomeoneElseReplacesTheSession() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
-        sessions.join("testroom", Credentials("bob"))
+        sessions.join(key("testroom"), Credentials("bob"))
         advanceUntilIdle()
 
         assertEquals(2, transport.connections.size, "did not open a socket for the new identity")
@@ -91,17 +90,17 @@ class SessionManagerJoinTest {
     fun changingIdentityKeepsTheScrollback() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this)
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
         transport.connections[0].serverSends(
             """{"cmd":"chat","nick":"peer","userid":7,"text":"said before the switch","channel":"testroom"}"""
         )
         advanceUntilIdle()
 
-        sessions.join("testroom", Credentials("bob"))
+        sessions.join(key("testroom"), Credentials("bob"))
         advanceUntilIdle()
 
-        val messages = sessions.channels.value.getValue("testroom").messages
+        val messages = sessions.channels.value.getValue(key("testroom")).messages
         assertTrue(
             messages.any { it.text == "said before the switch" },
             "the scrollback was dropped on re-identify",

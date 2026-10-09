@@ -41,7 +41,6 @@ class SessionManagerJoinLeaveTest {
         showJoinLeave: () -> Boolean,
     ) = SessionManager(
         scope = scope,
-        initialUrl = TEST_URL,
         transport = transport,
         showJoinLeave = showJoinLeave,
         now = { 0L },
@@ -62,17 +61,16 @@ class SessionManagerJoinLeaveTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = SessionManager(
             scope = this,
-            initialUrl = TEST_URL,
             transport = transport,
             now = { 0L },
             customIdFactory = { "abc123" },
         )
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
         transport.peerComesAndGoes()
         advanceUntilIdle()
 
-        val kinds = sessions.channels.value.getValue("testroom").messages.map { it.kind }
+        val kinds = sessions.channels.value.getValue(key("testroom")).messages.map { it.kind }
         assertTrue(MessageKind.Join in kinds, "a join went unrecorded with the default setting")
         assertTrue(MessageKind.Leave in kinds, "a leave went unrecorded with the default setting")
         sessions.stopAll()
@@ -82,12 +80,12 @@ class SessionManagerJoinLeaveTest {
     fun suppressedWhenOff() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this) { false }
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
         transport.peerComesAndGoes()
         advanceUntilIdle()
 
-        val kinds = sessions.channels.value.getValue("testroom").messages.map { it.kind }
+        val kinds = sessions.channels.value.getValue(key("testroom")).messages.map { it.kind }
         assertTrue(MessageKind.Join !in kinds, "a join was buffered with the setting off")
         assertTrue(MessageKind.Leave !in kinds, "a leave was buffered with the setting off")
         sessions.stopAll()
@@ -98,7 +96,7 @@ class SessionManagerJoinLeaveTest {
     fun theRosterStillTracksThem() = runTest {
         val transport = FakeTransport().apply { scriptJoin() }
         val sessions = manager(transport, this) { false }
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
         transport.connections[0].serverSends(
             """{"cmd":"onlineAdd","nick":"peer","userid":7,"channel":"testroom"}"""
@@ -107,7 +105,7 @@ class SessionManagerJoinLeaveTest {
 
         assertEquals(
             listOf("alice", "peer"),
-            sessions.channels.value.getValue("testroom").roster.map { it.nick },
+            sessions.channels.value.getValue(key("testroom")).roster.map { it.nick },
         )
         sessions.stopAll()
     }
@@ -121,7 +119,7 @@ class SessionManagerJoinLeaveTest {
         val transport = FakeTransport().apply { scriptJoin() }
         var show = false
         val sessions = manager(transport, this) { show }
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceUntilIdle()
         transport.connections[0].serverSends(
             """{"cmd":"onlineAdd","nick":"early","userid":7,"channel":"testroom"}"""
@@ -134,7 +132,7 @@ class SessionManagerJoinLeaveTest {
         )
         advanceUntilIdle()
 
-        val joins = sessions.channels.value.getValue("testroom").messages
+        val joins = sessions.channels.value.getValue(key("testroom")).messages
             .filter { it.kind == MessageKind.Join }
             .map { it.nick }
         assertEquals(listOf("late"), joins)

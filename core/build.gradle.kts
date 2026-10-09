@@ -136,6 +136,69 @@ tasks.register<Test>("phantomTest") {
     doFirst { phantom.get().ensureStarted() }
 }
 
+/**
+ * hack.chat as of December 2019 (probe/legacy), for the v1 dialect: no
+ * `session`, no userids. Started like [PhantomService], and for the same reason.
+ */
+abstract class LegacyService : BuildService<LegacyService.Params>, AutoCloseable {
+    interface Params : BuildServiceParameters {
+        val dir: DirectoryProperty
+        val port: Property<Int>
+        val log: RegularFileProperty
+    }
+
+    private var process: Process? = null
+
+    @Synchronized
+    fun ensureStarted() {
+        if (process?.isAlive == true) return
+        val dir = parameters.dir.get().asFile
+        if (!dir.resolve("srv/server/node_modules").exists()) {
+            val setup = ProcessBuilder("node", "legacy.mjs", "setup").directory(dir).inheritIO().start()
+            check(setup.waitFor() == 0) { "legacy setup failed; see probe/legacy/README.md" }
+        }
+        val log = parameters.log.get().asFile.also { it.parentFile.mkdirs() }
+        val p = ProcessBuilder("node", "legacy.mjs", "serve", "--port", "${parameters.port.get()}")
+            .directory(dir).redirectError(log).start()
+        process = p
+        val ready = p.inputStream.bufferedReader().readLine()
+        check(ready != null && "\"ready\":true" in ready) { "legacy server did not start; see $log" }
+    }
+
+    override fun close() {
+        process?.let {
+            it.destroy()
+            it.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+}
+
+val legacy = gradle.sharedServices.registerIfAbsent("legacy", LegacyService::class) {
+    parameters.dir.set(rootProject.layout.projectDirectory.dir("probe/legacy"))
+    // Off the default 6080, so one run by hand is not disturbed.
+    parameters.port.set(6180)
+    parameters.log.set(layout.buildDirectory.file("legacy/legacy.log"))
+}
+
+val legacyPackage = "chat.hc.core.legacy.*"
+
+tasks.named<Test>("jvmTest") {
+    filter { excludeTestsMatching(legacyPackage) }
+}
+
+tasks.register<Test>("legacyTest") {
+    group = "verification"
+    description = "Run the client against hack.chat as it was in 2019, for the v1 dialect (needs node)."
+    val jvmTest = tasks.named<Test>("jvmTest").get()
+    testClassesDirs = jvmTest.testClassesDirs
+    classpath = jvmTest.classpath
+    filter { includeTestsMatching(legacyPackage) }
+    outputs.upToDateWhen { false }
+    usesService(legacy)
+    environment("LEGACY_URL", "ws://127.0.0.1:6180")
+    doFirst { legacy.get().ensureStarted() }
+}
+
 /** Per-message native cost by history length; see TranscriptBench.kt. */
 tasks.register<JavaExec>("transcriptBench") {
     group = "verification"

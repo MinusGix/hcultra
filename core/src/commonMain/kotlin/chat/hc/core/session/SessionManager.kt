@@ -26,7 +26,7 @@ import kotlinx.coroutines.sync.withLock
 
 /** Everything the UI needs to render one channel. */
 data class ChannelUi(
-    val channel: String,
+    val key: ChannelKey,
     val state: SessionState = SessionState.Idle,
     val messages: List<ChatMessage> = emptyList(),
     val roster: List<chat.hc.core.protocol.User> = emptyList(),
@@ -37,7 +37,10 @@ data class ChannelUi(
      * offers to take it back.
      */
     val closing: Boolean = false,
-)
+) {
+    val channel: String get() = key.channel
+    val server: String get() = key.server
+}
 
 /**
  * Owns every channel session, their buffers, and the single shared rate budget.
@@ -49,11 +52,14 @@ data class ChannelUi(
  *
  * One socket per channel, by choice since the 2026-10 server update (a v2
  * socket may now join several); see [ChannelSession].
+ *
+ * Channels on several servers can be open at once, each keyed by
+ * [ChannelKey]. What belongs to a server rather than a channel — the rate
+ * budget, the MOTD, which [Dialect] it speaks — is held per server.
  */
 class SessionManager(
     /** Owns every session and the pending-echo timers; supplied by the service. */
     private val scope: CoroutineScope,
-    initialUrl: String = Servers.DEFAULT_URL,
     private val transport: Transport,
     private val tokenStore: TokenStore = InMemoryTokenStore(),
     /**
@@ -100,27 +106,36 @@ class SessionManager(
     private val now: () -> Long,
     /** Random enough to correlate our echo; not security-sensitive. */
     private val customIdFactory: () -> String,
+    /**
+     * What the user has said each server speaks. A supplier, read at every
+     * connection, since it is a setting that changes while this lives on in
+     * the service; see [forgetServer] for what a change costs.
+     */
+    private val dialectFor: (server: String) -> Dialect = { Dialect.Auto },
 ) {
     /**
-     * Endpoint new sessions connect to. Changing it tears down every channel:
-     * the channels, the nicks and the tokens all belong to the old server, and
-     * carrying any of them across would be meaningless.
+     * One per server, shared by every socket to it: the server scores rate
+     * limit per address, not per socket. Two servers are two budgets.
      */
-    var serverUrl: String = initialUrl
-        private set
+    private val governors = HashMap<String, RateGovernor>()
 
-    /** Shared deliberately: the server scores rate limit per address, not per socket. */
-    private val governor = RateGovernor()
+    /**
+     * What [Dialect.Auto] found each server to speak, so that only the first
+     * connection to one pays for finding out. Memory only: a server can be
+     * upgraded, and a fresh start is a cheap way to notice. A flow only for
+     * its atomic update: sessions report from their own threads.
+     */
+    private val detected = MutableStateFlow<Map<String, Dialect>>(emptyMap())
 
-    private val sessions = LinkedHashMap<String, ChannelSession>()
-    private val buffers = LinkedHashMap<String, ChannelBuffer>()
-    private val jobs = LinkedHashMap<String, Job>()
+    private val sessions = LinkedHashMap<ChannelKey, ChannelSession>()
+    private val buffers = LinkedHashMap<ChannelKey, ChannelBuffer>()
+    private val jobs = LinkedHashMap<ChannelKey, Job>()
     /** Pending [beginLeave] grace periods. Presence here means "closing". */
-    private val closeTimers = LinkedHashMap<String, Job>()
+    private val closeTimers = LinkedHashMap<ChannelKey, Job>()
     private val lock = Mutex()
 
-    private val _channels = MutableStateFlow<Map<String, ChannelUi>>(emptyMap())
-    val channels: StateFlow<Map<String, ChannelUi>> = _channels.asStateFlow()
+    private val _channels = MutableStateFlow<Map<ChannelKey, ChannelUi>>(emptyMap())
+    val channels: StateFlow<Map<ChannelKey, ChannelUi>> = _channels.asStateFlow()
 
     /**
      * Messages addressed to the user personally; see [Alert].
@@ -142,6 +157,8 @@ class SessionManager(
     /**
      * Nicks whose messages the user has asked not to hear about.
      *
+     * Across every server, since the same people are on more than one and
+     * the list is something the user decided about them, not about a room.
      * By nick, as the site's own ignore is: a userid is per connection, so
      * keying on one would let anyone back in by reconnecting. Held here rather
      * than in the UI because this is what decides unread counts and [alerts],
@@ -161,11 +178,18 @@ class SessionManager(
     private fun isIgnored(nick: String) = nick in _ignored.value
 
     /** Channel the UI is currently showing; its messages never count as unread. */
-    var activeChannel: String? = null
+    var activeChannel: ChannelKey? = null
         set(value) {
             field = value
-            value?.let { ch -> mutate(ch) { it.copy(unread = 0) } }
+            value?.let { key -> mutate(key) { it.copy(unread = 0) } }
         }
+
+    /** What a server speaks: the user's setting, or what Auto found out. */
+    private fun dialectOf(server: String): Dialect {
+        val chosen = dialectFor(server)
+        if (chosen != Dialect.Auto) return chosen
+        return detected.value[server] ?: Dialect.Auto
+    }
 
     /**
      * Joins a channel, or changes who we are in one we are already in.
@@ -177,24 +201,24 @@ class SessionManager(
      * An identical identity stays a no-op: the server rejects a second `join`
      * on an established socket, and there would be nothing to change.
      */
-    suspend fun join(channel: String, credentials: Credentials) {
+    suspend fun join(key: ChannelKey, credentials: Credentials) {
         lock.withLock {
             // Joining a channel on its way out calls off the departure. Without
             // this, re-joining one you just closed with the same identity hits
             // the no-op below and leaves it hidden, waiting to disappear.
-            closeTimers.remove(channel)?.let { timer ->
+            closeTimers.remove(key)?.let { timer ->
                 timer.cancel()
-                mutate(channel) { ui -> ui.copy(closing = false) }
+                mutate(key) { ui -> ui.copy(closing = false) }
             }
 
-            val existing = sessions[channel]
+            val existing = sessions[key]
             if (existing != null) {
                 if (existing.credentials == credentials) return
                 existing.stop()
-                jobs.remove(channel)?.cancel()
+                jobs.remove(key)?.cancel()
                 // The scrollback is kept: the server holds no history, so
                 // dropping it to change nick would destroy the conversation.
-                buffers[channel]?.add(
+                buffers[key]?.add(
                     ChatMessage(
                         0,
                         MessageKind.Info,
@@ -204,44 +228,53 @@ class SessionManager(
                 )
                 // The roster belongs to the session being retired, and its
                 // `isme` entry is about to name the wrong person.
-                mutate(channel) { it.copy(roster = emptyList(), state = SessionState.Connecting) }
+                mutate(key) { it.copy(roster = emptyList(), state = SessionState.Connecting) }
             }
 
+            val server = key.server
             val session = ChannelSession(
-                channel = channel,
+                channel = key.channel,
                 credentials = credentials,
-                url = serverUrl,
+                url = server,
                 transport = transport,
-                governor = governor,
+                governor = governors.getOrPut(server) { RateGovernor() },
                 tokenStore = tokenStore,
+                dialect = { dialectOf(server) },
+                onDialect = { found -> detected.update { it + (server to found) } },
             )
-            sessions[channel] = session
-            buffers.getOrPut(channel) { ChannelBuffer(historyLimit().maxLines) }
-            _channels.update { it + (channel to (it[channel] ?: ChannelUi(channel))) }
-            publish(channel)
+            sessions[key] = session
+            buffers.getOrPut(key) { ChannelBuffer(historyLimit().maxLines) }
+            _channels.update { it + (key to (it[key] ?: ChannelUi(key))) }
+            publish(key)
 
             // Both collectors under one parent, so cancelling the entry stops
             // both. A state collector left running on a retired session would
             // keep writing its state over the replacement's.
-            jobs[channel] = scope.launch {
-                launch { session.events.collect { onEvent(session, it) } }
-                launch { session.state.collect { st -> mutate(channel) { it.copy(state = st) } } }
+            jobs[key] = scope.launch {
+                launch { session.events.collect { onEvent(key, session, it) } }
+                launch { session.state.collect { st -> mutate(key) { it.copy(state = st) } } }
             }
             session.start(scope)
         }
     }
 
     /**
-     * Points the client at a different server, disconnecting everything first.
+     * Leaves every channel on [server] at once, and forgets what Auto learned
+     * about it — for a server whose address or dialect has just been changed,
+     * or that has been removed. The channels belong to the old settings; the
+     * next join connects under the new ones.
      *
-     * Tokens are keyed by server, so the ones for the previous endpoint survive
-     * untouched — switching to a local test server and back does not cost you a
-     * silent resume on the server you normally use.
+     * Tokens are keyed by server and survive untouched, so pointing a server
+     * entry somewhere else and back does not cost a silent resume.
      */
-    suspend fun setServer(url: String) {
-        if (url == serverUrl) return
-        stopAll()
-        serverUrl = url
+    suspend fun forgetServer(server: String) {
+        lock.withLock {
+            detected.update { it - server }
+            sessions.keys.filter { it.server == server }.forEach { key ->
+                closeTimers.remove(key)?.cancel()
+                commitLeave(key)
+            }
+        }
     }
 
     /**
@@ -257,47 +290,47 @@ class SessionManager(
      * Idempotent, so a second close of a channel already closing does not
      * restart its grace period.
      */
-    suspend fun beginLeave(channel: String) {
+    suspend fun beginLeave(key: ChannelKey) {
         lock.withLock {
-            if (channel !in sessions || channel in closeTimers) return
-            mutate(channel) { it.copy(closing = true) }
-            closeTimers[channel] = scope.launch {
+            if (key !in sessions || key in closeTimers) return
+            mutate(key) { it.copy(closing = true) }
+            closeTimers[key] = scope.launch {
                 delay(closeGraceMillis)
                 // Taken after the delay, not before, so the timer does not hold
                 // the lock for the whole grace period. An undo that lands while
                 // this is waiting cancels the job, and the guard covers the
                 // sliver where it lands after the wait but before the lock.
                 lock.withLock {
-                    if (channel in closeTimers) commitLeave(channel)
+                    if (key in closeTimers) commitLeave(key)
                 }
             }
         }
     }
 
     /** Takes back a [beginLeave] while its grace period is still running. */
-    suspend fun undoLeave(channel: String) {
+    suspend fun undoLeave(key: ChannelKey) {
         lock.withLock {
-            val timer = closeTimers.remove(channel) ?: return
+            val timer = closeTimers.remove(key) ?: return
             timer.cancel()
-            mutate(channel) { it.copy(closing = false) }
+            mutate(key) { it.copy(closing = false) }
         }
     }
 
     /** Leaves now, without waiting out the grace period. */
-    suspend fun leave(channel: String) {
+    suspend fun leave(key: ChannelKey) {
         lock.withLock {
-            closeTimers.remove(channel)?.cancel()
-            commitLeave(channel)
+            closeTimers.remove(key)?.cancel()
+            commitLeave(key)
         }
     }
 
     /** Caller holds [lock]. */
-    private suspend fun commitLeave(channel: String) {
-        closeTimers.remove(channel)
-        sessions.remove(channel)?.stop()
-        jobs.remove(channel)?.cancel()
-        buffers.remove(channel)
-        _channels.update { it - channel }
+    private suspend fun commitLeave(key: ChannelKey) {
+        closeTimers.remove(key)
+        sessions.remove(key)?.stop()
+        jobs.remove(key)?.cancel()
+        buffers.remove(key)
+        _channels.update { it - key }
     }
 
     suspend fun stopAll() {
@@ -314,26 +347,26 @@ class SessionManager(
      * Sends optimistically: the message appears immediately as [Delivery.Sending]
      * and is reconciled when the server echoes it back with our customId.
      */
-    suspend fun sendChat(channel: String, text: String) {
-        val session = sessions[channel] ?: return
-        val buffer = buffers[channel] ?: return
+    suspend fun sendChat(key: ChannelKey, text: String) {
+        val session = sessions[key] ?: return
+        val buffer = buffers[key] ?: return
 
         // Slash commands are handled server-side and may produce an emote, an
         // info, a warn, or nothing at all — so there is no echo to reconcile
         // against and an optimistic bubble would hang at "sending…" forever.
         if (Composer.isSlashCommand(text)) {
-            runCatching { session.send(Outbound.Chat(channel, text)) }
+            runCatching { session.send(Outbound.Chat(key.channel, text)) }
             return
         }
 
         val customId = customIdFactory()
         buffer.addPending(text, customId, session.roster.firstOrNull { it.isme }?.nick ?: "", session.userid ?: 0L, now())
-        publish(channel)
-        runCatching { session.send(Outbound.Chat(channel, text, customId)) }
-            .onSuccess { scheduleEchoTimeout(channel, customId) }
+        publish(key)
+        runCatching { session.send(Outbound.Chat(key.channel, text, customId)) }
+            .onSuccess { scheduleEchoTimeout(key, customId) }
             .onFailure {
                 buffer.markFailed(customId)
-                publish(channel)
+                publish(key)
             }
     }
 
@@ -342,8 +375,8 @@ class SessionManager(
      * [SessionState.Challenged]. Not a chat: nothing is buffered or echoed, and
      * the server never broadcasts it.
      */
-    fun answerChallenge(channel: String, text: String) {
-        sessions[channel]?.answer(text)
+    fun answerChallenge(key: ChannelKey, text: String) {
+        sessions[key]?.answer(text)
     }
 
     /**
@@ -353,33 +386,33 @@ class SessionManager(
      * hack.chat keeps no history the echo can never arrive late, so a pending
      * message that ages out is downgraded rather than left spinning forever.
      */
-    private fun scheduleEchoTimeout(channel: String, customId: String) {
+    private fun scheduleEchoTimeout(key: ChannelKey, customId: String) {
         scope.launch {
             delay(echoTimeoutMillis)
-            val buffer = buffers[channel] ?: return@launch
-            if (buffer.markUnconfirmed(customId)) publish(channel)
+            val buffer = buffers[key] ?: return@launch
+            if (buffer.markUnconfirmed(customId)) publish(key)
         }
     }
 
-    fun buffer(channel: String): ChannelBuffer? = buffers[channel]
+    fun buffer(key: ChannelKey): ChannelBuffer? = buffers[key]
 
     /** Our own roster entry, which carries the level the server assigned us. */
-    fun me(channel: String): chat.hc.core.protocol.User? =
-        sessions[channel]?.roster?.firstOrNull { it.isme }
+    fun me(key: ChannelKey): chat.hc.core.protocol.User? =
+        sessions[key]?.roster?.firstOrNull { it.isme }
 
     /**
      * Performs a moderation action, re-checking the level rather than trusting
      * the UI: a rejected command costs 10 rate-limit points of 25 and the
      * server replies nothing, so a stale button must not be able to spend them.
      */
-    suspend fun moderate(channel: String, action: ModAction, target: chat.hc.core.protocol.User): Boolean {
-        val session = sessions[channel] ?: return false
-        val me = me(channel) ?: return false
+    suspend fun moderate(key: ChannelKey, action: ModAction, target: chat.hc.core.protocol.User): Boolean {
+        val session = sessions[key] ?: return false
+        val me = me(key) ?: return false
         // The full check, not just the level gate: a target at or above our own
         // level is refused server-side too, and a stale button must not be able
         // to spend rate budget discovering that.
         if (action !in Moderation.available(me, target)) return false
-        val frame = Moderation.frameFor(action, channel, target) ?: return false
+        val frame = Moderation.frameFor(action, key.channel, target, session.legacy) ?: return false
         return runCatching { session.send(frame) }.isSuccess
     }
 
@@ -405,18 +438,24 @@ class SessionManager(
      * yourself is legal server-side and merely useless, so the guard is against
      * spending 2 rate-limit points of 25 on nothing rather than against a
      * rejection.
+     *
+     * By nick on a v1 connection, the only way a v1 `invite` can be addressed.
      */
-    suspend fun invite(channel: String, target: chat.hc.core.protocol.User): Boolean {
-        val session = sessions[channel] ?: return false
-        val me = me(channel) ?: return false
+    suspend fun invite(key: ChannelKey, target: chat.hc.core.protocol.User): Boolean {
+        val session = sessions[key] ?: return false
+        val me = me(key) ?: return false
         if (target.userid == me.userid) return false
-        return runCatching {
-            session.send(Outbound.Invite(channel = channel, userid = target.userid))
-        }.isSuccess
+        val frame = if (session.legacy) Outbound.Invite(channel = key.channel, nick = target.nick)
+        else Outbound.Invite(channel = key.channel, userid = target.userid)
+        return runCatching { session.send(frame) }.isSuccess
     }
 
-    private suspend fun onEvent(session: ChannelSession, event: SessionEvent) {
-        val channel = event.channel
+    /**
+     * Events say which channel they are about by name, which is ambiguous
+     * across servers, so the key comes from the session they were collected
+     * from instead.
+     */
+    private suspend fun onEvent(channel: ChannelKey, session: ChannelSession, event: SessionEvent) {
         val buffer = buffers[channel] ?: return
 
         when (event) {
@@ -426,7 +465,7 @@ class SessionManager(
                     if (channel != activeChannel) {
                         mutate(channel) { it.copy(unread = it.unread + 1) }
                     }
-                    alertIfMentioned(session, msg.nick, msg.text, event.frame.time ?: now())
+                    alertIfMentioned(channel, session, msg.nick, msg.text, event.frame.time ?: now())
                 }
             }
 
@@ -448,7 +487,7 @@ class SessionManager(
                     if (channel != activeChannel) {
                         mutate(channel) { it.copy(unread = it.unread + 1) }
                     }
-                    alertIfMentioned(session, event.frame.nick, event.frame.text, event.frame.time ?: now())
+                    alertIfMentioned(channel, session, event.frame.nick, event.frame.text, event.frame.time ?: now())
                 }
             }
 
@@ -485,7 +524,7 @@ class SessionManager(
                     // are that person. Being addressed is what it is for.
                     _alerts.tryEmit(
                         Alert(
-                            channel = channel,
+                            key = channel,
                             kind = Alert.Kind.Whisper,
                             nick = who.nick,
                             text = event.frame.text,
@@ -499,7 +538,7 @@ class SessionManager(
                 // Kept because we will not be sent it again: the MOTD answers a
                 // `join`, and every connection after the first restores a token
                 // instead. See the Resumed branch, which replays it.
-                if (event.frame.id == ErrorId.MOTD) motdStore.save(serverUrl, event.frame.text)
+                if (event.frame.id == ErrorId.MOTD) motdStore.save(channel.server, event.frame.text)
                 buffer.add(
                     ChatMessage(0, MessageKind.Info, text = event.frame.text, at = event.frame.time ?: now())
                 )
@@ -551,7 +590,7 @@ class SessionManager(
                 // here — below the roster line, which is where a cold join puts
                 // it, since that arrives on `join` and this is emitted once the
                 // handshake returns.
-                if (!event.silent && event.restored) replayMotd(buffer)
+                if (!event.silent && event.restored) replayMotd(channel.server, buffer)
             }
 
             // One notice per outage, not one per retry: a long outage produces a
@@ -618,7 +657,7 @@ class SessionManager(
                     // it points at where the conversation is moving.
                     _alerts.tryEmit(
                         Alert(
-                            channel = channel,
+                            key = channel,
                             kind = Alert.Kind.Invite,
                             nick = who.nick,
                             text = InviteNotice.alert(event.frame.inviteChannel),
@@ -642,11 +681,11 @@ class SessionManager(
      * asked for — but the roster is empty until the handshake completes, and a
      * mention arriving in that window should still land.
      */
-    private fun alertIfMentioned(session: ChannelSession, from: String, text: String, at: Long) {
+    private fun alertIfMentioned(key: ChannelKey, session: ChannelSession, from: String, text: String, at: Long) {
         val me = session.roster.firstOrNull { it.isme }?.nick ?: session.credentials.nick
         if (!Mentions.mentions(text, me)) return
         _alerts.tryEmit(
-            Alert(session.channel, Alert.Kind.Mention, nick = from, text = text, at = at)
+            Alert(key, Alert.Kind.Mention, nick = from, text = text, at = at)
         )
     }
 
@@ -660,13 +699,13 @@ class SessionManager(
      * which is the same thing that would happen to any other old message and
      * the honest answer to "is it still there".
      */
-    private suspend fun replayMotd(buffer: ChannelBuffer) {
-        val motd = motdStore.load(serverUrl)?.takeIf { it.isNotBlank() } ?: return
+    private suspend fun replayMotd(server: String, buffer: ChannelBuffer) {
+        val motd = motdStore.load(server)?.takeIf { it.isNotBlank() } ?: return
         if (buffer.snapshot().any { it.kind == MessageKind.Info && it.text == motd }) return
         buffer.add(ChatMessage(0, MessageKind.Info, text = motd, at = now()))
     }
 
-    private fun publish(channel: String) {
+    private fun publish(channel: ChannelKey) {
         val buffer = buffers[channel] ?: return
         buffer.enforce(historyLimit(), now())
         mutate(channel) { it.copy(messages = buffer.snapshot()) }
@@ -678,7 +717,7 @@ class SessionManager(
      * outside a debug build calls it. Ids are assigned here; the ones passed
      * in are ignored. Returns false if the channel is not open.
      */
-    fun injectForTesting(channel: String, messages: List<ChatMessage>): Boolean {
+    fun injectForTesting(channel: ChannelKey, messages: List<ChatMessage>): Boolean {
         val buffer = buffers[channel] ?: return false
         messages.forEach { buffer.add(it) }
         if (channel != activeChannel) mutate(channel) { it.copy(unread = it.unread + messages.size) }
@@ -710,7 +749,7 @@ class SessionManager(
      * being clobbered by a concurrent message publish holding a stale map, so
      * the UI sat on "connecting…" while messages streamed in.
      */
-    private fun mutate(channel: String, block: (ChannelUi) -> ChannelUi) {
+    private fun mutate(channel: ChannelKey, block: (ChannelUi) -> ChannelUi) {
         _channels.update { current ->
             val existing = current[channel] ?: return@update current
             current + (channel to block(existing))

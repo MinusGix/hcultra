@@ -46,7 +46,6 @@ class SessionManagerLeaveTest {
     private fun manager(transport: FakeTransport, scope: kotlinx.coroutines.CoroutineScope) =
         SessionManager(
             scope = scope,
-            initialUrl = TEST_URL,
             transport = transport,
             now = { 0L },
             customIdFactory = { "abc123" },
@@ -55,7 +54,7 @@ class SessionManagerLeaveTest {
 
     private suspend fun joined(transport: FakeTransport, scope: kotlinx.coroutines.CoroutineScope) =
         manager(transport, scope).also {
-            it.join("testroom", Credentials("alice"))
+            it.join(key("testroom"), Credentials("alice"))
         }
 
     @Test
@@ -64,13 +63,13 @@ class SessionManagerLeaveTest {
         val sessions = joined(transport, this)
         advanceUntilIdle()
 
-        sessions.beginLeave("testroom")
+        sessions.beginLeave(key("testroom"))
         // runCurrent, not advanceUntilIdle: the latter would run virtual time
         // out to the end of the grace period and commit the very leave this is
         // checking is still pending.
         runCurrent()
 
-        val ui = sessions.channels.value["testroom"]
+        val ui = sessions.channels.value[key("testroom")]
         assertTrue(ui != null && ui.closing, "close did not mark the channel closing")
         assertTrue(transport.connections[0].isOpen, "closed the socket before the grace period")
         sessions.stopAll()
@@ -88,9 +87,9 @@ class SessionManagerLeaveTest {
         advanceUntilIdle()
         val sentBefore = transport.connections[0].sent.size
 
-        sessions.beginLeave("testroom")
+        sessions.beginLeave(key("testroom"))
         advanceTimeBy(GRACE / 2)
-        sessions.undoLeave("testroom")
+        sessions.undoLeave(key("testroom"))
         advanceUntilIdle()
 
         assertEquals(
@@ -99,7 +98,7 @@ class SessionManagerLeaveTest {
             "an undo put traffic on the wire; the channel would have seen us leave",
         )
         assertEquals(1, transport.connections.size, "undo reconnected instead of holding the socket")
-        val ui = sessions.channels.value.getValue("testroom")
+        val ui = sessions.channels.value.getValue(key("testroom"))
         assertFalse(ui.closing, "still marked closing after the undo")
         assertTrue(
             ui.messages.any { it.text == "said before the close" },
@@ -115,11 +114,11 @@ class SessionManagerLeaveTest {
         val sessions = joined(transport, this)
         advanceUntilIdle()
 
-        sessions.beginLeave("testroom")
+        sessions.beginLeave(key("testroom"))
         advanceTimeBy(GRACE + 1)
         advanceUntilIdle()
 
-        assertNull(sessions.channels.value["testroom"], "the channel survived its grace period")
+        assertNull(sessions.channels.value[key("testroom")], "the channel survived its grace period")
         assertFalse(transport.connections[0].isOpen, "the socket was left open after leaving")
     }
 
@@ -130,13 +129,13 @@ class SessionManagerLeaveTest {
         val sessions = joined(transport, this)
         advanceUntilIdle()
 
-        sessions.beginLeave("testroom")
+        sessions.beginLeave(key("testroom"))
         advanceTimeBy(GRACE + 1)
         advanceUntilIdle()
-        sessions.undoLeave("testroom")
+        sessions.undoLeave(key("testroom"))
         advanceUntilIdle()
 
-        assertNull(sessions.channels.value["testroom"], "undo brought back a channel already left")
+        assertNull(sessions.channels.value[key("testroom")], "undo brought back a channel already left")
     }
 
     /** Closing twice must not restart the clock, or a jabbed × never lands. */
@@ -146,13 +145,13 @@ class SessionManagerLeaveTest {
         val sessions = joined(transport, this)
         advanceUntilIdle()
 
-        sessions.beginLeave("testroom")
+        sessions.beginLeave(key("testroom"))
         advanceTimeBy(GRACE / 2)
-        sessions.beginLeave("testroom")
+        sessions.beginLeave(key("testroom"))
         advanceTimeBy(GRACE / 2 + 1)
         advanceUntilIdle()
 
-        assertNull(sessions.channels.value["testroom"], "the second close pushed the leave back")
+        assertNull(sessions.channels.value[key("testroom")], "the second close pushed the leave back")
     }
 
     /**
@@ -166,13 +165,13 @@ class SessionManagerLeaveTest {
         val sessions = joined(transport, this)
         advanceUntilIdle()
 
-        sessions.beginLeave("testroom")
+        sessions.beginLeave(key("testroom"))
         advanceTimeBy(GRACE / 2)
-        sessions.join("testroom", Credentials("alice"))
+        sessions.join(key("testroom"), Credentials("alice"))
         advanceTimeBy(GRACE)
         advanceUntilIdle()
 
-        val ui = sessions.channels.value["testroom"]
+        val ui = sessions.channels.value[key("testroom")]
         assertTrue(ui != null && !ui.closing, "re-joining did not call off the leave")
         assertEquals(1, transport.connections.size, "re-joining opened a second socket")
         sessions.stopAll()

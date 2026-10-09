@@ -61,6 +61,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -91,15 +92,19 @@ import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.protocol.User
 import chat.hc.core.session.Challenge
+import chat.hc.core.session.ChannelKey
 import chat.hc.core.session.ChannelUi
 import chat.hc.ultra.data.ChannelHistory
 import chat.hc.ultra.data.ChannelIdentity
 import chat.hc.core.session.Ignore
 import chat.hc.core.session.ModAction
 import chat.hc.core.session.Moderation
+import chat.hc.core.session.Servers
 import chat.hc.core.session.SessionState
 import chat.hc.core.store.MessageKind
 import chat.hc.ultra.service.HcService
+import chat.hc.ultra.service.HcService.Companion.channelKey
+import chat.hc.ultra.service.HcService.Companion.putChannel
 import chat.hc.ultra.ui.ChannelTabs
 import chat.hc.ultra.ui.BASE_TEXT_SP
 import chat.hc.ultra.ui.ImageViewer
@@ -126,7 +131,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     private var service: HcService? = null
-    private val channels = MutableStateFlow<Map<String, ChannelUi>>(emptyMap())
+    private val channels = MutableStateFlow<Map<ChannelKey, ChannelUi>>(emptyMap())
     /** The service's ignore list, mirrored like [channels]. */
     private val ignored = MutableStateFlow<Set<String>>(emptySet())
     private var bound = false
@@ -138,7 +143,7 @@ class MainActivity : ComponentActivity() {
      * Mirrors the selected tab into the service, so unread counts stay right and
      * the channel's notifications clear as soon as you are looking at it.
      */
-    private var activeChannel: String? = null
+    private var activeChannel: ChannelKey? = null
         set(value) {
             field = value
             service?.showing(value)
@@ -151,7 +156,7 @@ class MainActivity : ComponentActivity() {
      * A channel a notification tap asked for, held until the tab exists. Null
      * once honoured, so returning to the app later does not re-select it.
      */
-    private val showChannel = MutableStateFlow<String?>(null)
+    private val showChannel = MutableStateFlow<ChannelKey?>(null)
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -192,7 +197,7 @@ class MainActivity : ComponentActivity() {
             requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        showChannel.value = intent.getStringExtra(EXTRA_SHOW_CHANNEL)
+        showChannel.value = intent.channelKey()
 
         val themePrefs = ThemePrefs(this)
         val notifyPrefs = NotifyPrefs(this)
@@ -220,11 +225,15 @@ class MainActivity : ComponentActivity() {
             var notifyInvites by remember { mutableStateOf(notifyPrefs.invites) }
             var notifyOtherChannels by remember { mutableStateOf(notifyPrefs.otherChannels) }
             var showThemes by remember { mutableStateOf(false) }
-            var pendingChannel by remember { mutableStateOf<String?>(null) }
+            var pendingChannel by remember { mutableStateOf<ChannelKey?>(null) }
             var viewingImage by remember { mutableStateOf<String?>(null) }
             var translate by remember { mutableStateOf(translatePrefs.enabled) }
             var translateTarget by remember { mutableStateOf(translatePrefs.target) }
-            var serverUrl by remember { mutableStateOf(serverPrefs.url) }
+            var servers by remember { mutableStateOf(serverPrefs.servers) }
+            // The server the join form is on. Remembered identities and
+            // "Resume last" are per server, since a trip is: the same password
+            // gives a different one on each.
+            var joinServer by remember { mutableStateOf(serverPrefs.lastUsed) }
 
             val scheme = remember(schemeName) { allSchemes.resolve(schemeName) }
 
@@ -239,27 +248,31 @@ class MainActivity : ComponentActivity() {
             var historyVersion by remember { mutableIntStateOf(0) }
             var recent by remember { mutableStateOf<List<ChannelIdentity>>(emptyList()) }
             var lastSession by remember { mutableStateOf<List<ChannelIdentity>>(emptyList()) }
-            LaunchedEffect(serverUrl, historyVersion) {
-                recent = history.recent(serverUrl)
-                lastSession = history.lastSession(serverUrl)
+            LaunchedEffect(joinServer, historyVersion) {
+                recent = history.recent(joinServer)
+                lastSession = history.lastSession(joinServer)
             }
 
             // The trip only exists once the server has derived it, so it can be
             // learned from the roster and nowhere else. This also records which
             // tabs are open, which is what "Resume last" reopens.
-            LaunchedEffect(serverUrl) {
-                var previous: List<ChannelIdentity>? = null
+            LaunchedEffect(Unit) {
+                var previous: Map<String, List<ChannelIdentity>>? = null
                 channels.collect { map ->
-                    val open = map.values.mapNotNull { ui ->
-                        ui.roster.firstOrNull { it.isme }
-                            ?.let { ChannelIdentity(ui.channel, it.nick, trip = it.trip) }
-                    }
+                    val open = map.values
+                        .mapNotNull { ui ->
+                            ui.roster.firstOrNull { it.isme }
+                                ?.let { ui.server to ChannelIdentity(ui.channel, it.nick, trip = it.trip) }
+                        }
+                        .groupBy({ it.first }, { it.second })
                     // The roster changes on every join and part in the channel;
                     // rewriting an encrypted blob at that rate would be absurd.
                     if (open == previous) return@collect
                     previous = open
-                    open.forEach { history.observeTrip(serverUrl, it.channel, it.nick, it.trip) }
-                    history.rememberOpen(serverUrl, open)
+                    open.forEach { (server, identities) ->
+                        identities.forEach { history.observeTrip(server, it.channel, it.nick, it.trip) }
+                        history.rememberOpen(server, identities)
+                    }
                     historyVersion++
                 }
             }
@@ -272,12 +285,15 @@ class MainActivity : ComponentActivity() {
                     if (showThemes) {
                         ThemeSheet(
                             schemes = allSchemes,
-                            currentServer = serverUrl,
-                            onServerChanged = { url ->
-                                serverUrl = url
-                                serverPrefs.url = url
-                                switchServer(url)
-                                showThemes = false
+                            servers = servers,
+                            onServersChanged = { updated ->
+                                // Anything not carried over unchanged — removed,
+                                // or told to speak something else — loses its
+                                // open channels; they belong to the old setting.
+                                servers.filterNot { it in updated }.forEach { forgetServer(it.url) }
+                                servers = updated
+                                serverPrefs.servers = updated
+                                if (updated.none { it.url == joinServer }) joinServer = updated.first().url
                             },
                             currentScheme = schemeName,
                             highlightOverride = highlightOverride,
@@ -366,6 +382,9 @@ class MainActivity : ComponentActivity() {
                         channelsFlow = channels,
                         ignoredFlow = ignored,
                         onSetIgnored = { nick, ignore -> service?.sessions?.setIgnored(nick, ignore) },
+                        servers = servers.map { it.url },
+                        joinServer = joinServer,
+                        onJoinServer = { joinServer = it },
                         onJoin = { channel, nick, pass -> startJoin(channel, nick, pass) },
                         onSend = { channel, text -> startSend(channel, text) },
                         onLeave = { channel -> startLeave(channel) },
@@ -380,13 +399,17 @@ class MainActivity : ComponentActivity() {
                         lastSession = lastSession,
                         onForget = { identity ->
                             lifecycleScope.launch {
-                                history.forget(serverUrl, identity)
+                                history.forget(joinServer, identity)
                                 historyVersion++
                             }
                         },
                         rendererCallbacks = RendererCallbacks(
                             onLinkTap = { url -> openExternal(url) },
-                            onChannelTap = { channel -> pendingChannel = channel },
+                            // A link names a channel on the server it was
+                            // said on, which is the one being read.
+                            onChannelTap = { channel ->
+                                pendingChannel = ChannelKey(activeChannel?.server ?: joinServer, channel)
+                            },
                             onImageTap = { url ->
                                 // The page only embeds whitelisted images, but
                                 // it renders untrusted text; the viewer is not
@@ -466,21 +489,22 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        intent.getStringExtra(EXTRA_SHOW_CHANNEL)?.let { showChannel.value = it }
+        intent.channelKey()?.let { showChannel.value = it }
     }
 
-    private fun startJoin(channel: String, nick: String, pass: String?) {
+    private fun startJoin(channel: ChannelKey, nick: String, pass: String?) {
         // Remembered per server, since a trip is derived from a server-side salt
         // and the same password gives a different trip elsewhere. The trip
         // itself is filled in later, from the roster.
         lifecycleScope.launch {
-            history.record(serverPrefs.url, ChannelIdentity(channel, nick, pass))
+            history.record(channel.server, ChannelIdentity(channel.channel, nick, pass))
         }
+        serverPrefs.lastUsed = channel.server
         ContextCompat.startForegroundService(
             this,
             Intent(this, HcService::class.java).apply {
                 action = HcService.ACTION_JOIN
-                putExtra(HcService.EXTRA_CHANNEL, channel)
+                putChannel(channel)
                 putExtra(HcService.EXTRA_NICK, nick)
                 putExtra(HcService.EXTRA_PASS, pass)
             },
@@ -489,38 +513,34 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Applies a new endpoint. The service drops every channel and stops, so the
-     * next join starts cleanly on the new server; tokens are keyed by server, so
-     * the old ones survive for when the user switches back.
+     * Leaves every channel open on [url], for a server removed or set to speak
+     * something else. Through the binding, as [startEnforceHistory] is: an
+     * intent would start the service, and its notification, when there may be
+     * nothing on that server to leave.
      */
-    private fun switchServer(url: String) {
-        ContextCompat.startForegroundService(
-            this,
-            Intent(this, HcService::class.java).apply {
-                action = HcService.ACTION_SET_SERVER
-                putExtra(HcService.EXTRA_URL, url)
-            },
-        )
+    private fun forgetServer(url: String) {
+        val svc = service ?: return
+        lifecycleScope.launch { svc.sessions.forgetServer(url) }
     }
 
-    private fun startModerate(channel: String, action: ModAction, target: User) {
+    private fun startModerate(channel: ChannelKey, action: ModAction, target: User) {
         ContextCompat.startForegroundService(
             this,
             Intent(this, HcService::class.java).apply {
                 this.action = HcService.ACTION_MODERATE
-                putExtra(HcService.EXTRA_CHANNEL, channel)
+                putChannel(channel)
                 putExtra(HcService.EXTRA_MOD_ACTION, action.name)
                 putExtra(HcService.EXTRA_USERID, target.userid)
             },
         )
     }
 
-    private fun startInvite(channel: String, target: User) {
+    private fun startInvite(channel: ChannelKey, target: User) {
         ContextCompat.startForegroundService(
             this,
             Intent(this, HcService::class.java).apply {
                 this.action = HcService.ACTION_INVITE
-                putExtra(HcService.EXTRA_CHANNEL, channel)
+                putChannel(channel)
                 putExtra(HcService.EXTRA_USERID, target.userid)
             },
         )
@@ -536,34 +556,34 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch { svc.sessions.enforceHistory() }
     }
 
-    private fun startAnswer(channel: String, text: String) {
+    private fun startAnswer(channel: ChannelKey, text: String) {
         ContextCompat.startForegroundService(
             this,
             Intent(this, HcService::class.java).apply {
                 action = HcService.ACTION_ANSWER
-                putExtra(HcService.EXTRA_CHANNEL, channel)
+                putChannel(channel)
                 putExtra(HcService.EXTRA_TEXT, text)
             },
         )
     }
 
-    private fun startLeave(channel: String) {
+    private fun startLeave(channel: ChannelKey) {
         ContextCompat.startForegroundService(
             this,
             Intent(this, HcService::class.java).apply {
                 action = HcService.ACTION_LEAVE
-                putExtra(HcService.EXTRA_CHANNEL, channel)
+                putChannel(channel)
             },
         )
         if (activeChannel == channel) activeChannel = null
     }
 
-    private fun startUndoLeave(channel: String) {
+    private fun startUndoLeave(channel: ChannelKey) {
         ContextCompat.startForegroundService(
             this,
             Intent(this, HcService::class.java).apply {
                 action = HcService.ACTION_UNDO_LEAVE
-                putExtra(HcService.EXTRA_CHANNEL, channel)
+                putChannel(channel)
             },
         )
     }
@@ -608,39 +628,39 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startSend(channel: String, text: String) {
+    private fun startSend(channel: ChannelKey, text: String) {
         ContextCompat.startForegroundService(
             this,
             Intent(this, HcService::class.java).apply {
                 action = HcService.ACTION_SEND
-                putExtra(HcService.EXTRA_CHANNEL, channel)
+                putChannel(channel)
                 putExtra(HcService.EXTRA_TEXT, text)
             },
         )
-    }
-
-    companion object {
-        /** Set by an alert notification: the channel it was about. */
-        const val EXTRA_SHOW_CHANNEL = "showChannel"
     }
 }
 
 @Composable
 private fun AppScreen(
-    channelsFlow: StateFlow<Map<String, ChannelUi>>,
+    channelsFlow: StateFlow<Map<ChannelKey, ChannelUi>>,
     /** Nicks whose messages are hidden; the service owns the list. */
     ignoredFlow: StateFlow<Set<String>>,
     onSetIgnored: (nick: String, ignore: Boolean) -> Unit,
-    onJoin: (String, String, String?) -> Unit,
-    onSend: (String, String) -> Unit,
-    onLeave: (String) -> Unit,
-    onUndoLeave: (String) -> Unit,
-    onModerate: (String, ModAction, User) -> Unit,
-    onInvite: (String, User) -> Unit,
+    /** Every server the user has added, by URL; the join form picks among them. */
+    servers: List<String>,
+    /** The server the join form is on; [recent] and [lastSession] are its. */
+    joinServer: String,
+    onJoinServer: (String) -> Unit,
+    onJoin: (ChannelKey, String, String?) -> Unit,
+    onSend: (ChannelKey, String) -> Unit,
+    onLeave: (ChannelKey) -> Unit,
+    onUndoLeave: (ChannelKey) -> Unit,
+    onModerate: (ChannelKey, ModAction, User) -> Unit,
+    onInvite: (ChannelKey, User) -> Unit,
     /** Answers the captcha or password a channel's join is waiting on. */
-    onAnswer: (String, String) -> Unit,
-    onActiveChanged: (String?) -> Unit,
-    /** Who you have been on this server, most recent first. */
+    onAnswer: (ChannelKey, String) -> Unit,
+    onActiveChanged: (ChannelKey?) -> Unit,
+    /** Who you have been on [joinServer], most recent first. */
     recent: List<ChannelIdentity>,
     /** The tabs that were open when the app was last used. */
     lastSession: List<ChannelIdentity>,
@@ -670,10 +690,10 @@ private fun AppScreen(
     translate: Boolean,
     onOpenThemes: () -> Unit,
     /** A tapped `?channel` link pre-fills the join form rather than joining blind. */
-    pendingChannel: String?,
+    pendingChannel: ChannelKey?,
     onPendingConsumed: () -> Unit,
     /** A channel a notification tap asked to be shown; already joined. */
-    showChannel: String?,
+    showChannel: ChannelKey?,
     onShowChannelConsumed: () -> Unit,
 ) {
     val channels by channelsFlow.collectAsStateWithLifecycle()
@@ -681,35 +701,35 @@ private fun AppScreen(
     // or a recreate must not silently move the user to the first tab. It did,
     // and since only the channel on screen is marked read, the tab they were
     // actually reading kept its unread count.
-    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var selected by rememberSaveable(stateSaver = ChannelKeySaver) { mutableStateOf<ChannelKey?>(null) }
     // A join we asked for that the service has not created yet. Without this,
     // the validity check below races the service and snaps the selection back
     // to the first tab the instant you join a new channel.
-    var awaitingJoin by remember { mutableStateOf<String?>(null) }
+    var awaitingJoin by remember { mutableStateOf<ChannelKey?>(null) }
     var showJoin by remember { mutableStateOf(false) }
     // Which channel's roster is open, rather than a bare "is it open" — the way
     // in is a per-tab count, so a channel-blind toggle answered the wrong
     // question: tapping another tab's count closed the roster you were looking
     // at instead of showing that tab's.
-    var openRoster by remember { mutableStateOf<String?>(null) }
+    var openRoster by remember { mutableStateOf<ChannelKey?>(null) }
     // One draft per channel: switching tabs must not eat what you were typing.
     // Held as a TextFieldValue rather than a String so a mention can be dropped
     // at the cursor instead of always at the end.
-    val drafts = remember { mutableStateMapOf<String, TextFieldValue>() }
+    val drafts = remember { mutableStateMapOf<ChannelKey, TextFieldValue>() }
     // Owned by the service, which also decides unread counts and alerts from
     // it; see SessionManager.ignored.
     val ignored by ignoredFlow.collectAsStateWithLifecycle()
     val toggleIgnore: (String) -> Unit = { nick -> onSetIgnored(nick, nick !in ignored) }
     // A held nick, and the channel it was held in: the sheet must act on that
     // channel even if a notification switches tabs underneath it.
-    var holding by remember { mutableStateOf<Pair<String, NickHold>?>(null) }
-    var confirmingMod by remember { mutableStateOf<Triple<String, ModAction, User>?>(null) }
+    var holding by remember { mutableStateOf<Pair<ChannelKey, NickHold>?>(null) }
+    var confirmingMod by remember { mutableStateOf<Triple<ChannelKey, ModAction, User>?>(null) }
 
     // A closing channel is hidden the instant it is closed, but stays in the map
     // — and on the wire — until its grace period runs out. Everything the tab
     // strip and the selection logic do is in terms of the visible ones.
     val ordered = channels.values.filterNot { it.closing }
-    val closing = channels.values.firstOrNull { it.closing }?.channel
+    val closing = channels.values.firstOrNull { it.closing }?.key
 
     // Keep the selection valid as channels come and go, and tell the service
     // which one is on screen so its messages never count as unread.
@@ -717,7 +737,7 @@ private fun AppScreen(
         // Visible keys, not every key: a channel being closed must fall out of
         // the selection immediately, or closing the tab you are reading leaves
         // its transcript on screen for the whole grace period.
-        val keys = ordered.mapTo(LinkedHashSet()) { it.channel }
+        val keys = ordered.mapTo(LinkedHashSet()) { it.key }
         if (awaitingJoin != null && keys.contains(awaitingJoin)) {
             selected = awaitingJoin
             awaitingJoin = null
@@ -726,7 +746,7 @@ private fun AppScreen(
         val valid = when {
             sel != null && keys.contains(sel) -> sel
             awaitingJoin != null -> sel          // join in flight; hold the selection
-            else -> ordered.firstOrNull()?.channel
+            else -> ordered.firstOrNull()?.key
         }
         if (valid != selected) selected = valid
         onActiveChanged(valid?.takeIf { keys.contains(it) })
@@ -744,7 +764,7 @@ private fun AppScreen(
     val active = selected?.let { channels[it] }?.takeIf { !it.closing }
 
     val mention: (String) -> Unit = { nick ->
-        active?.channel?.let { channel ->
+        active?.key?.let { channel ->
             drafts[channel] = (drafts[channel] ?: TextFieldValue()).withMention(nick)
         }
     }
@@ -754,14 +774,14 @@ private fun AppScreen(
     // that happened to be open when the WebView was created.
     val currentMention by rememberUpdatedState(mention)
     val compose: (String) -> Unit = { text ->
-        active?.channel?.let { channel ->
+        active?.key?.let { channel ->
             drafts[channel] = (drafts[channel] ?: TextFieldValue()).withInsert(text)
         }
     }
     val currentCompose by rememberUpdatedState(compose)
     val haptics = LocalHapticFeedback.current
     val hold: (NickHold) -> Unit = { h ->
-        active?.channel?.let { channel ->
+        active?.key?.let { channel ->
             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
             holding = channel to h
         }
@@ -777,7 +797,10 @@ private fun AppScreen(
     val context = LocalContext.current
 
     LaunchedEffect(pendingChannel) {
-        if (pendingChannel != null) showJoin = true
+        pendingChannel?.let {
+            onJoinServer(it.server)
+            showJoin = true
+        }
     }
 
     // A notification tap names the channel it was about. Held until the tab
@@ -796,9 +819,10 @@ private fun AppScreen(
 
     if (showJoin || ordered.isEmpty()) {
         val join = { channel: String, nick: String, pass: String? ->
-            onJoin(channel, nick, pass)
-            selected = channel
-            awaitingJoin = channel
+            val key = ChannelKey(joinServer, channel)
+            onJoin(key, nick, pass)
+            selected = key
+            awaitingJoin = key
             showJoin = false
             onPendingConsumed()
         }
@@ -807,19 +831,23 @@ private fun AppScreen(
             // Reachable before any channel exists: changing server is exactly
             // what you want to do *before* connecting, not after.
             onOpenSettings = onOpenThemes,
-            initialChannel = pendingChannel.orEmpty(),
+            servers = servers,
+            server = joinServer,
+            onServer = onJoinServer,
+            initialChannel = pendingChannel?.channel.orEmpty(),
             recent = recent,
             // Nothing to resume if it is already open — the button would join
             // channels the tab strip is showing.
-            lastSession = lastSession.filterNot { channels.containsKey(it.channel) },
+            lastSession = lastSession.filterNot { channels.containsKey(ChannelKey(joinServer, it.channel)) },
             onJoin = join,
             onResumeLast = { identities ->
                 // Only the first is selected; the rest arrive as tabs. Joins are
                 // rate-limited server-side (3 of 25, shared across sockets), and
                 // RateGovernor paces them, so a wide resume is slow rather than
                 // throttled into failure.
-                identities.forEach { onJoin(it.channel, it.nick, it.pass) }
-                identities.firstOrNull()?.let { selected = it.channel; awaitingJoin = it.channel }
+                val keys = identities.map { ChannelKey(joinServer, it.channel) }
+                identities.zip(keys).forEach { (it, key) -> onJoin(key, it.nick, it.pass) }
+                keys.firstOrNull()?.let { selected = it; awaitingJoin = it }
                 showJoin = false
                 onPendingConsumed()
             },
@@ -855,7 +883,7 @@ private fun AppScreen(
 
             closing?.let { channel ->
                 UndoCloseBar(
-                    channel = channel,
+                    channel = channel.channel,
                     onUndo = { onUndoLeave(channel) },
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
@@ -878,17 +906,17 @@ private fun AppScreen(
                 (active.state as? SessionState.Challenged)?.let { challenged ->
                     // Keyed per challenge, so a retry — which is a new
                     // challenge — starts with an empty field and a live button.
-                    androidx.compose.runtime.key(active.channel, challenged.serial) {
+                    androidx.compose.runtime.key(active.key, challenged.serial) {
                         ChallengeCard(
                             channel = active.channel,
                             challenge = challenged.challenge,
-                            onAnswer = { onAnswer(active.channel, it) },
+                            onAnswer = { onAnswer(active.key, it) },
                             modifier = Modifier.padding(horizontal = 12.dp),
                         )
                     }
                 }
 
-                holding?.takeIf { (channel, _) -> channel == active.channel }?.let { (channel, h) ->
+                holding?.takeIf { (channel, _) -> channel == active.key }?.let { (channel, h) ->
                     val me = active.roster.firstOrNull { it.isme }
                     // Moderation must reach the connection that sent the
                     // message, so only a userid match will do for it. Whisper
@@ -907,7 +935,9 @@ private fun AppScreen(
                         modActions = sameConnection?.let { Moderation.available(me, it) }.orEmpty(),
                         ignored = h.nick in ignored,
                         onMention = { mention(h.nick) },
-                        onWhisper = { drafts[channel] = fieldValue("/w ${h.nick} ") },
+                        // `/whisper` rather than `/w`: servers from 2019 know
+                        // only the long form, and today's knows both.
+                        onWhisper = { drafts[channel] = fieldValue("/whisper ${h.nick} ") },
                         onInvite = { online?.let { onInvite(channel, it) } },
                         onCopy = { text -> copyToClipboard(context, text) },
                         onToggleIgnore = { toggleIgnore(h.nick) },
@@ -928,7 +958,7 @@ private fun AppScreen(
                     )
                 }
 
-                if (openRoster == active.channel) {
+                if (openRoster == active.key) {
                     UserList(
                         users = active.roster,
                         isIgnored = { it.nick in ignored },
@@ -937,10 +967,10 @@ private fun AppScreen(
                             Moderation.available(active.roster.firstOrNull { it.isme }, target)
                         },
                         onModerate = { action, target ->
-                            onModerate(active.channel, action, target)
+                            onModerate(active.key, action, target)
                         },
                         onInvite = { target ->
-                            onInvite(active.channel, target)
+                            onInvite(active.key, target)
                             // Closed so the "You invited …" line the server
                             // sends back is not left behind the roster panel:
                             // that line naming the channel is the only
@@ -949,9 +979,9 @@ private fun AppScreen(
                             openRoster = null
                         },
                         onWhisper = { nick ->
-                            // The server's /w strips a leading @, so this works
-                            // whether or not the nick was mentioned first.
-                            drafts[active.channel] = fieldValue("/w $nick ")
+                            // The server's /whisper strips a leading @, so this
+                            // works whether or not the nick was mentioned first.
+                            drafts[active.key] = fieldValue("/whisper $nick ")
                             openRoster = null
                         },
                         onMention = { nick -> mention(nick) },
@@ -968,7 +998,7 @@ private fun AppScreen(
                 }
 
                 MessageWebView(
-                    channel = active.channel,
+                    channel = active.key.viewId,
                     messages = visible,
                     scheme = scheme.name,
                     highlight = highlight,
@@ -981,18 +1011,18 @@ private fun AppScreen(
                     callbacks = webCallbacks,
                 )
 
-                val draft = drafts[active.channel] ?: TextFieldValue()
+                val draft = drafts[active.key] ?: TextFieldValue()
                 val canSend = draft.text.isNotBlank() && active.state is SessionState.Live
                 val send = {
-                    onSend(active.channel, draft.text)
-                    drafts[active.channel] = TextFieldValue()
+                    onSend(active.key, draft.text)
+                    drafts[active.key] = TextFieldValue()
                 }
                 // Flush to the bottom edge, with send inside the field rather
                 // than beside it — the site's shape, and it stops the composer
                 // reading as two separate controls.
                 TextField(
                     value = draft,
-                    onValueChange = { drafts[active.channel] = it },
+                    onValueChange = { drafts[active.key] = it },
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = { Text("Message") },
                     // The transcript's size, in the field that feeds it. A
@@ -1179,6 +1209,9 @@ private fun UndoCloseBar(
 private fun JoinSheet(
     canCancel: Boolean,
     onOpenSettings: () -> Unit,
+    servers: List<String>,
+    server: String,
+    onServer: (String) -> Unit,
     initialChannel: String = "",
     recent: List<ChannelIdentity>,
     lastSession: List<ChannelIdentity>,
@@ -1192,8 +1225,8 @@ private fun JoinSheet(
      * that is exactly the close most worth taking back, since it is the one that
      * leaves nothing on screen to undo it from.
      */
-    closing: String? = null,
-    onUndoLeave: (String) -> Unit = {},
+    closing: ChannelKey? = null,
+    onUndoLeave: (ChannelKey) -> Unit = {},
 ) {
     // Prefilled from the most recent identity, but the *channel* drives the nick
     // from there on: people are routinely a different person in each channel, so
@@ -1220,6 +1253,9 @@ private fun JoinSheet(
 
     val body: @Composable () -> Unit = {
         JoinBody(
+            servers = servers,
+            server = server,
+            onServer = onServer,
             channel = channelInput,
             nick = nickInput,
             onChannel = { channelInput = it },
@@ -1266,7 +1302,7 @@ private fun JoinSheet(
                 TextButton(onClick = onOpenSettings) { Text("Settings") }
             }
             closing?.let { channel ->
-                UndoCloseBar(channel = channel, onUndo = { onUndoLeave(channel) })
+                UndoCloseBar(channel = channel.channel, onUndo = { onUndoLeave(channel) })
             }
             Column(modifier = Modifier.weight(1f, fill = false)) { body() }
             Button(onClick = submit, enabled = canSubmit) { Text("Connect") }
@@ -1283,6 +1319,9 @@ private fun JoinSheet(
  */
 @Composable
 private fun JoinBody(
+    servers: List<String>,
+    server: String,
+    onServer: (String) -> Unit,
     channel: String,
     nick: String,
     onChannel: (String) -> Unit,
@@ -1297,6 +1336,34 @@ private fun JoinBody(
         modifier = Modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        // First, because everything under it is that server's: what you
+        // resume, who you have been, and where the channel will be joined.
+        // Not shown with only one, which is what most people have.
+        if (servers.size > 1) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+            ) {
+                servers.forEach { url ->
+                    val picked = url == server
+                    Text(
+                        text = Servers.label(url),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (picked) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (picked) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.surfaceVariant
+                            )
+                            .clickable { onServer(url) }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                    )
+                }
+            }
+        }
+
         if (lastSession.isNotEmpty()) {
             Button(onClick = onResumeLast, modifier = Modifier.fillMaxWidth()) {
                 Text("Resume last (" + lastSession.joinToString(", ") { "?" + it.channel } + ")")
@@ -1381,6 +1448,23 @@ private fun RecentRow(
         )
     }
 }
+
+/**
+ * The selected tab survives a recreate. Saved as one string: a channel name
+ * cannot contain a NUL, so it splits back unambiguously.
+ */
+private val ChannelKeySaver = Saver<ChannelKey?, String>(
+    save = { key -> key?.let { it.server + "\u0000" + it.channel } },
+    restore = { saved -> ChannelKey(saved.substringBefore('\u0000'), saved.substringAfter('\u0000')) },
+)
+
+/**
+ * What the renderer knows a channel by. It keeps one container per id, so the
+ * same name on two servers needs two ids; hack.chat's keep the bare name
+ * they have always had.
+ */
+private val ChannelKey.viewId: String
+    get() = if (server == Servers.DEFAULT_URL) channel else "$channel\u0000$server"
 
 /** Text the app puts in the composer itself, with the caret left after it. */
 private fun fieldValue(text: String) = TextFieldValue(text, TextRange(text.length))

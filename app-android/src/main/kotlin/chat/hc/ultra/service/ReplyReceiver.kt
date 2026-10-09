@@ -4,13 +4,15 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.RemoteInput
+import chat.hc.ultra.service.HcService.Companion.channelKey
+import chat.hc.ultra.service.HcService.Companion.putChannel
 
 /** Delivers a direct-reply from the notification into the running service. */
 class ReplyReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_REPLY) return
-        val channel = intent.getStringExtra(HcService.EXTRA_CHANNEL) ?: return
+        val channel = intent.channelKey() ?: return
         val text = RemoteInput.getResultsFromIntent(intent)
             ?.getCharSequence(ChatNotifications.KEY_REPLY)
             ?.toString()
@@ -23,7 +25,7 @@ class ReplyReceiver : BroadcastReceiver() {
         context.startForegroundService(
             Intent(context, HcService::class.java).apply {
                 action = HcService.ACTION_SEND
-                putExtra(HcService.EXTRA_CHANNEL, channel)
+                putChannel(channel)
                 putExtra(HcService.EXTRA_TEXT, text)
             }
         )
