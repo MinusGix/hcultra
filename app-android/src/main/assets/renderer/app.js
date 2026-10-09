@@ -270,11 +270,16 @@
      * client.js: flair alone, trip alone, or "flair trip". Flair is whatever
      * the server says (forceflair allows any string up to 4 code points), so it is
      * escaped and rendered as text rather than mapped to an icon.
+     *
+     * Each part is its own span inside .trip, and the name its own span after
+     * it, so the aligned layout can put flair beside the name and the trip on
+     * the line below. Every other layout sees the same run of text as before,
+     * and the schemes still only ever target .nick and .trip.
      */
     function tripSpan(m) {
       var parts = [];
-      if (m.flair) parts.push(esc(m.flair));
-      if (m.trip) parts.push(esc(m.trip));
+      if (m.flair) parts.push('<span class="flair">' + esc(m.flair) + '</span>');
+      if (m.trip) parts.push('<span class="tripcode">' + esc(m.trip) + '</span>');
       if (!parts.length) return '';
       return '<span class="trip">' + parts.join(' ') + '</span>';
     }
@@ -292,7 +297,8 @@
       // An explicit per-user colour from the server overrides the scheme's
       // .nick colour, matching how the site treats /changecolor.
       var style = m.color ? ' style="color:#' + esc(m.color).replace(/[^0-9a-fA-F]/g, '') + '"' : '';
-      head = '<span class="nick"' + nickAttr(m) + style + '>' + tripSpan(m) + esc(m.nick) + '</span>';
+      head = '<span class="nick"' + nickAttr(m) + style + '>' + tripSpan(m) +
+        '<span class="name">' + esc(m.nick) + '</span></span>';
     } else if (m.kind === 'Emote') {
       // The name is in the text ("@nick waves"), but the text is selectable
       // and this is not, so the star is what stands for them here.
@@ -789,7 +795,7 @@
     },
 
     setKatex: setKatex,
-    /** One class on <body>; the three layouts are pure CSS over stable markup. */
+    /** One class on <body>; the layouts are pure CSS over stable markup. */
     setLayout: function (cssClass) {
       var c = channels[current];
       var wasPinned = c ? (c.pinned || atBottom()) : true;

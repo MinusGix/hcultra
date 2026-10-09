@@ -248,7 +248,15 @@ target it — so these should be a class on the container that the layout CSS ke
 off, not three different DOM shapes. `app.css` is layout-only and loads before
 the scheme, so it can carry all three without ever winning a colour argument.
 
-**Built, all three, awaiting a decision on the default.** `NickLayout` in core,
+**Built, all three, awaiting a decision on the default.** A fourth, **Aligned**,
+was asked for later: `flair nick | text` with the trip on the line beneath and a
+single divider between names and text — taller, but never truncated. No other
+rules: not between messages, and not the schemes' left border either.
+Its name column is as wide as the channel's widest name (each channel is a grid,
+each message a subgrid of it), capped at 40vw, so it can widen when older
+history with a longer name loads above. That needed the flair, trip and name
+each in a span of their own; the runs of text the other layouts see are
+unchanged. `NickLayout` in core,
 persisted in `ThemePrefs`, applied as one class on `<body>` via `HC.setLayout`.
 Currently defaults to `Inline` — i.e. unchanged — so picking a different default
 is a one-line change to `NickLayout.DEFAULT`.

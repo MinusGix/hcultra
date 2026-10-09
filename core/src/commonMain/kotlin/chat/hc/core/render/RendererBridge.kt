@@ -231,6 +231,12 @@ enum class NickLayout(val cssClass: String, val label: String) {
 
     /** `trip nick` on its own line, text beneath it. */
     Stacked("layout-stacked", "Stacked"),
+
+    /**
+     * `flair nick | text` with the trip beneath the nick; the name column is
+     * as wide as the channel's widest name.
+     */
+    Aligned("layout-aligned", "Aligned"),
     ;
 
     companion object {

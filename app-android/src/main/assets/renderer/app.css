@@ -127,6 +127,92 @@ body { font-size: 1rem; }
 .layout-stacked .text { display: block; }
 .layout-stacked .message { margin-bottom: 9px; }
 
+/*
+ * Aligned: a table of the conversation.
+ *
+ *     flair nick | message
+ *           trip |
+ *
+ * Taller than the others — the trip always takes a line of its own — but
+ * nothing is truncated or wrapped into the name, and every message starts at
+ * the same x.
+ *
+ * The name column is as wide as the widest name in the channel rather than a
+ * fixed gutter: the channel is the grid, and each message a subgrid of it, so
+ * every row contributes its head to one shared track. It can therefore move
+ * when older history loads above with a longer name, which is the price of not
+ * guessing. Capped at 40vw for the same reason the gutter is capped at 38vw: a
+ * name column wider than the messages beside it is no longer a column.
+ *
+ * `:not([hidden])` because `display: grid` would otherwise beat the UA's
+ * `[hidden] { display: none }` and show every channel at once.
+ */
+.layout-aligned .channel:not([hidden]) {
+  display: grid;
+  grid-template-columns: fit-content(40vw) minmax(0, 1fr);
+}
+.layout-aligned .message {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  /* Vertical padding lives on the cells, so the divider runs edge to edge. */
+  margin: 0;
+  /* The divider is the only line: the schemes' left border on every message
+     would be a second rule beside the names, and drawn on plain `.message`,
+     so this outranks it on all 44. */
+  border-left: 0;
+  padding-left: 0;
+}
+/* A WebView too old for subgrid gets the gutter's fixed column instead. */
+@supports not (grid-template-columns: subgrid) {
+  .layout-aligned .message {
+    grid-template-columns: min(7.5em, 38vw) minmax(0, 1fr);
+  }
+}
+.layout-aligned .head {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  padding: 0.25em 0.5em 0.25em 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+/*
+ * Everything else — text, delivery flag, the actions strip, a translation —
+ * stacks in the message column. The divider is each cell's left border rather
+ * than the head's right one: the head is one row, and a border on it would stop
+ * at the first line of a message that has a strip or translation beneath.
+ */
+.layout-aligned .message > :not(.head) {
+  grid-column: 2;
+  min-width: 0;
+  padding-left: 0.5em;
+  border-left: 1px solid rgba(127, 127, 127, 0.45);
+}
+.layout-aligned .text { padding-top: 0.25em; }
+.layout-aligned .message > :last-child { padding-bottom: 0.25em; }
+.layout-aligned .flag { margin-left: 0; }
+.layout-aligned .message.selected { padding-bottom: 0; }
+.layout-aligned .msg-actions { margin-top: 0; padding-top: 6px; }
+/* The translation's own grey bar moves inside, so the divider stays straight. */
+.layout-aligned .message > .translation { margin-top: 0; padding-top: 4px; }
+.layout-aligned .translation > * {
+  padding-left: 8px;
+  border-left: 2px solid rgba(127, 127, 127, 0.6);
+}
+/* flair + name on the first line, trip beneath, all against the divider. */
+.layout-aligned .nick {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  justify-content: end;
+  justify-items: end;
+}
+.layout-aligned .trip { display: contents; }
+.layout-aligned .flair { grid-area: 1 / 1; margin-right: 0.3em; }
+.layout-aligned .name { grid-area: 1 / 2; }
+.layout-aligned .tripcode { grid-area: 2 / 1 / 3 / 3; }
+.layout-aligned .wtag { display: block; }
+
 /* Whispers are private; mark them clearly in both directions. Schemes do not
    style whispers (the site renders them as plain info text), so this uses
    currentColor and stays readable on all 44. */

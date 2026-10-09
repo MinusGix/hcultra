@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -141,9 +142,12 @@ fun ThemeSheet(
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(top = 16.dp),
             )
-            Row(
+            // Flowing rather than one row: four labels at 8dp apart are wider
+            // than a 360dp phone once the sheet's padding is taken off.
+            FlowRow(
                 Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 NickLayout.entries.forEach { option ->
                     val selected = option == nickLayout
