@@ -227,6 +227,15 @@ object RendererBridge {
     fun wrapCodeCall(on: Boolean): String = "HC.setWrapCode($on);"
 
     /**
+     * Sets the transcript's typeface.
+     *
+     * Sent as a key rather than a font stack: the stacks live in app.css, so
+     * what the page is handed is a choice from a list it already knows, and a
+     * key it does not know matches no rule and leaves the default in place.
+     */
+    fun fontCall(font: TranscriptFont): String = "HC.setFont(${quote(font.key)});"
+
+    /**
      * Switches how a message's nick and trip sit relative to its text.
      *
      * A class on the document rather than three different DOM shapes: the

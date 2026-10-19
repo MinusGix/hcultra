@@ -201,4 +201,28 @@ class RendererBridgeTest {
         assertEquals(NickLayout.DEFAULT, NickLayout.from("Sideways"))
         assertEquals(NickLayout.DEFAULT, NickLayout.from("layout-aligned"), "stored by name, not by class")
     }
+
+    // ---- fonts ----
+
+    @Test
+    fun aFontIsSentAsItsKey() {
+        TranscriptFont.entries.forEach { font ->
+            val (key) = RendererBridge.fontCall(font).arguments("HC.setFont")
+            assertEquals(font.key, key.jsonPrimitive.content)
+        }
+        assertEquals("""HC.setFont("mono");""", RendererBridge.fontCall(TranscriptFont.Monospace))
+    }
+
+    @Test
+    fun everyFontHasItsOwnKey() {
+        assertEquals(TranscriptFont.entries.size, TranscriptFont.entries.map { it.key }.toSet().size)
+    }
+
+    @Test
+    fun anUnknownSavedFontIsTheDefault() {
+        assertEquals(TranscriptFont.Serif, TranscriptFont.from("Serif"))
+        assertEquals(TranscriptFont.DEFAULT, TranscriptFont.from(null))
+        assertEquals(TranscriptFont.DEFAULT, TranscriptFont.from("Papyrus"))
+        assertEquals(TranscriptFont.DEFAULT, TranscriptFont.from("serif"), "stored by name, not by key")
+    }
 }

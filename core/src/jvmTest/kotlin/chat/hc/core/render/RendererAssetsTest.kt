@@ -31,4 +31,13 @@ class RendererAssetsTest {
         assertTrue("'wrap-code'" in js, "app.js does not set the wrap-code class")
         assertTrue(Regex("""\.wrap-code\s+pre\b""").containsMatchIn(css.readText()), "wrap-code is not in app.css")
     }
+
+    /** Same failure, for fonts: a key with no rule is a choice that changes nothing. */
+    @Test
+    fun everyFontIsStyled() {
+        val text = css.readText()
+        TranscriptFont.entries.filter { it != TranscriptFont.System }.forEach { font ->
+            assertTrue("""html[data-font="${font.key}"]""" in text, "${font.key} is not in app.css")
+        }
+    }
 }

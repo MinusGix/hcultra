@@ -881,6 +881,20 @@
       document.documentElement.classList.toggle('wrap-code', !!on);
       if (wasPinned) scrollToBottom();
     },
+    /*
+     * The transcript's typeface, as one of app.css's `data-font` keys.
+     *
+     * An attribute on the root rather than a class on <body>, which setLayout
+     * owns outright. A key the stylesheet has no rule for draws the default,
+     * so nothing here has to know the list. Changing face reflows every line,
+     * so a reader at the bottom is kept there, as for setFontScale.
+     */
+    setFont: function (key) {
+      var c = channels[current];
+      var wasPinned = c ? (c.pinned || atBottom()) : true;
+      document.documentElement.setAttribute('data-font', String(key || 'system'));
+      if (wasPinned) scrollToBottom();
+    },
     setTheme: function (scheme, hljsTheme) {
       if (scheme) setHref('scheme', 'schemes/' + scheme + '.css');
       if (hljsTheme) setHref('hljs-theme', 'vendor/hljs/styles/' + hljsTheme + '.min.css');

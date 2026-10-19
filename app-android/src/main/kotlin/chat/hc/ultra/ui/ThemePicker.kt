@@ -46,6 +46,7 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -56,6 +57,7 @@ import chat.hc.core.render.ImageHosts
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
+import chat.hc.core.render.TranscriptFont
 import chat.hc.core.session.Dialect
 import chat.hc.core.session.IgnoreMode
 import chat.hc.core.session.Servers
@@ -98,6 +100,8 @@ fun ThemeSheet(
     onFontScaleChanged: (Float) -> Unit,
     wrapCode: Boolean,
     onWrapCodeChanged: (Boolean) -> Unit,
+    font: TranscriptFont,
+    onFontChanged: (TranscriptFont) -> Unit,
     allowImages: Boolean,
     onAllowImagesChanged: (Boolean) -> Unit,
     /** The user's own image sources, as canonical URL prefixes. */
@@ -144,6 +148,10 @@ fun ThemeSheet(
             ServerSetting(servers, onServersChanged)
 
             FontSizeSetting(fontScale, onFontScaleChanged)
+            FontSetting(font, onFontChanged)
+            // One sample under both, since the question they answer together
+            // is whether the transcript reads well.
+            FontSizeSample(fontScale, font)
 
             Text(
                 "Message layout",
@@ -658,7 +666,44 @@ private fun FontSizeSetting(scale: Float, onChanged: (Float) -> Unit) {
             enabled = scale != FontScale.DEFAULT,
         ) { Text("Reset") }
     }
-    FontSizeSample(scale)
+}
+
+/**
+ * Which face the transcript is set in: one chip per [TranscriptFont], each
+ * label drawn in its own face so the list previews itself.
+ */
+@Composable
+private fun FontSetting(font: TranscriptFont, onChanged: (TranscriptFont) -> Unit) {
+    Text(
+        "Font",
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.padding(top = 8.dp),
+    )
+    FlowRow(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        TranscriptFont.entries.forEach { option ->
+            val selected = option == font
+            Text(
+                text = option.label,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = option.composeFamily,
+                color = if (selected) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    .clickable(role = Role.RadioButton) { onChanged(option) }
+                    .semantics { this.selected = selected }
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+            )
+        }
+    }
 }
 
 /**
@@ -707,7 +752,7 @@ private fun StepButton(
  * `--hc-base`, so the sample and the transcript step together.
  */
 @Composable
-private fun FontSizeSample(scale: Float) {
+private fun FontSizeSample(scale: Float, font: TranscriptFont) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -720,6 +765,7 @@ private fun FontSizeSample(scale: Float) {
             text = "hcultra",
             fontSize = (BASE_TEXT_SP * scale).sp,
             lineHeight = (BASE_TEXT_SP * scale * 1.45f).sp,
+            fontFamily = font.composeFamily,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.primary,
         )
@@ -727,6 +773,7 @@ private fun FontSizeSample(scale: Float) {
             text = "this is how the transcript will read",
             fontSize = (BASE_TEXT_SP * scale).sp,
             lineHeight = (BASE_TEXT_SP * scale * 1.45f).sp,
+            fontFamily = font.composeFamily,
             color = MaterialTheme.colorScheme.onSurface,
         )
     }
