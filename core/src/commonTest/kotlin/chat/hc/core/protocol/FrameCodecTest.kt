@@ -170,4 +170,25 @@ class FrameCodecTest {
         val info = FrameCodec.decode("""{"cmd":"info","text":"hi","channel":"lounge"}""")
         assertEquals("lounge", (info as Inbound.Info).channel)
     }
+
+    /**
+     * Since the 2026-10 update `changenick` must name a channel the sender
+     * is in; without one the server frisks and replies nothing.
+     */
+    @Test
+    fun changeNickNamesItsChannel() {
+        val obj = Json.parseToJsonElement(FrameCodec.encode(Outbound.ChangeNick("lounge", "alice2"))).jsonObject
+        assertEquals("changenick", obj["cmd"]?.jsonPrimitive?.content)
+        assertEquals("lounge", obj["channel"]?.jsonPrimitive?.content)
+        assertEquals("alice2", obj["nick"]?.jsonPrimitive?.content)
+    }
+
+    /** A v1 invite is addressed by nick, and sends no userid it does not have. */
+    @Test
+    fun aNickInviteSendsNoUserid() {
+        val obj = Json.parseToJsonElement(FrameCodec.encode(Outbound.Invite(channel = "ch", nick = "bob"))).jsonObject
+        assertEquals("bob", obj["nick"]?.jsonPrimitive?.content)
+        assertTrue("userid" !in obj)
+        assertTrue("to" !in obj, "the destination is the server's to choose")
+    }
 }

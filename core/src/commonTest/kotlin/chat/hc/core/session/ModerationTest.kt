@@ -90,6 +90,16 @@ class ModerationTest {
         assertNull(Moderation.frameFor(ModAction.Unmuzzle, "room", hashless))
     }
 
+    /** A blank hash is no hash: `speak` would key on nothing. */
+    @Test
+    fun unmuzzleNeedsANonBlankHash() {
+        val me = user(1, Levels.MODERATOR, isme = true)
+        val blank = user(2, hash = "  ")
+        assertTrue(ModAction.Unmuzzle !in Moderation.available(me, blank))
+        assertNull(Moderation.frameFor(ModAction.Unmuzzle, "room", blank))
+        assertNull(Moderation.frameFor(ModAction.Unmuzzle, "room", blank, legacy = true))
+    }
+
     @Test
     fun unknownSelfGetsNothing() {
         assertTrue(Moderation.available(null, user(2)).isEmpty())
@@ -131,5 +141,36 @@ class ModerationTest {
         assertEquals("deadbeef", f["hash"]?.jsonPrimitive?.content)
         assertEquals("room", f["channel"]?.jsonPrimitive?.content)
         assertTrue("userid" !in f)
+    }
+
+    /**
+     * v1 reads only `nick` for kick, ban and dumb, and a 2019 server has no
+     * userids; a derived one sent there would name no one.
+     */
+    @Test
+    fun legacyTargetsByNickNotUserid() {
+        listOf(ModAction.Kick to "kick", ModAction.Ban to "ban", ModAction.Muzzle to "dumb").forEach { (action, cmd) ->
+            val f = encoded(Moderation.frameFor(action, "room", user(42), legacy = true)!!)
+            assertEquals(cmd, f["cmd"]?.jsonPrimitive?.content)
+            assertEquals("u42", f["nick"]?.jsonPrimitive?.content, cmd)
+            assertTrue("userid" !in f, "$cmd sent a userid on v1")
+        }
+    }
+
+    /** `speak` keys on the hash in both dialects. */
+    @Test
+    fun legacyUnmuzzleIsStillByHash() {
+        val f = encoded(Moderation.frameFor(ModAction.Unmuzzle, "room", user(42, hash = "deadbeef"), legacy = true)!!)
+        assertEquals("speak", f["cmd"]?.jsonPrimitive?.content)
+        assertEquals("deadbeef", f["hash"]?.jsonPrimitive?.content)
+        assertTrue("nick" !in f)
+    }
+
+    /** And v2 sends no nick alongside the userid. */
+    @Test
+    fun v2SendsNoNick() {
+        ModAction.entries.filter { it != ModAction.Unmuzzle }.forEach { action ->
+            assertTrue("nick" !in encoded(Moderation.frameFor(action, "room", user(42))!!), "$action sent a nick")
+        }
     }
 }

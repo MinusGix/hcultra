@@ -255,6 +255,115 @@ class LegacyDialectTest {
         s.stop()
     }
 
+    /** A 2019 server that echoes chat only when [echo] says to, as it was sent. */
+    private fun FakeTransport.script2019Echoing(echo: (String) -> Boolean, refuse: (String) -> Boolean = { false }) {
+        onSend = { raw ->
+            val f = parse(raw)
+            when (f.str("cmd")) {
+                "join" -> serverSends("""{"cmd":"onlineSet","nicks":["tester"],"time":1}""")
+                "chat" -> {
+                    val text = f.str("text")!!
+                    if (refuse(text)) throw IllegalStateException("socket refused the write")
+                    if (echo(text)) serverSends("""{"cmd":"chat","nick":"tester","text":"${LegacyEcho.expected(text)}","time":2}""")
+                }
+            }
+        }
+    }
+
+    /**
+     * A write that failed never reaches the server, so it can have no echo:
+     * it must not stay in line to claim the next message that says the same.
+     */
+    @Test
+    fun aRefusedWriteDoesNotClaimTheNextEcho() = runTest {
+        val transport = FakeTransport()
+        var writes = 0
+        transport.script2019Echoing(echo = { true }, refuse = { writes++ == 0 })
+        val s = session(transport, Dialect.V1)
+        val seen = mutableListOf<SessionEvent>()
+        val collector = launchCollect(s, seen)
+        s.start(this)
+        advanceUntilIdle()
+
+        assertTrue(runCatching { s.sendChat("hello", customId = "first") }.isFailure)
+        s.sendChat("hello", customId = "second")
+        advanceUntilIdle()
+
+        val echo = seen.filterIsInstance<SessionEvent.Message>().single()
+        assertEquals("second", echo.frame.customId)
+        collector.cancel()
+        s.stop()
+    }
+
+    /**
+     * Echoes come back in the order they were sent, so one that is matched
+     * gives up on everything older: a message the server dropped must not
+     * later claim a newer one that happens to say the same thing.
+     */
+    @Test
+    fun aDroppedEchoIsGivenUpOnceALaterOneArrives() = runTest {
+        val transport = FakeTransport()
+        var aSent = 0
+        transport.script2019Echoing(echo = { it != "a" || aSent++ > 0 })
+        val s = session(transport, Dialect.V1)
+        val seen = mutableListOf<SessionEvent>()
+        val collector = launchCollect(s, seen)
+        s.start(this)
+        advanceUntilIdle()
+
+        s.sendChat("a", customId = "id1")
+        s.sendChat("b", customId = "id2")
+        s.sendChat("a", customId = "id3")
+        advanceUntilIdle()
+
+        val echoes = seen.filterIsInstance<SessionEvent.Message>().map { it.frame.text to it.frame.customId }
+        assertEquals(listOf("b" to "id2", "a" to "id3"), echoes)
+        collector.cancel()
+        s.stop()
+    }
+
+    /** Matched on what the server will say, which is not always what was typed. */
+    @Test
+    fun anEchoIsMatchedAsTheServerRewritesIt() = runTest {
+        val transport = FakeTransport().apply { script2019Echoing(echo = { true }) }
+        val s = session(transport, Dialect.V1)
+        val seen = mutableListOf<SessionEvent>()
+        val collector = launchCollect(s, seen)
+        s.start(this)
+        advanceUntilIdle()
+
+        s.sendChat("//slash", customId = "abc123")
+        advanceUntilIdle()
+
+        val echo = seen.filterIsInstance<SessionEvent.Message>().single()
+        assertEquals("/slash", echo.frame.text)
+        assertEquals("abc123", echo.frame.customId)
+        collector.cancel()
+        s.stop()
+    }
+
+    /** Someone else saying what we said is theirs, not our echo. */
+    @Test
+    fun aPeerSayingTheSameIsNotOurEcho() = runTest {
+        val transport = FakeTransport().apply { script2019Echoing(echo = { false }) }
+        val s = session(transport, Dialect.V1)
+        val seen = mutableListOf<SessionEvent>()
+        val collector = launchCollect(s, seen)
+        s.start(this)
+        advanceUntilIdle()
+
+        s.sendChat("hello", customId = "abc123")
+        transport.latest.serverSends("""{"cmd":"onlineAdd","nick":"bob","trip":"null","time":3}""")
+        transport.latest.serverSends("""{"cmd":"chat","nick":"bob","text":"hello","time":3}""")
+        advanceUntilIdle()
+
+        val chat = seen.filterIsInstance<SessionEvent.Message>().single()
+        assertEquals("bob", chat.frame.nick)
+        assertNull(chat.frame.customId)
+        collector.cancel()
+        s.stop()
+    }
+
     @Test
     fun rateLimitedJoinIsRetriedNotFatal() = runTest {
         val transport = FakeTransport()
