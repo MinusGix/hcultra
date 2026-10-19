@@ -230,7 +230,8 @@ class MainActivity : ComponentActivity() {
             var notifyOtherChannels by remember { mutableStateOf(notifyPrefs.otherChannels) }
             var showThemes by remember { mutableStateOf(false) }
             var pendingChannel by remember { mutableStateOf<ChannelKey?>(null) }
-            var viewingImage by remember { mutableStateOf<String?>(null) }
+            // An image's URL and its hover text.
+            var viewingImage by remember { mutableStateOf<Pair<String, String>?>(null) }
             var translate by remember { mutableStateOf(translatePrefs.enabled) }
             var translateTarget by remember { mutableStateOf(translatePrefs.target) }
             var servers by remember { mutableStateOf(serverPrefs.servers) }
@@ -425,11 +426,11 @@ class MainActivity : ComponentActivity() {
                             onChannelTap = { channel ->
                                 pendingChannel = ChannelKey(activeChannel?.server ?: joinServer, channel)
                             },
-                            onImageTap = { url ->
+                            onImageTap = { url, title ->
                                 // The page only embeds whitelisted images, but
                                 // it renders untrusted text; the viewer is not
                                 // opened on its say-so alone.
-                                if (ImageSources.allows(url)) viewingImage = url
+                                if (ImageSources.allows(url)) viewingImage = url to title
                                 else openExternal(url)
                             },
                             onTranslate = { text, reply ->
@@ -460,9 +461,10 @@ class MainActivity : ComponentActivity() {
                         showChannel = showChannel.collectAsStateWithLifecycle().value,
                         onShowChannelConsumed = { showChannel.value = null },
                     )
-                    viewingImage?.let { url ->
+                    viewingImage?.let { (url, title) ->
                         ImageViewer(
                             url = url,
+                            caption = title,
                             onDismiss = { viewingImage = null },
                             onOpenOriginal = { openExternal(it) },
                         )
