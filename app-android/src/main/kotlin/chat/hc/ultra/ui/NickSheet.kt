@@ -46,11 +46,15 @@ fun NickSheet(
     online: User?,
     modActions: List<ModAction>,
     ignored: Boolean,
+    /** Theirs, when they have one; null offers no trip ignore. */
+    trip: String?,
+    tripIgnored: Boolean,
     onMention: () -> Unit,
     onWhisper: () -> Unit,
     onInvite: () -> Unit,
     onCopy: (String) -> Unit,
     onToggleIgnore: () -> Unit,
+    onToggleTripIgnore: () -> Unit,
     onModerate: (ModAction) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -87,6 +91,11 @@ fun NickSheet(
             Item("Copy nick", then { onCopy(hold.nick) })
             hold.trip?.let { trip -> Item("Copy trip", then { onCopy(trip) }) }
             if (!isSelf) Item(if (ignored) "Stop ignoring" else "Ignore", then(onToggleIgnore))
+            // The trip as well as the nick: a nick can be changed to get out
+            // from under an ignore, and a trip cannot without the password.
+            if (!isSelf && trip != null) {
+                Item(if (tripIgnored) "Stop ignoring trip $trip" else "Ignore trip $trip", then(onToggleTripIgnore))
+            }
             modActions.forEach { action ->
                 Item(
                     label = action.label,

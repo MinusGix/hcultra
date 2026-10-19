@@ -1,5 +1,6 @@
 package chat.hc.core.render
 
+import chat.hc.core.session.IgnoreMode
 import chat.hc.core.store.ChatMessage
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -35,6 +36,8 @@ internal data class WireMessage(
     val userid: Long = 0L,
     /** Epoch millis, the server's `time` where it sent one. */
     val at: Long = 0L,
+    /** From an ignored sender; drawn the way [RendererBridge.ignoreModeCall] said. */
+    val veiled: Boolean = false,
 )
 
 /**
@@ -93,6 +96,7 @@ object RendererBridge {
         isMine = m.isMine,
         userid = m.userid,
         at = m.at,
+        veiled = m.veiled,
     )
 
     /** The message list as a JSON array. */
@@ -193,6 +197,18 @@ object RendererBridge {
         )
         return "HC.translation(${quote(channel)}, $localId, ${quote(t)});"
     }
+
+    /**
+     * How a veiled row is drawn: blacked out, or with [funText] in place of
+     * what they said. [IgnoreMode.Hide] never reaches the page as a veiled
+     * row, since those are filtered out before it, but is passed through all
+     * the same so the page is never left drawing a mode nobody chose.
+     *
+     * [funText] is the user's own and drawn as plain text, but goes as a JSON
+     * string like everything else the page is handed.
+     */
+    fun ignoreModeCall(mode: IgnoreMode, funText: String): String =
+        "HC.setIgnoreMode(${quote(mode.name)}, ${quote(funText)});"
 
     /** Back to the newest message, and stay there as more arrive. */
     fun scrollToBottomCall(): String = "HC.scrollToBottom();"

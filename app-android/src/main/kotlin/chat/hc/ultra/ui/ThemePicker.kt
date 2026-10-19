@@ -57,6 +57,7 @@ import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
 import chat.hc.core.session.Dialect
+import chat.hc.core.session.IgnoreMode
 import chat.hc.core.session.Servers
 import chat.hc.core.store.HistoryLimit
 import chat.hc.core.translate.GoogleTranslate
@@ -102,6 +103,11 @@ fun ThemeSheet(
     onExtraImageSourcesChanged: (List<String>) -> Unit,
     joinLeave: Boolean,
     onJoinLeaveChanged: (Boolean) -> Unit,
+    ignoreMode: IgnoreMode,
+    onIgnoreModeChanged: (IgnoreMode) -> Unit,
+    /** What [IgnoreMode.Fun] shows; blank is stored and read back as the default. */
+    ignoreFunText: String,
+    onIgnoreFunTextChanged: (String) -> Unit,
     /** Lines kept per channel; always at least 1. */
     historyLines: Int,
     /** Days kept per channel, or null for no age limit. */
@@ -185,6 +191,7 @@ fun ThemeSheet(
                 checked = joinLeave,
                 onChanged = onJoinLeaveChanged,
             )
+            IgnoreSetting(ignoreMode, onIgnoreModeChanged, ignoreFunText, onIgnoreFunTextChanged)
             HistorySetting(historyLines, historyDays, onHistoryChanged)
             ToggleRow(
                 title = "Show images in the transcript",
@@ -777,6 +784,72 @@ private fun ExtraImageSources(sources: List<String>, onChanged: (List<String>) -
                 onClick = { onChanged(ImageHosts.defaultExtra) },
                 enabled = sources != ImageHosts.defaultExtra,
             ) { Text("Reset") }
+        }
+    }
+}
+
+/**
+ * What the transcript does with an ignored sender's lines: drop them, black
+ * them out, or put something else in their place. The last two leave the nick
+ * showing and give the line back on a tap.
+ */
+@Composable
+private fun IgnoreSetting(
+    mode: IgnoreMode,
+    onModeChanged: (IgnoreMode) -> Unit,
+    funText: String,
+    onFunTextChanged: (String) -> Unit,
+) {
+    // Local, so that clearing the field leaves it clear while you type rather
+    // than snapping back to the default the pref reads a blank as.
+    var input by remember { mutableStateOf(funText) }
+
+    Column(Modifier.padding(vertical = 8.dp)) {
+        Text("Ignored people's messages", style = MaterialTheme.typography.bodyMedium)
+        Text(
+            when (mode) {
+                IgnoreMode.Hide -> "Left out of the transcript."
+                IgnoreMode.Spoiler -> "Shown with their nick, text blacked out. Tap one to read it."
+                IgnoreMode.Fun -> "Shown with their nick, saying something else. Tap one to read what they said."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FlowRow(
+            Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            IgnoreMode.entries.forEach { option ->
+                val selected = option == mode
+                Text(
+                    text = option.label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        .clickable { onModeChanged(option) }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                )
+            }
+        }
+        if (mode == IgnoreMode.Fun) {
+            OutlinedTextField(
+                value = input,
+                onValueChange = {
+                    input = it
+                    onFunTextChanged(it)
+                },
+                singleLine = true,
+                label = { Text("Instead, they say") },
+                placeholder = { Text(IgnoreMode.DEFAULT_FUN_TEXT) },
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }

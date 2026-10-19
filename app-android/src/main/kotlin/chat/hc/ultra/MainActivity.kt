@@ -97,6 +97,8 @@ import chat.hc.core.session.ChannelUi
 import chat.hc.ultra.data.ChannelHistory
 import chat.hc.ultra.data.ChannelIdentity
 import chat.hc.core.session.Ignore
+import chat.hc.core.session.IgnoreList
+import chat.hc.core.session.IgnoreMode
 import chat.hc.core.session.ModAction
 import chat.hc.core.session.Moderation
 import chat.hc.core.session.Servers
@@ -133,7 +135,7 @@ class MainActivity : ComponentActivity() {
     private var service: HcService? = null
     private val channels = MutableStateFlow<Map<ChannelKey, ChannelUi>>(emptyMap())
     /** The service's ignore list, mirrored like [channels]. */
-    private val ignored = MutableStateFlow<Set<String>>(emptySet())
+    private val ignored = MutableStateFlow(IgnoreList())
     private var bound = false
 
     private val serverPrefs by lazy { ServerPrefs(this) }
@@ -218,6 +220,8 @@ class MainActivity : ComponentActivity() {
             var extraImageSources by remember { mutableStateOf(themePrefs.extraImageSources) }
             var fontScale by remember { mutableFloatStateOf(themePrefs.fontScale) }
             var joinLeave by remember { mutableStateOf(themePrefs.joinLeave) }
+            var ignoreMode by remember { mutableStateOf(themePrefs.ignoreMode) }
+            var ignoreFunText by remember { mutableStateOf(themePrefs.ignoreFunText) }
             var historyLines by remember { mutableStateOf(themePrefs.historyLines) }
             var historyDays by remember { mutableStateOf(themePrefs.historyDays) }
             var notifyMentions by remember { mutableStateOf(notifyPrefs.mentions) }
@@ -334,6 +338,16 @@ class MainActivity : ComponentActivity() {
                                 // what is already buffered.
                                 themePrefs.joinLeave = it
                             },
+                            ignoreMode = ignoreMode,
+                            onIgnoreModeChanged = {
+                                ignoreMode = it
+                                themePrefs.ignoreMode = it
+                            },
+                            ignoreFunText = ignoreFunText,
+                            onIgnoreFunTextChanged = {
+                                themePrefs.ignoreFunText = it
+                                ignoreFunText = themePrefs.ignoreFunText
+                            },
                             historyLines = historyLines,
                             historyDays = historyDays,
                             onHistoryChanged = { lines, days ->
@@ -382,6 +396,7 @@ class MainActivity : ComponentActivity() {
                         channelsFlow = channels,
                         ignoredFlow = ignored,
                         onSetIgnored = { nick, ignore -> service?.sessions?.setIgnored(nick, ignore) },
+                        onSetTripIgnored = { trip, ignore -> service?.sessions?.setTripIgnored(trip, ignore) },
                         servers = servers.map { it.url },
                         joinServer = joinServer,
                         onJoinServer = { joinServer = it },
@@ -436,6 +451,8 @@ class MainActivity : ComponentActivity() {
                         allowImages = allowImages,
                         extraImageSources = extraImageSources,
                         joinLeave = joinLeave,
+                        ignoreMode = ignoreMode,
+                        ignoreFunText = ignoreFunText,
                         translate = translate,
                         onOpenThemes = { showThemes = true },
                         pendingChannel = pendingChannel,
@@ -643,9 +660,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppScreen(
     channelsFlow: StateFlow<Map<ChannelKey, ChannelUi>>,
-    /** Nicks whose messages are hidden; the service owns the list. */
-    ignoredFlow: StateFlow<Set<String>>,
+    /** Nicks and trips whose messages are hidden; the service owns the list. */
+    ignoredFlow: StateFlow<IgnoreList>,
     onSetIgnored: (nick: String, ignore: Boolean) -> Unit,
+    onSetTripIgnored: (trip: String, ignore: Boolean) -> Unit,
     /** Every server the user has added, by URL; the join form picks among them. */
     servers: List<String>,
     /** The server the join form is on; [recent] and [lastSession] are its. */
@@ -686,6 +704,10 @@ private fun AppScreen(
      * make the switch look like it had not worked.
      */
     joinLeave: Boolean,
+    /** What the transcript does with an ignored sender's lines. */
+    ignoreMode: IgnoreMode,
+    /** What [IgnoreMode.Fun] shows in place of them. */
+    ignoreFunText: String,
     /** Whether a tapped message offers Translate. */
     translate: Boolean,
     onOpenThemes: () -> Unit,
@@ -719,7 +741,8 @@ private fun AppScreen(
     // Owned by the service, which also decides unread counts and alerts from
     // it; see SessionManager.ignored.
     val ignored by ignoredFlow.collectAsStateWithLifecycle()
-    val toggleIgnore: (String) -> Unit = { nick -> onSetIgnored(nick, nick !in ignored) }
+    val toggleIgnore: (String) -> Unit = { nick -> onSetIgnored(nick, nick !in ignored.nicks) }
+    val toggleTripIgnore: (String) -> Unit = { trip -> onSetTripIgnored(trip, trip !in ignored.trips) }
     // A held nick, and the channel it was held in: the sheet must act on that
     // channel even if a notification switches tabs underneath it.
     var holding by remember { mutableStateOf<Pair<ChannelKey, NickHold>?>(null) }
@@ -928,12 +951,21 @@ private fun AppScreen(
                     // ours does not make the nick ours.
                     val isSelf = (me != null && online?.userid == me.userid) ||
                         (h.isMine && h.kind != MessageKind.WhisperSent)
+                    // The trip to offer ignoring. An outgoing whisper's row
+                    // carries ours, so theirs comes from the roster; any other
+                    // row carries the sender's own, and only the same
+                    // connection may stand in for it, since whoever holds the
+                    // nick now may be somebody else entirely.
+                    val heldTrip = if (h.kind == MessageKind.WhisperSent) online?.trip
+                    else h.trip ?: sameConnection?.trip
                     NickSheet(
                         hold = h,
                         isSelf = isSelf,
                         online = online,
                         modActions = sameConnection?.let { Moderation.available(me, it) }.orEmpty(),
-                        ignored = h.nick in ignored,
+                        ignored = h.nick in ignored.nicks,
+                        trip = heldTrip?.takeIf(String::isNotBlank),
+                        tripIgnored = heldTrip != null && heldTrip in ignored.trips,
                         onMention = { mention(h.nick) },
                         // `/whisper` rather than `/w`: servers from 2019 know
                         // only the long form, and today's knows both.
@@ -941,6 +973,7 @@ private fun AppScreen(
                         onInvite = { online?.let { onInvite(channel, it) } },
                         onCopy = { text -> copyToClipboard(context, text) },
                         onToggleIgnore = { toggleIgnore(h.nick) },
+                        onToggleTripIgnore = { heldTrip?.let(toggleTripIgnore) },
                         onModerate = { action ->
                             if (sameConnection == null) return@NickSheet
                             if (action.destructive) confirmingMod = Triple(channel, action, sameConnection)
@@ -961,8 +994,10 @@ private fun AppScreen(
                 if (openRoster == active.key) {
                     UserList(
                         users = active.roster,
-                        isIgnored = { it.nick in ignored },
+                        isIgnored = { it.nick in ignored.nicks },
                         onToggleIgnore = { toggleIgnore(it.nick) },
+                        isTripIgnored = { user -> user.trip?.let { it in ignored.trips } ?: false },
+                        onToggleTripIgnore = { user -> user.trip?.takeIf(String::isNotBlank)?.let(toggleTripIgnore) },
                         modActionsFor = { target ->
                             Moderation.available(active.roster.firstOrNull { it.isme }, target)
                         },
@@ -989,11 +1024,17 @@ private fun AppScreen(
                     )
                 }
 
-                val visible = remember(active.messages, joinLeave, ignored) {
+                val visible = remember(active.messages, joinLeave, ignored, ignoreMode) {
                     if (joinLeave && ignored.isEmpty()) active.messages
-                    else active.messages.filterNot {
-                        (!joinLeave && (it.kind == MessageKind.Join || it.kind == MessageKind.Leave)) ||
-                            Ignore.hides(it, ignored)
+                    else active.messages.mapNotNull {
+                        when {
+                            !joinLeave && (it.kind == MessageKind.Join || it.kind == MessageKind.Leave) -> null
+                            !Ignore.hides(it, ignored) -> it
+                            ignoreMode == IgnoreMode.Hide -> null
+                            // Kept, for the page to black out or replace; a
+                            // copy, so the buffer's own message is untouched.
+                            else -> it.copy(veiled = true)
+                        }
                     }
                 }
 
@@ -1007,6 +1048,8 @@ private fun AppScreen(
                     extraImageSources = extraImageSources,
                     fontScale = fontScale,
                     translate = translate,
+                    ignoreMode = ignoreMode,
+                    ignoreFunText = ignoreFunText,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     callbacks = webCallbacks,
                 )
