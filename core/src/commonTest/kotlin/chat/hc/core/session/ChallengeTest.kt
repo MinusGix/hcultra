@@ -220,4 +220,43 @@ class ChallengeTest {
         assertIs<SessionState.Challenged>(s.state.value)
         s.stop()
     }
+
+    /**
+     * The manager hands the answer to the channel it is for, by key: a
+     * challenged tab answered from the UI is let in.
+     */
+    @Test
+    fun managerRoutesTheAnswerToItsChannel() = runTest {
+        val transport = FakeTransport()
+        transport.onSend = { raw ->
+            when (cmdOf(raw)) {
+                "session" -> serverSends("""{"cmd":"session","restored":false,"token":"","channels":[]}""")
+                "join" -> serverSends(captcha)
+                "chat" -> if (textOf(raw) == "AbC123") admit()
+            }
+        }
+        val sessions = SessionManager(
+            scope = this,
+            transport = transport,
+            now = { 0L },
+            customIdFactory = { "abc123" },
+        )
+        sessions.join(key("testroom"), tester)
+        advanceUntilIdle()
+        assertIs<SessionState.Challenged>(sessions.channels.value.getValue(key("testroom")).state)
+
+        // Not a channel we are in: goes nowhere, and is not sent.
+        sessions.answerChallenge(key("elsewhere"), "AbC123")
+        advanceUntilIdle()
+        assertTrue(transport.latest.sent.none { cmdOf(it) == "chat" })
+
+        sessions.answerChallenge(key("testroom"), "AbC123")
+        advanceUntilIdle()
+
+        val ui = sessions.channels.value.getValue(key("testroom"))
+        assertEquals(SessionState.Live(restored = false), ui.state)
+        // An answer is not a chat: nothing was buffered or left awaiting an echo.
+        assertTrue(ui.messages.none { it.text == "AbC123" }, "the answer reached the transcript")
+        sessions.stopAll()
+    }
 }

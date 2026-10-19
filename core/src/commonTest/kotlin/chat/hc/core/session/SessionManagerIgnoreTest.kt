@@ -134,6 +134,46 @@ class SessionManagerIgnoreTest {
         sessions.stopAll()
     }
 
+    /**
+     * An ignored inviter's line is kept — it is an info line with no nick of
+     * its own, so nothing could hide it and show it again — but it neither
+     * alerts nor counts.
+     */
+    @Test
+    fun anIgnoredInviteIsKeptButQuiet() = runTest {
+        val transport = FakeTransport().apply { scriptJoin() }
+        val sessions = manager(transport, this)
+        val seen = mutableListOf<Alert>()
+        val collector = launch { sessions.alerts.collect { seen += it } }
+        sessions.activeChannel = key("elsewhere")
+        sessions.join(key("testroom"), Credentials("alice"))
+        advanceUntilIdle()
+
+        sessions.setIgnored("bob", true)
+        transport.connections[0].serverSends(
+            """{"cmd":"invite","channel":"testroom","from":7,"to":99,"inviteChannel":"p7rl8pem"}"""
+        )
+        advanceUntilIdle()
+
+        val ui = sessions.channels.value.getValue(key("testroom"))
+        assertEquals(emptyList(), seen)
+        assertEquals(0, ui.unread)
+        assertTrue(ui.messages.any { it.kind == MessageKind.Info && "bob invited you" in it.text }, "${ui.messages}")
+        collector.cancel()
+        sessions.stopAll()
+    }
+
+    /** One nick at a time, in and out, leaving the rest of the list alone. */
+    @Test
+    fun ignoringAndUnignoringEditTheList() = runTest {
+        val sessions = manager(FakeTransport(), this)
+        sessions.setIgnored("bob", true)
+        sessions.setIgnored("carol", true)
+        sessions.setIgnored("bob", false)
+        assertEquals(setOf("carol"), sessions.ignored.value)
+        sessions.stopAll()
+    }
+
     @Test
     fun hidesWhatTheySayNotThatTheyCameOrWent() {
         val ignored = setOf("bob")
@@ -149,5 +189,8 @@ class SessionManagerIgnoreTest {
         // A whisper we sent them names them, but it is ours.
         assertTrue(!Ignore.hides(msg(MessageKind.WhisperSent, mine = true), ignored))
         assertTrue(!Ignore.hides(msg(MessageKind.Chat, nick = "carol"), ignored))
+        // Our own message is never hidden from us, even under an ignored nick.
+        assertTrue(!Ignore.hides(msg(MessageKind.Chat, mine = true), ignored))
+        assertTrue(!Ignore.hides(msg(MessageKind.Chat), emptySet()))
     }
 }

@@ -76,6 +76,37 @@ class LegacyAdapterTest {
         assertIs<Inbound.Chat>(second.single())
     }
 
+    /** `admin` outranks `mod`, and a promotion past what was reported is reported again. */
+    @Test
+    fun anAdminsChatPromotesThemAsAdmin() {
+        val a = asAlice()
+        a.read("""{"cmd":"chat","nick":"bob","text":"hi","mod":true,"time":4}""")
+        val again = a.read("""{"cmd":"chat","nick":"bob","text":"hi","admin":true,"mod":true,"time":5}""")
+        assertEquals(Levels.ADMIN, assertIs<Inbound.UpdateUser>(again[0]).level)
+        assertEquals(Levels.ADMIN, assertIs<Inbound.Chat>(again[1]).level)
+    }
+
+    /** Only someone the roster holds can be promoted in it. */
+    @Test
+    fun aModeratorNotInTheRosterIsNotAnnounced() {
+        val chat = asAlice().read("""{"cmd":"chat","nick":"carol","text":"hi","mod":true,"time":4}""")
+        assertEquals(Levels.MODERATOR, assertIs<Inbound.Chat>(chat.single()).level)
+    }
+
+    /** A chat with no nick has no one to attribute it to, and is left as it came. */
+    @Test
+    fun aNamelessChatPassesThrough() {
+        val frame = FrameCodec.decode("""{"cmd":"chat","text":"system says","time":4}""")
+        assertEquals(listOf(frame), asAlice().adapt(frame))
+    }
+
+    /** An `emote` frame that comes without a userid gains one, as a chat does. */
+    @Test
+    fun anEmoteFrameGainsTheSendersId() {
+        val emote = assertIs<Inbound.Emote>(asAlice().one("""{"cmd":"emote","nick":"bob","text":"@bob waves","time":5}"""))
+        assertEquals(LegacyAdapter.idFor("bob"), emote.userid)
+    }
+
     @Test
     fun infoEmoteBecomesAnEmote() {
         val emote = assertIs<Inbound.Emote>(
@@ -124,6 +155,26 @@ class LegacyAdapterTest {
     }
 
     /**
+     * Anything the adapter cannot read stays the info it was, so the
+     * transcript still shows it rather than losing it.
+     */
+    @Test
+    fun unreadableInfoStaysInfo() {
+        val a = asAlice()
+        val shapes = listOf(
+            // An echo of a whisper in a wording we do not know.
+            """{"cmd":"info","type":"whisper","text":"Whisper sent","time":6}""",
+            // An invite naming no channel.
+            """{"cmd":"info","type":"invite","from":"bob","text":"bob invited you","time":7}""",
+            // Our own invite, in a wording we do not know.
+            """{"cmd":"info","type":"invite","invite":"x1","text":"Invite sent","time":7}""",
+            // Just information.
+            """{"cmd":"info","text":"Users online: bob, alice","time":1}""",
+        )
+        shapes.forEach { assertIs<Inbound.Info>(a.one(it), it) }
+    }
+
+    /**
      * Today's hack.chat to a v1 socket (`_LegacyFunctions.js`): the userids
      * are real, and are the ones to use, not ones derived from the nick.
      */
@@ -151,6 +202,9 @@ class LegacyAdapterTest {
         assertEquals(ErrorId.RATELIMIT, id("You are joining channels too fast. Wait a moment and try again."))
         assertEquals(ErrorId.JOIN_NAME_TAKEN, id("Nickname taken"))
         assertEquals(ErrorId.JOIN_INVALID_NICK, id("Nickname must consist of up to 24 letters, numbers, and underscores"))
+        // Not verbatim from 2.1.91: the other wordings its source uses for the same two.
+        assertEquals(ErrorId.RATELIMIT, id("You are sending too much text. Wait a moment and try again."))
+        assertEquals(ErrorId.JOIN_INVALID_NICK, id("You are not the admin, liar!"))
         assertNull(id("Could not find user in channel"))
     }
 
