@@ -170,13 +170,80 @@ class SessionManagerIgnoreTest {
         sessions.setIgnored("bob", true)
         sessions.setIgnored("carol", true)
         sessions.setIgnored("bob", false)
-        assertEquals(setOf("carol"), sessions.ignored.value)
+        assertEquals(setOf("carol"), sessions.ignored.value.nicks)
+        sessions.stopAll()
+    }
+
+    /** Trips the same way, and apart from the nicks. A blank trip is no trip. */
+    @Test
+    fun ignoringAndUnignoringTripsEditTheList() = runTest {
+        val sessions = manager(FakeTransport(), this)
+        sessions.setIgnored("bob", true)
+        sessions.setTripIgnored("Bb0bTr", true)
+        sessions.setTripIgnored("Cc4rol", true)
+        sessions.setTripIgnored(" ", true)
+        sessions.setTripIgnored("Cc4rol", false)
+        assertEquals(IgnoreList(nicks = setOf("bob"), trips = setOf("Bb0bTr")), sessions.ignored.value)
+        sessions.stopAll()
+    }
+
+    /**
+     * An ignored trip follows whoever holds it, under any nick: here bob,
+     * renamed, says the same things and none of them alert or count.
+     */
+    @Test
+    fun anIgnoredTripIsQuietUnderAnyNick() = runTest {
+        val transport = FakeTransport().apply {
+            onSend = { raw ->
+                when (cmdOf(raw)) {
+                    "session" -> serverSends("""{"cmd":"session","restored":false,"token":"","channels":[]}""")
+                    "join" -> serverSends(
+                        """{"cmd":"onlineSet","users":[""" +
+                            """{"isme":true,"nick":"alice","userid":99},""" +
+                            """{"isme":false,"nick":"bobby","userid":7,"trip":"Bb0bTr"}""" +
+                            """],"channel":"testroom"}"""
+                    )
+                }
+            }
+        }
+        val sessions = manager(transport, this)
+        val seen = mutableListOf<Alert>()
+        val collector = launch { sessions.alerts.collect { seen += it } }
+        sessions.activeChannel = key("elsewhere")
+        sessions.join(key("testroom"), Credentials("alice"))
+        advanceUntilIdle()
+
+        sessions.setTripIgnored("Bb0bTr", true)
+        transport.connections[0].serverSends(
+            """{"cmd":"chat","nick":"bobby","userid":7,"trip":"Bb0bTr","channel":"testroom","text":"hey @alice"}"""
+        )
+        transport.connections[0].serverSends(
+            """{"cmd":"emote","nick":"bobby","userid":7,"trip":"Bb0bTr","channel":"testroom","text":"@bobby pokes @alice"}"""
+        )
+        transport.connections[0].serverSends(
+            """{"cmd":"whisper","channel":"testroom","from":7,"to":99,"trip":"Bb0bTr","text":"psst"}"""
+        )
+        // An invite frame carries no trip; it is read off the roster.
+        transport.connections[0].serverSends(
+            """{"cmd":"invite","channel":"testroom","from":7,"to":99,"inviteChannel":"p7rl8pem"}"""
+        )
+        advanceUntilIdle()
+
+        val ui = sessions.channels.value.getValue(key("testroom"))
+        assertEquals(emptyList(), seen, "an ignored trip alerted")
+        assertEquals(0, ui.unread, "an ignored trip marked the tab unread")
+        assertEquals(
+            listOf("Bb0bTr", "Bb0bTr", "Bb0bTr"),
+            ui.messages.filter { it.nick == "bobby" }.map { it.trip },
+            "the trip must be kept on what they said, emotes included, for the transcript to hide it by",
+        )
+        collector.cancel()
         sessions.stopAll()
     }
 
     @Test
     fun hidesWhatTheySayNotThatTheyCameOrWent() {
-        val ignored = setOf("bob")
+        val ignored = IgnoreList(nicks = setOf("bob"))
         fun msg(kind: MessageKind, nick: String = "bob", mine: Boolean = false) =
             chat.hc.core.store.ChatMessage(0, kind, nick, isMine = mine)
 
@@ -191,6 +258,24 @@ class SessionManagerIgnoreTest {
         assertTrue(!Ignore.hides(msg(MessageKind.Chat, nick = "carol"), ignored))
         // Our own message is never hidden from us, even under an ignored nick.
         assertTrue(!Ignore.hides(msg(MessageKind.Chat, mine = true), ignored))
-        assertTrue(!Ignore.hides(msg(MessageKind.Chat), emptySet()))
+        assertTrue(!Ignore.hides(msg(MessageKind.Chat), IgnoreList()))
+    }
+
+    @Test
+    fun aTripHidesWhoeverHoldsIt() {
+        val ignored = IgnoreList(trips = setOf("Bb0bTr"))
+        fun msg(nick: String, trip: String?, kind: MessageKind = MessageKind.Chat, mine: Boolean = false) =
+            chat.hc.core.store.ChatMessage(0, kind, nick, trip = trip, isMine = mine)
+
+        assertTrue(Ignore.hides(msg("bob", "Bb0bTr"), ignored))
+        assertTrue(Ignore.hides(msg("anyone", "Bb0bTr", MessageKind.Emote), ignored))
+        assertTrue(Ignore.hides(msg("anyone", "Bb0bTr", MessageKind.Whisper), ignored))
+        // Same nick, another trip or none: not them.
+        assertTrue(!Ignore.hides(msg("bob", "Xx0ther"), ignored))
+        assertTrue(!Ignore.hides(msg("bob", null), ignored))
+        assertTrue(!Ignore.hides(msg("anyone", "Bb0bTr", MessageKind.Join), ignored))
+        assertTrue(!Ignore.hides(msg("me", "Bb0bTr", mine = true), ignored))
+        // A blank trip never matches, even if one got into the list.
+        assertTrue(!Ignore.hides(msg("anyone", ""), IgnoreList(trips = setOf(""))))
     }
 }

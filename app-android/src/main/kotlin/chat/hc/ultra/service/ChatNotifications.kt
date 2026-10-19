@@ -15,6 +15,7 @@ import chat.hc.core.session.ChannelKey
 import chat.hc.core.session.ChannelUi
 import chat.hc.core.session.Challenge
 import chat.hc.core.session.Ignore
+import chat.hc.core.session.IgnoreList
 import chat.hc.core.session.Servers
 import chat.hc.core.session.SessionState
 import chat.hc.core.store.MessageKind
@@ -111,7 +112,7 @@ class ChatNotifications(private val context: Context) {
         manager.deleteNotificationChannel(CHANNEL_LEGACY_MESSAGES)
     }
 
-    fun build(channels: Map<ChannelKey, ChannelUi>, ignored: Set<String> = emptySet()): Notification {
+    fun build(channels: Map<ChannelKey, ChannelUi>, ignored: IgnoreList = IgnoreList()): Notification {
         severalServers = channels.keys.mapTo(HashSet()) { it.server }.size > 1
         val connected = channels.values.count { it.state is SessionState.Live }
         val unread = channels.values.sumOf { it.unread }
@@ -198,7 +199,7 @@ class ChatNotifications(private val context: Context) {
         return builder.build()
     }
 
-    fun update(channels: Map<ChannelKey, ChannelUi>, ignored: Set<String> = emptySet()) {
+    fun update(channels: Map<ChannelKey, ChannelUi>, ignored: IgnoreList = IgnoreList()) {
         manager.notify(ONGOING_ID, build(channels, ignored))
     }
 
@@ -345,7 +346,7 @@ class ChatNotifications(private val context: Context) {
      * channel is named only when more than one is open, since prefixing every
      * line with the only channel there is wastes the width on a phone.
      */
-    private fun recentLines(channels: Map<ChannelKey, ChannelUi>, ignored: Set<String>): List<String> {
+    private fun recentLines(channels: Map<ChannelKey, ChannelUi>, ignored: IgnoreList): List<String> {
         val labelled = channels.size > 1
         return channels.values
             .flatMap { ui -> ui.messages.map { ui.key to it } }

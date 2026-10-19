@@ -12,6 +12,7 @@ import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
 import chat.hc.core.session.Dialect
+import chat.hc.core.session.IgnoreMode
 import chat.hc.core.session.Servers
 import chat.hc.core.store.HistoryLimit
 import chat.hc.ultra.data.ImageSources
@@ -229,6 +230,19 @@ class ThemePrefs(context: Context) {
         get() = prefs.getBoolean(KEY_JOIN_LEAVE, true)
         set(value) = prefs.edit().putBoolean(KEY_JOIN_LEAVE, value).apply()
 
+    /** What the transcript does with an ignored sender's lines. */
+    var ignoreMode: IgnoreMode
+        get() = IgnoreMode.from(prefs.getString(KEY_IGNORE_MODE, null))
+        set(value) = prefs.edit().putString(KEY_IGNORE_MODE, value.name).apply()
+
+    /**
+     * What [IgnoreMode.Fun] puts in place of their lines. Blank reads as the
+     * default, so clearing the field is how to get it back.
+     */
+    var ignoreFunText: String
+        get() = prefs.getString(KEY_IGNORE_TEXT, null)?.takeIf(String::isNotBlank) ?: IgnoreMode.DEFAULT_FUN_TEXT
+        set(value) = prefs.edit().putString(KEY_IGNORE_TEXT, value).apply()
+
     /**
      * How many lines each channel keeps. Any positive number; the renderer
      * draws only a window of it, so a large one costs memory, not speed.
@@ -267,6 +281,8 @@ class ThemePrefs(context: Context) {
         const val KEY_EXTRA_IMAGES = "extra_image_sources"
         const val KEY_JOIN_LEAVE = "join_leave"
         const val KEY_FONT_SCALE = "font_scale"
+        const val KEY_IGNORE_MODE = "ignore_mode"
+        const val KEY_IGNORE_TEXT = "ignore_fun_text"
         const val KEY_HISTORY_LINES = "history_lines"
         const val KEY_HISTORY_DAYS = "history_days"
     }

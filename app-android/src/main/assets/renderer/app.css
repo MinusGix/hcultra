@@ -318,6 +318,29 @@ body { font-size: 1rem; }
   box-sizing: border-box;
 }
 
+/*
+ * An ignored sender's line, masked until tapped. The bar is the text's own
+ * colour behind invisible letters, so it reads on all 44 schemes; the
+ * letters are only x's anyway, there for the shape. The replacement line is
+ * in the generic cursive face, which every platform has one of, so it looks
+ * like nothing else in the transcript.
+ */
+.message.veiled { cursor: pointer; }
+.veil-bar {
+  /* `currentColor` is the text colour only while `color` is left alone, so
+     the letters are hidden with the fill instead. */
+  background: currentColor;
+  -webkit-text-fill-color: transparent;
+  border-radius: 3px;
+  white-space: pre-wrap;
+  opacity: 0.85;
+}
+.veil-fun {
+  font-family: "Comic Sans MS", "Comic Neue", cursive;
+  font-size: 1.1em;
+  font-style: italic;
+}
+
 .kind-info .text, .kind-join .text, .kind-leave .text { font-size: 0.93em; }
 .kind-join .text::before { content: "→ "; }
 .kind-leave .text::before { content: "← "; }

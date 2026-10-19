@@ -1,5 +1,6 @@
 package chat.hc.core.render
 
+import chat.hc.core.session.IgnoreMode
 import chat.hc.core.store.ChatMessage
 import chat.hc.core.store.Delivery
 import chat.hc.core.store.MessageKind
@@ -134,6 +135,29 @@ class RendererBridgeTest {
         val (allow, extra) = call.arguments("HC.setAllowImages")
         assertTrue(allow.jsonPrimitive.boolean)
         assertEquals(listOf("https://a.example/", """x"]);evil(""""), extra.jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    /** A veiled row says so; every other row says it is not. */
+    @Test
+    fun rowsCarryWhetherTheyAreVeiled() {
+        val rows = apply("c", listOf(msg(), msg().copy(veiled = true))).patch().getValue("append").jsonArray
+        assertEquals(listOf(false, true), rows.map { it.jsonObject.getValue("veiled").jsonPrimitive.boolean })
+    }
+
+    /** The replacement line is the user's, but goes as a string all the same. */
+    @Test
+    fun theIgnoreModeAndItsTextAreQuoted() {
+        val text = """"); evil("""
+        val (mode, sent) = RendererBridge.ignoreModeCall(IgnoreMode.Fun, text).arguments("HC.setIgnoreMode")
+        assertEquals("Fun", mode.jsonPrimitive.content)
+        assertEquals(text, sent.jsonPrimitive.content)
+    }
+
+    @Test
+    fun anUnknownSavedIgnoreModeIsTheDefault() {
+        assertEquals(IgnoreMode.Hide, IgnoreMode.from("Explode"))
+        assertEquals(IgnoreMode.Hide, IgnoreMode.from(null))
+        IgnoreMode.entries.forEach { assertEquals(it, IgnoreMode.from(it.name)) }
     }
 
     @Test

@@ -48,6 +48,7 @@ import chat.hc.ultra.data.TranslateResult
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.RendererBridge
 import chat.hc.core.render.TranscriptSync
+import chat.hc.core.session.IgnoreMode
 import chat.hc.core.store.ChatMessage
 import chat.hc.core.store.MessageKind
 import org.json.JSONObject
@@ -252,6 +253,7 @@ private class RendererState {
     var appliedImages: String? = null
     var appliedFontScale: String? = null
     var appliedTranslate: String? = null
+    var appliedIgnoreMode: String? = null
 
     /**
      * Read by the request gate, which outlives any single recomposition — the
@@ -349,6 +351,10 @@ fun MessageWebView(
     fontScale: Float,
     /** Whether a tapped message offers Translate; see [chat.hc.ultra.data.TranslatePrefs]. */
     translate: Boolean,
+    /** How rows marked [ChatMessage.veiled] are drawn. */
+    ignoreMode: IgnoreMode = IgnoreMode.DEFAULT,
+    /** What [IgnoreMode.Fun] draws in their place. */
+    ignoreFunText: String = IgnoreMode.DEFAULT_FUN_TEXT,
     modifier: Modifier = Modifier,
     callbacks: RendererCallbacks = RendererCallbacks(),
 ) {
@@ -392,6 +398,7 @@ fun MessageWebView(
                                 state.appliedLayout?.let { evaluateJavascript(it, null) }
                                 state.appliedFontScale?.let { evaluateJavascript(it, null) }
                                 state.appliedTranslate?.let { evaluateJavascript(it, null) }
+                                state.appliedIgnoreMode?.let { evaluateJavascript(it, null) }
                                 // Before the messages: the page drops every
                                 // container when this changes, and there is nothing
                                 // to drop yet.
@@ -455,6 +462,13 @@ fun MessageWebView(
                 if (state.appliedTranslate != translateCall) {
                     state.appliedTranslate = translateCall
                     if (state.ready) webView.evaluateJavascript(translateCall, null)
+                }
+                // The page redraws the veiled rows it holds when this changes;
+                // which rows are veiled is the messages' business, below.
+                val ignoreCall = RendererBridge.ignoreModeCall(ignoreMode, ignoreFunText)
+                if (state.appliedIgnoreMode != ignoreCall) {
+                    state.appliedIgnoreMode = ignoreCall
+                    if (state.ready) webView.evaluateJavascript(ignoreCall, null)
                 }
                 val imagesCall = RendererBridge.allowImagesCall(allowImages, extraImageSources)
                 if (state.appliedImages != imagesCall) {

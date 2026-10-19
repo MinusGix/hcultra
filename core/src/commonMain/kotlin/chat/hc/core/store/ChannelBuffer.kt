@@ -47,6 +47,15 @@ data class ChatMessage(
     val serverId: Long? = null,
     val isMine: Boolean = false,
     val delivery: Delivery = Delivery.Sent,
+    /**
+     * Drawn masked, because its sender is ignored and the transcript is set to
+     * black their lines out or replace them rather than hide them.
+     *
+     * Never set by the buffer: the view sets it on the copy it hands the
+     * renderer. It lives on the message so that ignoring or unignoring someone
+     * reads as a change to their rows, which is what the render diff goes by.
+     */
+    val veiled: Boolean = false,
 )
 
 /**

@@ -152,30 +152,37 @@ class SessionManager(
     )
     val alerts: SharedFlow<Alert> = _alerts.asSharedFlow()
 
-    private val _ignored = MutableStateFlow<Set<String>>(emptySet())
+    private val _ignored = MutableStateFlow(IgnoreList())
 
     /**
-     * Nicks whose messages the user has asked not to hear about.
+     * Nicks and trips whose messages the user has asked not to hear about.
      *
      * Across every server, since the same people are on more than one and
      * the list is something the user decided about them, not about a room.
      * By nick, as the site's own ignore is: a userid is per connection, so
-     * keying on one would let anyone back in by reconnecting. Held here rather
-     * than in the UI because this is what decides unread counts and [alerts],
-     * and the service outlives every Activity; it lasts as long as the
-     * manager, which is roughly as long as the site's lasts in a tab.
+     * keying on one would let anyone back in by reconnecting. By trip as well,
+     * since a nick can be changed and a trip cannot without the password.
+     * Held here rather than in the UI because this is what decides unread
+     * counts and [alerts], and the service outlives every Activity; it lasts
+     * as long as the manager, which is roughly as long as the site's lasts in
+     * a tab.
      *
      * Their messages are still buffered. Hiding them is the renderer's job, so
      * that stopping ignoring someone shows what they said in the meantime; what
      * is decided here is only that none of it marks a tab unread or alerts.
      */
-    val ignored: StateFlow<Set<String>> = _ignored.asStateFlow()
+    val ignored: StateFlow<IgnoreList> = _ignored.asStateFlow()
 
     fun setIgnored(nick: String, ignore: Boolean) {
-        _ignored.update { if (ignore) it + nick else it - nick }
+        _ignored.update { it.copy(nicks = if (ignore) it.nicks + nick else it.nicks - nick) }
     }
 
-    private fun isIgnored(nick: String) = nick in _ignored.value
+    fun setTripIgnored(trip: String, ignore: Boolean) {
+        if (trip.isBlank()) return
+        _ignored.update { it.copy(trips = if (ignore) it.trips + trip else it.trips - trip) }
+    }
+
+    private fun isIgnored(nick: String, trip: String?) = _ignored.value.matches(nick, trip)
 
     /** Channel the UI is currently showing; its messages never count as unread. */
     var activeChannel: ChannelKey? = null
@@ -461,7 +468,7 @@ class SessionManager(
         when (event) {
             is SessionEvent.Message -> {
                 val msg = buffer.applyChat(event.frame, session.userid, receivedAt = now())
-                if (!msg.isMine && !isIgnored(msg.nick)) {
+                if (!msg.isMine && !isIgnored(msg.nick, msg.trip)) {
                     if (channel != activeChannel) {
                         mutate(channel) { it.copy(unread = it.unread + 1) }
                     }
@@ -480,10 +487,11 @@ class SessionManager(
                 buffer.add(
                     ChatMessage(
                         0, MessageKind.Emote, event.frame.nick, event.frame.userid,
+                        trip = event.frame.trip,
                         text = event.frame.text, at = event.frame.time ?: now(), isMine = mine,
                     )
                 )
-                if (!mine && !isIgnored(event.frame.nick)) {
+                if (!mine && !isIgnored(event.frame.nick, event.frame.trip)) {
                     if (channel != activeChannel) {
                         mutate(channel) { it.copy(unread = it.unread + 1) }
                     }
@@ -516,7 +524,7 @@ class SessionManager(
                     )
                 )
                 // Our own outgoing whisper must not mark the channel unread.
-                if (!who.outgoing && !isIgnored(who.nick)) {
+                if (!who.outgoing && !isIgnored(who.nick, event.frame.trip)) {
                     if (channel != activeChannel) {
                         mutate(channel) { ui -> ui.copy(unread = ui.unread + 1) }
                     }
@@ -627,6 +635,9 @@ class SessionManager(
                     lookupNick = { id -> session.roster.firstOrNull { it.userid == id }?.nick },
                 )
                 val at = event.frame.time ?: now()
+                // The frame carries no trip, so it is read off the roster the
+                // same way the nick is, for an ignore that went by trip.
+                val inviterTrip = session.roster.firstOrNull { it.userid == event.frame.from }?.trip
 
                 // Info, which is the kind the site uses for this: a v1 socket
                 // is sent the same event *as* an `info` frame, so rendering it
@@ -646,7 +657,7 @@ class SessionManager(
                 // inviter's line is still kept: it is an info line with no
                 // nick of its own, so nothing could hide it and then show it
                 // again, and dropping it outright would be unrecoverable.
-                if (!who.outgoing && !isIgnored(who.nick)) {
+                if (!who.outgoing && !isIgnored(who.nick, inviterTrip)) {
                     if (channel != activeChannel) {
                         mutate(channel) { ui -> ui.copy(unread = ui.unread + 1) }
                     }

@@ -254,6 +254,11 @@
    * scheme stylesheets style this renderer without modification.
    */
   function fill(row, m) {
+    // Unignoring someone gives their rows back whole; ignoring them again
+    // masks them again, rather than remembering an old tap.
+    if (!m.veiled) row._hcRevealed = false;
+    var veil = m.veiled && !row._hcRevealed ? ignoreMode : null;
+
     var cls = ['message'];
     if (m.isMine) cls.push('me');
     if (m.level >= 9999999) cls.push('admin');
@@ -261,6 +266,7 @@
     if (m.kind === 'Info' || m.kind === 'Join' || m.kind === 'Leave') cls.push('info');
     if (m.kind === 'Warning') cls.push('warn');
     cls.push('kind-' + String(m.kind).toLowerCase());
+    if (veil) cls.push('veiled', 'veiled-' + veil.toLowerCase());
     // A bot streaming into the row you selected must not unselect it.
     if (row === selected) cls.push('selected');
     row.className = cls.join(' ');
@@ -302,7 +308,8 @@
     } else if (m.kind === 'Emote') {
       // The name is in the text ("@nick waves"), but the text is selectable
       // and this is not, so the star is what stands for them here.
-      head = '<span class="nick"' + nickAttr(m) + '>*</span>';
+      // Masked, the text is no longer there to say who, so the head does.
+      head = '<span class="nick"' + nickAttr(m) + '>*' + (veil ? ' ' + esc(m.nick) : '') + '</span>';
     } else if (m.kind === 'Whisper') {
       // Incoming: who it came from.
       head = '<span class="wtag">whisper from</span> <span class="nick"' + nickAttr(m) + '>' +
@@ -342,6 +349,8 @@
     if (m.kind === 'Join' || m.kind === 'Leave') {
       body = '<span' + nickAttr(m) + '>' + esc(m.nick) + '</span>' +
         (m.kind === 'Join' ? ' joined' : ' left');
+    } else if (veil) {
+      body = veilBody(m, veil);
     } else {
       body = renderBody(m.text);
     }
@@ -357,7 +366,9 @@
     // has lost its backticks or asterisks to markdown is not the same command.
     // Refilled with the row, so a message a bot is still streaming copies as
     // far as it has got.
-    row._hcText = (m.kind === 'Join' || m.kind === 'Leave') ? '' : String(m.text || '');
+    // Nothing while masked: a tap there is for showing it, and copying or
+    // translating what you have chosen not to read would be reading it.
+    row._hcText = (m.kind === 'Join' || m.kind === 'Leave' || veil) ? '' : String(m.text || '');
     // A translation is of the text it was made from. A bot still streaming
     // into the row has since said more, and a translation of less than the
     // message would pass for all of it, so it goes.
@@ -370,6 +381,34 @@
       if (row._hcText) addActions(row);
       else deselect();
     }
+  }
+
+  /*
+   * An ignored sender's line, when the reader asked to see that they spoke
+   * rather than have it gone (the `Hide` mode never gets here: native leaves
+   * those rows out). `Spoiler` is the text's shape and none of its letters,
+   * blacked out; `Fun` is the reader's own line in place of theirs. Either
+   * way the real text is not in the DOM, so a long-press selection cannot
+   * read it, and a tap puts it there.
+   */
+  var ignoreMode = 'Hide';
+  var ignoreFunText = 'I am dumb';
+  // Enough of the shape to tell a word from a wall of text, and no more.
+  var VEIL_MAX = 400;
+
+  function veilBody(m, veil) {
+    if (veil === 'Fun') return '<span class="veil-fun">' + esc(ignoreFunText) + '</span>';
+    var t = String(m.text || '');
+    if (t.length > VEIL_MAX) t = t.slice(0, VEIL_MAX);
+    return '<span class="veil-bar">' + esc(t.replace(/\S/g, 'x')) + '</span>';
+  }
+
+  function reveal(row) {
+    row._hcRevealed = true;
+    if (row._hcMsg) fill(row, row._hcMsg);
+    var c = channels[current];
+    // The real text is usually longer than its stand-in.
+    if (c && c.pinned) scrollToBottom();
   }
 
   /*
@@ -689,6 +728,11 @@
     }
     if (hasTextSelection()) return;
     var row = e.target.closest('.message');
+    if (row && row.classList.contains('veiled')) {
+      deselect();
+      reveal(row);
+      return;
+    }
     if (row && row !== selected) select(row);
     else deselect();
   });
@@ -856,6 +900,28 @@
       current = null;
       selected = null;
       report();
+    },
+    /*
+     * How an ignored sender's rows are drawn. Redraws the ones held, in every
+     * container, since which mode is in force is not part of the message and
+     * the render diff would otherwise leave them as they were.
+     */
+    setIgnoreMode: function (mode, funText) {
+      mode = String(mode || 'Hide');
+      funText = String(funText == null ? '' : funText);
+      if (mode === ignoreMode && funText === ignoreFunText) return;
+      ignoreMode = mode;
+      ignoreFunText = funText;
+      var c = channels[current];
+      var wasPinned = c ? (c.pinned || atBottom()) : true;
+      for (var name in channels) {
+        var nodes = channels[name].nodes;
+        for (var id in nodes) {
+          var m = nodes[id]._hcMsg;
+          if (m && m.veiled) fill(nodes[id], m);
+        }
+      }
+      if (wasPinned) scrollToBottom();
     },
     setTranslate: function (on) {
       on = !!on;

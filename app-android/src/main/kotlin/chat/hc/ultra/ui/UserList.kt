@@ -62,6 +62,9 @@ fun UserList(
     /** Whether this user's messages are being hidden. */
     isIgnored: (User) -> Boolean = { false },
     onToggleIgnore: (User) -> Unit = {},
+    /** Whether this user's trip is ignored; only asked of a user who has one. */
+    isTripIgnored: (User) -> Boolean = { false },
+    onToggleTripIgnore: (User) -> Unit = {},
 ) {
     var confirming by remember { mutableStateOf<Pair<ModAction, User>?>(null) }
 
@@ -108,6 +111,8 @@ fun UserList(
                     onInvite = { onInvite(user) },
                     ignored = isIgnored(user),
                     onToggleIgnore = { onToggleIgnore(user) },
+                    tripIgnored = isTripIgnored(user),
+                    onToggleTripIgnore = { onToggleTripIgnore(user) },
                     modActions = modActionsFor(user),
                     onModAction = { action ->
                         // Destructive actions confirm; Unmuzzle is trivially
@@ -164,6 +169,8 @@ private fun UserRow(
     onInvite: () -> Unit,
     ignored: Boolean,
     onToggleIgnore: () -> Unit,
+    tripIgnored: Boolean,
+    onToggleTripIgnore: () -> Unit,
     modActions: List<ModAction>,
     onModAction: (ModAction) -> Unit,
 ) {
@@ -263,6 +270,15 @@ private fun UserRow(
                     onToggleIgnore()
                 },
             )
+            user.trip?.takeIf { it.isNotBlank() }?.let { trip ->
+                DropdownMenuItem(
+                    text = { Text(if (tripIgnored) "Stop ignoring trip $trip" else "Ignore trip $trip") },
+                    onClick = {
+                        menuOpen = false
+                        onToggleTripIgnore()
+                    },
+                )
+            }
             // Gated, so usually none of these. Destructive ones still route
             // through the confirm dialog, which is where the target is named —
             // the menu items themselves stay terse.
