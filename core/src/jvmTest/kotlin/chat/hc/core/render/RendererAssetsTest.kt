@@ -22,4 +22,13 @@ class RendererAssetsTest {
             assertTrue(Regex("""\.${layout.cssClass}\b""").containsMatchIn(text), "${layout.cssClass} is not in app.css")
         }
     }
+
+    /** Same failure, for fonts: a key with no rule is a choice that changes nothing. */
+    @Test
+    fun everyFontIsStyled() {
+        val text = css.readText()
+        TranscriptFont.entries.filter { it != TranscriptFont.System }.forEach { font ->
+            assertTrue("""html[data-font="${font.key}"]""" in text, "${font.key} is not in app.css")
+        }
+    }
 }

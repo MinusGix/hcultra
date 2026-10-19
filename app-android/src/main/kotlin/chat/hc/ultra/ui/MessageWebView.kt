@@ -47,6 +47,7 @@ import chat.hc.ultra.data.TranscriptImages
 import chat.hc.ultra.data.TranslateResult
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.RendererBridge
+import chat.hc.core.render.TranscriptFont
 import chat.hc.core.render.TranscriptSync
 import chat.hc.core.session.IgnoreMode
 import chat.hc.core.store.ChatMessage
@@ -252,6 +253,7 @@ private class RendererState {
     var appliedLayout: String? = null
     var appliedImages: String? = null
     var appliedFontScale: String? = null
+    var appliedFont: String? = null
     var appliedTranslate: String? = null
     var appliedIgnoreMode: String? = null
 
@@ -349,6 +351,8 @@ fun MessageWebView(
     extraImageSources: List<String>,
     /** Multiplier on the page's base text size; see [chat.hc.core.render.FontScale]. */
     fontScale: Float,
+    /** The transcript's typeface; see [chat.hc.core.render.TranscriptFont]. */
+    font: TranscriptFont = TranscriptFont.DEFAULT,
     /** Whether a tapped message offers Translate; see [chat.hc.ultra.data.TranslatePrefs]. */
     translate: Boolean,
     /** How rows marked [ChatMessage.veiled] are drawn. */
@@ -397,6 +401,7 @@ fun MessageWebView(
                                 state.appliedTheme?.let { evaluateJavascript(it, null) }
                                 state.appliedLayout?.let { evaluateJavascript(it, null) }
                                 state.appliedFontScale?.let { evaluateJavascript(it, null) }
+                                state.appliedFont?.let { evaluateJavascript(it, null) }
                                 state.appliedTranslate?.let { evaluateJavascript(it, null) }
                                 state.appliedIgnoreMode?.let { evaluateJavascript(it, null) }
                                 // Before the messages: the page drops every
@@ -457,6 +462,11 @@ fun MessageWebView(
                 if (state.appliedFontScale != fontCall) {
                     state.appliedFontScale = fontCall
                     if (state.ready) webView.evaluateJavascript(fontCall, null)
+                }
+                val faceCall = RendererBridge.fontCall(font)
+                if (state.appliedFont != faceCall) {
+                    state.appliedFont = faceCall
+                    if (state.ready) webView.evaluateJavascript(faceCall, null)
                 }
                 val translateCall = RendererBridge.translateCall(translate)
                 if (state.appliedTranslate != translateCall) {

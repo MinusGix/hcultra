@@ -90,6 +90,7 @@ import chat.hc.ultra.data.TranslateResult
 import chat.hc.ultra.data.Translator
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
+import chat.hc.core.render.TranscriptFont
 import chat.hc.core.protocol.User
 import chat.hc.core.session.Challenge
 import chat.hc.core.session.ChannelKey
@@ -109,6 +110,7 @@ import chat.hc.ultra.service.HcService.Companion.channelKey
 import chat.hc.ultra.service.HcService.Companion.putChannel
 import chat.hc.ultra.ui.ChannelTabs
 import chat.hc.ultra.ui.BASE_TEXT_SP
+import chat.hc.ultra.ui.composeFamily
 import chat.hc.ultra.ui.ImageViewer
 import chat.hc.ultra.ui.MessageWebView
 import chat.hc.ultra.ui.NotifyPrefs
@@ -219,6 +221,7 @@ class MainActivity : ComponentActivity() {
             var allowImages by remember { mutableStateOf(themePrefs.allowImages) }
             var extraImageSources by remember { mutableStateOf(themePrefs.extraImageSources) }
             var fontScale by remember { mutableFloatStateOf(themePrefs.fontScale) }
+            var font by remember { mutableStateOf(themePrefs.font) }
             var joinLeave by remember { mutableStateOf(themePrefs.joinLeave) }
             var ignoreMode by remember { mutableStateOf(themePrefs.ignoreMode) }
             var ignoreFunText by remember { mutableStateOf(themePrefs.ignoreFunText) }
@@ -316,6 +319,11 @@ class MainActivity : ComponentActivity() {
                             onFontScaleChanged = {
                                 fontScale = it
                                 themePrefs.fontScale = it
+                            },
+                            font = font,
+                            onFontChanged = {
+                                font = it
+                                themePrefs.font = it
                             },
                             allowImages = allowImages,
                             onAllowImagesChanged = {
@@ -448,6 +456,7 @@ class MainActivity : ComponentActivity() {
                         highlight = highlight,
                         nickLayout = nickLayout,
                         fontScale = fontScale,
+                        font = font,
                         allowImages = allowImages,
                         extraImageSources = extraImageSources,
                         joinLeave = joinLeave,
@@ -693,6 +702,8 @@ private fun AppScreen(
      * what has already been said.
      */
     fontScale: Float,
+    /** The transcript's typeface; the composer follows this too. */
+    font: TranscriptFont,
     /** Embed whitelisted images in the transcript rather than linking them. */
     allowImages: Boolean,
     /** The user's own image sources, as URL prefixes. */
@@ -1047,6 +1058,7 @@ private fun AppScreen(
                     allowImages = allowImages,
                     extraImageSources = extraImageSources,
                     fontScale = fontScale,
+                    font = font,
                     translate = translate,
                     ignoreMode = ignoreMode,
                     ignoreFunText = ignoreFunText,
@@ -1075,6 +1087,7 @@ private fun AppScreen(
                     textStyle = LocalTextStyle.current.copy(
                         fontSize = (BASE_TEXT_SP * fontScale).sp,
                         lineHeight = (BASE_TEXT_SP * fontScale * 1.45f).sp,
+                        fontFamily = font.composeFamily,
                     ),
                     // Five lines of doubled text is most of a phone screen with
                     // the keyboard up — the composer would push the transcript
