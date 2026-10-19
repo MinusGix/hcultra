@@ -32,6 +32,25 @@ html, body {
 
 body { font-size: 1rem; }
 
+/*
+ * The reader's typeface, chosen in settings and written by `HC.setFont` as
+ * `data-font` on <html>. No attribute (or `system`) is the stack above.
+ *
+ * On `body`, under the root's attribute, so a choice outranks a scheme that
+ * sets its own `body` font (waifu does): the reader picked this one on purpose,
+ * the scheme only picked a default. Code keeps its own monospace below either
+ * way, and the fun veil keeps its joke.
+ *
+ * Each stack names a face before its generic family. Android aliases
+ * `sans-serif-condensed` in its own font list, which is what makes it a name
+ * the WebView can find; elsewhere the stack falls through to plain sans.
+ * Naming one ahead of a bare `monospace` also keeps Chrome from shrinking the
+ * text the way it does for that generic on its own.
+ */
+html[data-font="serif"] body { font-family: "Noto Serif", Georgia, serif; }
+html[data-font="mono"] body { font-family: "Roboto Mono", "Droid Sans Mono", ui-monospace, monospace; }
+html[data-font="condensed"] body { font-family: "sans-serif-condensed", "Roboto Condensed", "Arial Narrow", sans-serif; }
+
 /* `em`, like everything else: at 200% the text should not be crowding
    the edge of the screen it was comfortably clear of at 100%. */
 #log { padding: 0.53em 0.66em 1.06em; }

@@ -1,16 +1,19 @@
 package chat.hc.ultra.ui
 
 import android.content.Context
+import android.graphics.Typeface
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.font.FontFamily
 import chat.hc.core.render.FontScale
 import chat.hc.core.render.ImageHosts
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.Scheme
 import chat.hc.core.render.Schemes
+import chat.hc.core.render.TranscriptFont
 import chat.hc.core.session.Dialect
 import chat.hc.core.session.IgnoreMode
 import chat.hc.core.session.Servers
@@ -100,6 +103,23 @@ private fun Color.isLight(): Boolean =
  * does, so the two halves cannot drift apart by a point or two.
  */
 const val BASE_TEXT_SP = 15f
+
+/**
+ * The face Compose draws a [TranscriptFont] in, for the same native text
+ * [BASE_TEXT_SP] is for. Condensed is looked up by the alias the WebView finds
+ * it by, so both halves get the same Roboto Condensed.
+ */
+val TranscriptFont.composeFamily: FontFamily
+    get() = when (this) {
+        TranscriptFont.System -> FontFamily.Default
+        TranscriptFont.Serif -> FontFamily.Serif
+        TranscriptFont.Monospace -> FontFamily.Monospace
+        TranscriptFont.Condensed -> condensedFamily
+    }
+
+private val condensedFamily: FontFamily by lazy {
+    FontFamily(Typeface.create("sans-serif-condensed", Typeface.NORMAL))
+}
 
 /** A server the user joins channels on, and the protocol to speak to it. */
 data class ServerEntry(val url: String, val dialect: Dialect = Dialect.Auto)
@@ -273,6 +293,11 @@ class ThemePrefs(context: Context) {
         get() = FontScale.snap(prefs.getFloat(KEY_FONT_SCALE, FontScale.DEFAULT))
         set(value) = prefs.edit().putFloat(KEY_FONT_SCALE, FontScale.snap(value)).apply()
 
+    /** The transcript's typeface. Stored by name, so a reordered list keeps everyone's choice. */
+    var font: TranscriptFont
+        get() = TranscriptFont.from(prefs.getString(KEY_FONT, null))
+        set(value) = prefs.edit().putString(KEY_FONT, value.name).apply()
+
     private companion object {
         const val KEY_SCHEME = "scheme"
         const val KEY_HIGHLIGHT = "highlight"
@@ -281,6 +306,7 @@ class ThemePrefs(context: Context) {
         const val KEY_EXTRA_IMAGES = "extra_image_sources"
         const val KEY_JOIN_LEAVE = "join_leave"
         const val KEY_FONT_SCALE = "font_scale"
+        const val KEY_FONT = "font_family"
         const val KEY_IGNORE_MODE = "ignore_mode"
         const val KEY_IGNORE_TEXT = "ignore_fun_text"
         const val KEY_HISTORY_LINES = "history_lines"
