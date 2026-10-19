@@ -868,6 +868,19 @@
       document.documentElement.style.fontSize = 'calc(var(--hc-base) * ' + scale + ')';
       if (wasPinned) scrollToBottom();
     },
+    /*
+     * Whether code blocks wrap long lines or scroll them sideways.
+     *
+     * A class on the root element rather than <body>, because setLayout owns
+     * the body's whole className. Wrapping makes blocks taller, so a reader
+     * at the bottom is kept there, as with the text size.
+     */
+    setWrapCode: function (on) {
+      var c = channels[current];
+      var wasPinned = c ? (c.pinned || atBottom()) : true;
+      document.documentElement.classList.toggle('wrap-code', !!on);
+      if (wasPinned) scrollToBottom();
+    },
     setTheme: function (scheme, hljsTheme) {
       if (scheme) setHref('scheme', 'schemes/' + scheme + '.css');
       if (hljsTheme) setHref('hljs-theme', 'vendor/hljs/styles/' + hljsTheme + '.min.css');

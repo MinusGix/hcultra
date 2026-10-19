@@ -22,4 +22,13 @@ class RendererAssetsTest {
             assertTrue(Regex("""\.${layout.cssClass}\b""").containsMatchIn(text), "${layout.cssClass} is not in app.css")
         }
     }
+
+    /** The bridge's wrap call has a page function to land on, and a class that does something. */
+    @Test
+    fun wrapCodeIsWiredThrough() {
+        val js = File(css.parentFile, "app.js").readText()
+        assertTrue("setWrapCode:" in js, "app.js has no HC.setWrapCode")
+        assertTrue("'wrap-code'" in js, "app.js does not set the wrap-code class")
+        assertTrue(Regex("""\.wrap-code\s+pre\b""").containsMatchIn(css.readText()), "wrap-code is not in app.css")
+    }
 }

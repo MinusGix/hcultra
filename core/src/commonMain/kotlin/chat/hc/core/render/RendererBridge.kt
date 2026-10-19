@@ -223,6 +223,9 @@ object RendererBridge {
      */
     fun fontScaleCall(scale: Float): String = "HC.setFontScale(${FontScale.snap(scale)});"
 
+    /** Whether code blocks wrap long lines instead of scrolling sideways. */
+    fun wrapCodeCall(on: Boolean): String = "HC.setWrapCode($on);"
+
     /**
      * Switches how a message's nick and trip sit relative to its text.
      *

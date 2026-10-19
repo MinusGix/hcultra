@@ -96,6 +96,8 @@ fun ThemeSheet(
     /** Transcript text size, as a multiplier; always a rung of [FontScale.STEPS]. */
     fontScale: Float,
     onFontScaleChanged: (Float) -> Unit,
+    wrapCode: Boolean,
+    onWrapCodeChanged: (Boolean) -> Unit,
     allowImages: Boolean,
     onAllowImagesChanged: (Boolean) -> Unit,
     /** The user's own image sources, as canonical URL prefixes. */
@@ -190,6 +192,13 @@ fun ThemeSheet(
                     "list still tracks who is present.",
                 checked = joinLeave,
                 onChanged = onJoinLeaveChanged,
+            )
+            ToggleRow(
+                title = "Wrap code",
+                subtitle = "Long lines in code blocks fold onto the next line. Off, " +
+                    "they stay on one line and the block scrolls sideways.",
+                checked = wrapCode,
+                onChanged = onWrapCodeChanged,
             )
             IgnoreSetting(ignoreMode, onIgnoreModeChanged, ignoreFunText, onIgnoreFunTextChanged)
             HistorySetting(historyLines, historyDays, onHistoryChanged)

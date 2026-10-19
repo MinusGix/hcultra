@@ -273,6 +273,15 @@ class ThemePrefs(context: Context) {
         get() = FontScale.snap(prefs.getFloat(KEY_FONT_SCALE, FontScale.DEFAULT))
         set(value) = prefs.edit().putFloat(KEY_FONT_SCALE, FontScale.snap(value)).apply()
 
+    /**
+     * Whether code blocks wrap long lines rather than scrolling sideways. On by
+     * default: on a phone, a sideways scroll inside a vertically scrolling
+     * transcript is the harder of the two to read.
+     */
+    var wrapCode: Boolean
+        get() = prefs.getBoolean(KEY_WRAP_CODE, true)
+        set(value) = prefs.edit().putBoolean(KEY_WRAP_CODE, value).apply()
+
     private companion object {
         const val KEY_SCHEME = "scheme"
         const val KEY_HIGHLIGHT = "highlight"
@@ -281,6 +290,7 @@ class ThemePrefs(context: Context) {
         const val KEY_EXTRA_IMAGES = "extra_image_sources"
         const val KEY_JOIN_LEAVE = "join_leave"
         const val KEY_FONT_SCALE = "font_scale"
+        const val KEY_WRAP_CODE = "wrap_code"
         const val KEY_IGNORE_MODE = "ignore_mode"
         const val KEY_IGNORE_TEXT = "ignore_fun_text"
         const val KEY_HISTORY_LINES = "history_lines"

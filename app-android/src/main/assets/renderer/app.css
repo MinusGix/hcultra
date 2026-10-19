@@ -410,6 +410,9 @@ pre {
   overflow-x: auto;
 }
 pre code { background: none; padding: 0; }
+/* The wrap-code setting: long lines fold instead of scrolling. Indentation
+   and line breaks survive; only the overflow moves down a line. */
+.wrap-code pre { white-space: pre-wrap; }
 
 .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
 
