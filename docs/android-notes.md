@@ -390,9 +390,31 @@ it at all, rather than trusting the untrusted page's word that the tap was on a
 whitelisted image. The gestures are in `viewer.js`, not WebView zoom, which
 double-tap-snaps to text columns and stops dead at the image's edge.
 
-Copy, save and share fetch the image again, natively and only on request
-(`data/ViewerImages.kt`): the WebView's cache is not readable by the app. The
-fetch keeps the WebView's rules — https, `ImageSources`, and redirects followed
+The WebView does not fetch images itself. The gate hands an allowed request
+to `data/TranscriptImages.kt`, which fetches it natively (`data/ImageFetch.kt`,
+with the WebView's user agent) and keeps it on disk, in
+`cache/transcript-images/`, for as long as some message in some open channel
+still embeds that URL — `ImageRefs` in core reads them off the markdown, and
+the service sweeps once a minute — within 512 MB or a tenth of free space,
+least recently used first. On disk because a heap-sized budget held a few
+dozen phone photos. The directory is wiped when the process starts, since the
+history those files belonged to is memory only. Leaving it to
+the HTTP cache broke scrolling back: the transcript is a window (see
+`TranscriptSync`), so rows cut away and drawn again ask for their images
+again, and hosts whose links expire (the group's own host after 24 hours,
+Discord's signed URLs) or a flaky connection then left them broken. Fetches
+that fail for want of a network, or with 408/429/5xx, are retried twice before
+the page sees an error; failures are never kept. Turning images off, or the
+service ending, empties the store (checked: a file planted there before launch
+was gone at start, and closing the channel left the directory empty). Checked on the emulator with
+`DEBUG_SEED`, which now includes `i.ytimg.com` pictures: each URL was fetched
+once, rows drawn again after a jump to the bottom were served from the store,
+and lowering the line limit so that one picture's last message went dropped
+it at the next sweep.
+
+Copy, save and share write the picture to a file, only on request
+(`data/ViewerImages.kt`), from `TranscriptImages` when it holds it and from
+the network otherwise. The fetch keeps the WebView's rules — https, `ImageSources`, and redirects followed
 by hand so each hop is re-checked, since `HttpURLConnection` would otherwise
 follow a whitelisted host's redirect anywhere. The copy lands in
 `cache/images/` (pruned after a day) and reaches the clipboard and share sheet

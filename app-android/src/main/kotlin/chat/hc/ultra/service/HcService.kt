@@ -6,12 +6,14 @@ import android.os.Binder
 import android.os.IBinder
 import android.util.Log
 import chat.hc.core.net.ManagedTransport
+import chat.hc.core.render.ImageRefs
 import chat.hc.core.session.ChannelKey
 import chat.hc.core.session.Credentials
 import chat.hc.core.session.ModAction
 import chat.hc.core.session.SessionManager
 import chat.hc.ultra.data.KeystoreTokenStore
 import chat.hc.ultra.data.MotdPrefs
+import chat.hc.ultra.data.TranscriptImages
 import chat.hc.ultra.ui.NotifyPrefs
 import chat.hc.ultra.ui.ServerPrefs
 import chat.hc.ultra.ui.ThemePrefs
@@ -133,6 +135,18 @@ class HcService : Service() {
             }
         }
 
+        // Pictures no message shows any more: scrolled off the end of the
+        // history, or their channel closed. Read off the whole history, not the
+        // drawn window — scrolling back up is exactly when they are wanted.
+        scope.launch {
+            while (true) {
+                delay(IMAGE_SWEEP_MILLIS)
+                val since = System.nanoTime()
+                val live = sessions.channels.value.values.flatMapTo(HashSet()) { ImageRefs.of(it.messages) }
+                TranscriptImages.retain(live, since)
+            }
+        }
+
         // Mentions and whispers, the two things said *to* the user rather than
         // near them. Preferences are read per alert rather than cached: they
         // change from the settings sheet in another process component, and a
@@ -245,6 +259,8 @@ class HcService : Service() {
         // The sockets are going with us, so a "reply" action on any surviving
         // alert would silently do nothing.
         notifications.clearAllAlerts()
+        // And the history with them, so every picture it showed.
+        TranscriptImages.clear()
         scope.launch { sessions.stopAll() }
         net.close()
         scope.cancel()
@@ -264,6 +280,7 @@ class HcService : Service() {
         const val ACTION_ANSWER = "chat.hc.ultra.ANSWER"
 
         private const val HISTORY_SWEEP_MILLIS = 5 * 60 * 1000L
+        private const val IMAGE_SWEEP_MILLIS = 60 * 1000L
 
         /** Puts [key] on an intent, as [channelKey] reads it back. */
         fun Intent.putChannel(key: ChannelKey): Intent =

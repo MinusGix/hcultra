@@ -41,7 +41,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import chat.hc.ultra.data.ImageFetch
 import chat.hc.ultra.data.ImageSources
+import chat.hc.ultra.data.TranscriptImages
 import chat.hc.ultra.data.TranslateResult
 import chat.hc.core.render.NickLayout
 import chat.hc.core.render.RendererBridge
@@ -265,7 +267,8 @@ private class RendererState {
  * hack.chat embeds from, or from a source the user added ([ImageSources]).
  *
  * Shared by the transcript and the image viewer. [page] is the one document the
- * WebView is allowed to be showing.
+ * WebView is allowed to be showing. An allowed image is fetched natively and
+ * kept, by [TranscriptImages], rather than by the WebView.
  *
  * The JavaScript checks the same list before writing an `<img>` at all, so in
  * ordinary use nothing reaches here that this would refuse. It is the gate
@@ -285,7 +288,7 @@ internal class AssetsAndImagesOnly(
     ): WebResourceResponse? {
         val url = request.url.toString()
         if (url.startsWith(ASSET_PREFIX)) return null
-        if (allowImages() && ImageSources.allows(url)) return null
+        if (allowImages() && ImageSources.allows(url)) return TranscriptImages.serve(url)
         // A response with no body: the load fails, nothing else does.
         return WebResourceResponse("text/plain", "utf-8", null)
     }
@@ -311,11 +314,11 @@ internal class AssetsAndImagesOnly(
  * cleared first on the way up, and the blanket flag set first on the way down —
  * neither direction leaves a gap.
  *
- * The cache follows the same switch. Bundled assets are unaffected either way
- * (they come off disk), but an image wants caching: refetching the same picture
- * on every rotation costs the user data and tells its host each time.
+ * The cache follows the same switch, though images no longer go through it
+ * ([TranscriptImages] holds them); turning images off empties that too.
  */
 internal fun WebView.applyNetworkPolicy(allowImages: Boolean) {
+    if (!allowImages) TranscriptImages.clear()
     settings.apply {
         if (allowImages) {
             blockNetworkImage = false
@@ -375,6 +378,8 @@ fun MessageWebView(
                         // fetch announcing what you are reading.
                         mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                     }
+                    // What the hosts saw when the WebView fetched for itself.
+                    ImageFetch.userAgent = settings.userAgentString
                     webViewClient = AssetsAndImagesOnly("index.html") { state.allowImages }
                     applyNetworkPolicy(allowImages)
                     addJavascriptInterface(

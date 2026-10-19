@@ -73,10 +73,10 @@ import org.json.JSONObject
  * browser really is what you want.
  *
  * The image is shown by a WebView rather than decoded natively. That is what
- * the transcript already fetched it with, so it comes out of the same HTTP cache
- * rather than over the network a second time, animated GIFs play without a
- * decoder of our own, and the fetch goes through the same [AssetsAndImagesOnly]
- * gate — the viewer can reach exactly what the transcript could, and nothing
+ * the transcript already showed it with, so it comes out of the same
+ * [chat.hc.ultra.data.TranscriptImages] rather than over the network a second
+ * time, animated GIFs play without a decoder of our own, and the fetch goes
+ * through the same [AssetsAndImagesOnly] gate — the viewer can reach exactly what the transcript could, and nothing
  * more. The gestures live in `assets/renderer/viewer.js`.
  */
 @SuppressLint("SetJavaScriptEnabled")

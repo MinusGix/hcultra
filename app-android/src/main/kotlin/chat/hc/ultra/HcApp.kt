@@ -1,6 +1,7 @@
 package chat.hc.ultra
 
 import android.app.Application
+import chat.hc.ultra.data.TranscriptImages
 import chat.hc.ultra.service.ChatNotifications
 
 class HcApp : Application() {
@@ -18,5 +19,8 @@ class HcApp : Application() {
     override fun onCreate() {
         super.onCreate()
         ChatNotifications(this).ensureChannel()
+        // Empties what a previous process left: the chat those pictures came
+        // from is gone with it.
+        TranscriptImages.init(this)
     }
 }

@@ -11,8 +11,6 @@ import androidx.core.content.FileProvider
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -24,20 +22,15 @@ class ViewerImage(val file: File, val mime: String, val displayName: String)
  * Getting an image the viewer is showing into a form the rest of the phone can
  * take: a file in the cache, exposed through a [FileProvider].
  *
- * The viewer's WebView already has the image, but in a cache the app cannot
- * read — so this fetches it again, and only when asked. Viewing costs nothing
- * extra; copying or saving costs one request, to the host that served the
- * picture in the first place.
+ * Only when asked: viewing costs nothing extra, and copying or saving costs
+ * at most one request, to the host that served the picture in the first place.
  *
- * The fetch keeps the WebView's rules, because it is the same untrusted URL:
- * https only, [ImageSources] only, and every redirect re-checked against both.
- * HttpURLConnection would follow a redirect on its own, and a whitelisted host
- * redirecting elsewhere would otherwise walk straight past the list.
+ * The fetch keeps the WebView's rules, because it is the same untrusted URL —
+ * see [ImageFetch] — and is skipped altogether when [TranscriptImages] still
+ * holds the picture, which it usually does: that is where the viewer got it.
  */
 object ViewerImages {
 
-    private const val MAX_BYTES = 25L * 1024 * 1024
-    private const val MAX_REDIRECTS = 3
     private const val DIR = "images"
     private const val KEEP_MS = 24L * 60 * 60 * 1000
 
@@ -54,39 +47,27 @@ object ViewerImages {
             if (mime != null) return@withContext ViewerImage(held, mime, displayName(url, ext))
         }
 
-        var current = url
-        for (hop in 0..MAX_REDIRECTS) {
-            if (!ImageSources.allows(current)) throw IOException("Not an allowed image host")
-            val conn = (URL(current).openConnection() as HttpURLConnection).apply {
-                instanceFollowRedirects = false
-                connectTimeout = 15_000
-                readTimeout = 30_000
-            }
-            try {
-                val code = conn.responseCode
-                if (code in 300..399) {
-                    val location = conn.getHeaderField("Location") ?: throw IOException("Redirect without a location")
-                    current = URL(URL(current), location).toString()
-                    continue
-                }
-                if (code !in 200..299) throw IOException("HTTP $code")
-
-                val mime = conn.contentType?.substringBefore(';')?.trim()?.lowercase()
-                    ?.takeIf { it.startsWith("image/") }
-                    ?: throw IOException("Not an image")
-                val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "img"
-                val file = File(dir, "$key.$ext")
-                val partial = File(dir, "${file.name}.part")
-                conn.inputStream.use { input ->
-                    partial.outputStream().use { out -> copyCapped(input, out) }
-                }
-                if (!partial.renameTo(file)) throw IOException("Could not store the image")
-                return@withContext ViewerImage(file, mime, displayName(url, ext))
-            } finally {
-                conn.disconnect()
-            }
+        // Most likely already held by the transcript, which is what showed it.
+        TranscriptImages.peek(url)?.let { held ->
+            val mime = held.mime.takeIf { it.startsWith("image/") }
+            if (mime != null) return@withContext store(dir, key, url, mime) { out -> held.file.inputStream().use { it.copyTo(out) } }
         }
-        throw IOException("Too many redirects")
+
+        ImageFetch.get(url) { conn ->
+            val mime = conn.contentType?.substringBefore(';')?.trim()?.lowercase()
+                ?.takeIf { it.startsWith("image/") }
+                ?: throw IOException("Not an image")
+            store(dir, key, url, mime) { out -> conn.inputStream.use { ImageFetch.copyCapped(it, out) } }
+        }
+    }
+
+    private fun store(dir: File, key: String, url: String, mime: String, write: (OutputStream) -> Unit): ViewerImage {
+        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "img"
+        val file = File(dir, "$key.$ext")
+        val partial = File(dir, "${file.name}.part")
+        partial.outputStream().use(write)
+        if (!partial.renameTo(file)) throw IOException("Could not store the image")
+        return ViewerImage(file, mime, displayName(url, ext))
     }
 
     /** A `content://` URI other apps can be granted, for the clipboard or a share. */
@@ -125,18 +106,6 @@ object ViewerImages {
     fun writeTo(context: Context, image: ViewerImage, uri: Uri) {
         val out = context.contentResolver.openOutputStream(uri) ?: throw IOException("Could not open $uri")
         out.use { o -> image.file.inputStream().use { it.copyTo(o) } }
-    }
-
-    private fun copyCapped(input: java.io.InputStream, out: OutputStream) {
-        val buf = ByteArray(64 * 1024)
-        var total = 0L
-        while (true) {
-            val n = input.read(buf)
-            if (n < 0) break
-            total += n
-            if (total > MAX_BYTES) throw IOException("Image is larger than 25 MB")
-            out.write(buf, 0, n)
-        }
     }
 
     /**

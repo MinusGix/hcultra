@@ -80,7 +80,9 @@ internal object DebugTools {
         }
     }
 
-    /** Roughly what a channel looks like: mostly chat, some markdown, code, maths, comings and goings. */
+    private val VIDEOS = listOf("dQw4w9WgXcQ", "jNQXAC9IVRw", "9bZkp7q19f0", "kJQP7kiw5Fk")
+
+    /** Roughly what a channel looks like: mostly chat, some markdown, code, maths, images, comings and goings. */
     private fun sample(at: Long): ChatMessage {
         val i = serial++
         val nick = "user${i % 37}"
@@ -91,6 +93,9 @@ internal object DebugTools {
             in 12..14 -> MessageKind.Leave to ""
             in 15..19 -> MessageKind.Chat to "**bold** and _italic_ and a link https://example.com/$i and ?programming"
             20 -> MessageKind.Emote to "@$nick waves at line $i"
+            // A handful of real pictures, repeated: what scrolling back to an
+            // image already seen looks like (with images turned on).
+            21 -> MessageKind.Chat to "line $i ![thumb](https://i.ytimg.com/vi/${VIDEOS[(i / 100) % VIDEOS.size]}/hqdefault.jpg)"
             else -> MessageKind.Chat to "synthetic line $i — ordinary chat of an ordinary length, for scrolling through"
         }
         return ChatMessage(0, kind, nick = nick, userid = (i % 37).toLong(), text = text, trip = if (i % 3 == 0) "Synth1" else null, at = at)
