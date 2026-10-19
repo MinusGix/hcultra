@@ -21,6 +21,29 @@ if [ ! -d hc/.git ]; then
   git clone -q https://github.com/hack-chat/main hc || log "could not clone hack-chat/main; phantomTest and legacyTest will fail"
 fi
 
+# Maven Central answers the shared cloud egress with HTTP 429 on a cold
+# resolve, and Gradle gives up on those, so read it from Google's mirror. The
+# plugin portal redirects to Maven Central too, so it moves to the back.
+mkdir -p "$HOME/.gradle/init.d"
+cat > "$HOME/.gradle/init.d/maven-central-mirror.gradle.kts" <<'EOF'
+// Written by hcultra's .claude/hooks/session-start.sh; edits are overwritten.
+val mirror = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+fun RepositoryHandler.useMirror() {
+    withType<MavenArtifactRepository>().configureEach {
+        if (url.host == "repo.maven.apache.org") setUrl(mirror)
+    }
+    findByName("Gradle Central Plugin Repository")?.let { remove(it); add(it) }
+}
+settingsEvaluated {
+    pluginManagement.repositories.useMirror()
+    dependencyResolutionManagement.repositories.useMirror()
+}
+allprojects {
+    buildscript.repositories.useMirror()
+    repositories.useMirror()
+}
+EOF
+
 SDK="$HOME/android-sdk"
 if curl -fsS -o /dev/null --max-time 15 https://dl.google.com/android/repository/repository2-3.xml 2>/dev/null; then
   if [ ! -d "$SDK/platforms/android-37.1" ]; then
