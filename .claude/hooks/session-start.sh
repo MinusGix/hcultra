@@ -21,6 +21,16 @@ if [ ! -d hc/.git ]; then
   git clone -q https://github.com/hack-chat/main hc || log "could not clone hack-chat/main; phantomTest and legacyTest will fail"
 fi
 
+# Maven Central answers bursts from the shared cloud egress with HTTP 429, and
+# Gradle gives up on a 429 quickly. Each attempt caches what it got first, so a
+# few tries finish the job.
+warm() {
+  for _ in 1 2 3 4 5; do
+    "$@" --no-daemon -q > /dev/null 2>&1 && return 0
+  done
+  log "could not warm the Gradle cache; the first build may need re-running"
+}
+
 SDK="$HOME/android-sdk"
 if curl -fsS -o /dev/null --max-time 15 https://dl.google.com/android/repository/repository2-3.xml 2>/dev/null; then
   if [ ! -d "$SDK/platforms/android-37.1" ]; then
@@ -39,10 +49,11 @@ if curl -fsS -o /dev/null --max-time 15 https://dl.google.com/android/repository
   fi
   [ -n "${CLAUDE_ENV_FILE:-}" ] && echo "export ANDROID_HOME=\"$SDK\" ANDROID_SDK_ROOT=\"$SDK\"" >> "$CLAUDE_ENV_FILE"
   echo "sdk.dir=$SDK" > local.properties
-  ANDROID_HOME="$SDK" ./gradlew :core:jvmTestClasses --no-daemon -q > /dev/null
-  echo "Full Android build available: ./gradlew build, ./gradlew :core:jvmTest, :core:phantomTest, :core:legacyTest."
+  ANDROID_HOME="$SDK" warm ./gradlew :core:jvmTestClasses
+  echo "Full Android build available: ./gradlew build, ./gradlew :core:jvmTest, :core:phantomTest, :core:legacyTest." \
+       "Maven Central sometimes answers HTTP 429 here; if a build fails on that, run it again."
 else
-  .claude/hooks/jvm-gradle.sh :core:jvmTestClasses --no-daemon -q > /dev/null
+  warm .claude/hooks/jvm-gradle.sh :core:jvmTestClasses
   echo "dl.google.com is blocked here, so the Android build cannot configure. Run core tests with" \
        ".claude/hooks/jvm-gradle.sh :core:jvmTest (also :core:phantomTest, :core:legacyTest);" \
        "reports are under ~/.cache/hcultra-jvm/core/build/."
