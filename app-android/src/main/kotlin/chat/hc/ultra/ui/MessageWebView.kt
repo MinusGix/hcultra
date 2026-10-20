@@ -253,6 +253,7 @@ private class RendererState {
     var appliedLayout: String? = null
     var appliedImages: String? = null
     var appliedFontScale: String? = null
+    var appliedWrapCode: String? = null
     var appliedFont: String? = null
     var appliedTranslate: String? = null
     var appliedIgnoreMode: String? = null
@@ -351,6 +352,8 @@ fun MessageWebView(
     extraImageSources: List<String>,
     /** Multiplier on the page's base text size; see [chat.hc.core.render.FontScale]. */
     fontScale: Float,
+    /** Wrap long lines in code blocks instead of scrolling them sideways. */
+    wrapCode: Boolean,
     /** The transcript's typeface; see [chat.hc.core.render.TranscriptFont]. */
     font: TranscriptFont = TranscriptFont.DEFAULT,
     /** Whether a tapped message offers Translate; see [chat.hc.ultra.data.TranslatePrefs]. */
@@ -401,6 +404,7 @@ fun MessageWebView(
                                 state.appliedTheme?.let { evaluateJavascript(it, null) }
                                 state.appliedLayout?.let { evaluateJavascript(it, null) }
                                 state.appliedFontScale?.let { evaluateJavascript(it, null) }
+                                state.appliedWrapCode?.let { evaluateJavascript(it, null) }
                                 state.appliedFont?.let { evaluateJavascript(it, null) }
                                 state.appliedTranslate?.let { evaluateJavascript(it, null) }
                                 state.appliedIgnoreMode?.let { evaluateJavascript(it, null) }
@@ -462,6 +466,11 @@ fun MessageWebView(
                 if (state.appliedFontScale != fontCall) {
                     state.appliedFontScale = fontCall
                     if (state.ready) webView.evaluateJavascript(fontCall, null)
+                }
+                val wrapCall = RendererBridge.wrapCodeCall(wrapCode)
+                if (state.appliedWrapCode != wrapCall) {
+                    state.appliedWrapCode = wrapCall
+                    if (state.ready) webView.evaluateJavascript(wrapCall, null)
                 }
                 val faceCall = RendererBridge.fontCall(font)
                 if (state.appliedFont != faceCall) {

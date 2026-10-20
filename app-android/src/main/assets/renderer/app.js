@@ -869,6 +869,19 @@
       if (wasPinned) scrollToBottom();
     },
     /*
+     * Whether code blocks wrap long lines or scroll them sideways.
+     *
+     * A class on the root element rather than <body>, because setLayout owns
+     * the body's whole className. Wrapping makes blocks taller, so a reader
+     * at the bottom is kept there, as with the text size.
+     */
+    setWrapCode: function (on) {
+      var c = channels[current];
+      var wasPinned = c ? (c.pinned || atBottom()) : true;
+      document.documentElement.classList.toggle('wrap-code', !!on);
+      if (wasPinned) scrollToBottom();
+    },
+    /*
      * The transcript's typeface, as one of app.css's `data-font` keys.
      *
      * An attribute on the root rather than a class on <body>, which setLayout

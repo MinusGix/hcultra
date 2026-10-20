@@ -167,6 +167,15 @@ class RendererBridgeTest {
         assertEquals("github", highlight.jsonPrimitive.content)
     }
 
+    // ---- code wrapping ----
+
+    @Test
+    fun wrapCodeIsSentAsABoolean() {
+        val (on) = RendererBridge.wrapCodeCall(true).arguments("HC.setWrapCode")
+        assertEquals(true, on.jsonPrimitive.content.toBooleanStrict())
+        assertEquals("HC.setWrapCode(false);", RendererBridge.wrapCodeCall(false))
+    }
+
     // ---- layouts ----
 
     @Test

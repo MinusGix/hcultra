@@ -221,6 +221,7 @@ class MainActivity : ComponentActivity() {
             var allowImages by remember { mutableStateOf(themePrefs.allowImages) }
             var extraImageSources by remember { mutableStateOf(themePrefs.extraImageSources) }
             var fontScale by remember { mutableFloatStateOf(themePrefs.fontScale) }
+            var wrapCode by remember { mutableStateOf(themePrefs.wrapCode) }
             var font by remember { mutableStateOf(themePrefs.font) }
             var joinLeave by remember { mutableStateOf(themePrefs.joinLeave) }
             var ignoreMode by remember { mutableStateOf(themePrefs.ignoreMode) }
@@ -319,6 +320,11 @@ class MainActivity : ComponentActivity() {
                             onFontScaleChanged = {
                                 fontScale = it
                                 themePrefs.fontScale = it
+                            },
+                            wrapCode = wrapCode,
+                            onWrapCodeChanged = {
+                                wrapCode = it
+                                themePrefs.wrapCode = it
                             },
                             font = font,
                             onFontChanged = {
@@ -456,6 +462,7 @@ class MainActivity : ComponentActivity() {
                         highlight = highlight,
                         nickLayout = nickLayout,
                         fontScale = fontScale,
+                        wrapCode = wrapCode,
                         font = font,
                         allowImages = allowImages,
                         extraImageSources = extraImageSources,
@@ -702,6 +709,8 @@ private fun AppScreen(
      * what has already been said.
      */
     fontScale: Float,
+    /** Wrap long lines in code blocks instead of scrolling them sideways. */
+    wrapCode: Boolean,
     /** The transcript's typeface; the composer follows this too. */
     font: TranscriptFont,
     /** Embed whitelisted images in the transcript rather than linking them. */
@@ -1058,6 +1067,7 @@ private fun AppScreen(
                     allowImages = allowImages,
                     extraImageSources = extraImageSources,
                     fontScale = fontScale,
+                    wrapCode = wrapCode,
                     font = font,
                     translate = translate,
                     ignoreMode = ignoreMode,
