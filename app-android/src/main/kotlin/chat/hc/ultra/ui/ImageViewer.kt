@@ -24,7 +24,10 @@ import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -32,6 +35,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -39,6 +46,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,6 +70,25 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import org.json.JSONObject
+import kotlinx.coroutines.Job
+import androidx.compose.animation.core.animate
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Velocity
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * An embedded image, full screen, without leaving the app.
@@ -83,6 +110,8 @@ import org.json.JSONObject
 @Composable
 fun ImageViewer(
     url: String,
+    /** The image's hover text, shown under it; blank for none. */
+    caption: String,
     onDismiss: () -> Unit,
     onOpenOriginal: (String) -> Unit,
 ) {
@@ -237,6 +266,21 @@ fun ImageViewer(
                     onDismiss()
                 }
             }
+
+            // What the site shows when you hover the image. It comes and goes
+            // with the buttons, so a tap clears it off the picture; gone rather
+            // than transparent, so it does not catch the gestures meant for the
+            // image under it while hidden.
+            if (caption.isNotBlank()) {
+                AnimatedVisibility(
+                    visible = chrome,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                ) {
+                    CaptionSheet(caption)
+                }
+            }
         }
 
         if (confirmShare) {
@@ -269,6 +313,146 @@ fun ImageViewer(
         }
     }
 }
+
+/**
+ * The image's hover text, along the bottom of the viewer.
+ *
+ * These can run to a paragraph, and a paragraph laid over the picture hides
+ * the thing it is about. So a long one starts as a peek, its first few lines
+ * under a handle, and is dragged up to read the rest, as far as most of the
+ * screen; past that it scrolls. Dragging it back down, or tapping the handle,
+ * returns it to the peek. One short enough to fit in the peek is just shown,
+ * with no handle to suggest there is more.
+ *
+ * The text's own scroll drives the sheet through nested scrolling: an upward
+ * drag opens the sheet before the text moves, and a downward one closes it
+ * once the text is back at its top. That way a drag anywhere on the text does
+ * what it looks like it should, rather than only on the handle.
+ */
+@Composable
+private fun CaptionSheet(caption: String) {
+    val density = LocalDensity.current
+    val style = MaterialTheme.typography.bodyMedium
+    val scope = rememberCoroutineScope()
+    val scroll = rememberScrollState()
+    // The text's own height, without its padding, measured inside the scroll
+    // where nothing caps it.
+    var textPx by remember { mutableIntStateOf(0) }
+
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val peekLinesPx = with(density) { (style.lineHeight * PEEK_LINES).toPx() }
+        val sheet = textPx > peekLinesPx + 1
+        val topPx = with(density) { (if (sheet) CaptionTop else 12.dp).toPx() }
+        val bottomPx = with(density) { 12.dp.toPx() }
+        val peekPx = peekLinesPx + topPx
+        val openPx = max(peekPx, min(textPx + topPx + bottomPx, constraints.maxHeight * 0.6f))
+        var heightPx by remember { mutableFloatStateOf(peekPx) }
+        val shown = heightPx.coerceIn(peekPx, openPx)
+        var settling by remember { mutableStateOf<Job?>(null) }
+
+        // A finger on the sheet takes it from wherever a settle had got to.
+        fun moveBy(dy: Float) {
+            settling?.cancel()
+            heightPx = (heightPx.coerceIn(peekPx, openPx) - dy).coerceIn(peekPx, openPx)
+        }
+
+        fun settle(velocity: Float) {
+            val from = heightPx.coerceIn(peekPx, openPx)
+            val fling = with(density) { 400.dp.toPx() }
+            val target = when {
+                velocity < -fling -> openPx
+                velocity > fling -> peekPx
+                from - peekPx > openPx - from -> openPx
+                else -> peekPx
+            }
+            if (target == peekPx) scope.launch { scroll.animateScrollTo(0) }
+            settling?.cancel()
+            settling = scope.launch { animate(from, target) { v, _ -> heightPx = v } }
+        }
+
+        val nested = remember(peekPx, openPx) {
+            object : NestedScrollConnection {
+                override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                    if (available.y >= 0 || heightPx >= openPx) return Offset.Zero
+                    val before = heightPx
+                    moveBy(available.y)
+                    return Offset(0f, before - heightPx)
+                }
+
+                override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                    if (available.y <= 0 || heightPx <= peekPx) return Offset.Zero
+                    val before = heightPx
+                    moveBy(available.y)
+                    return Offset(0f, before - heightPx)
+                }
+
+                // A drag let go of halfway goes the rest of the way, by its speed.
+                override suspend fun onPreFling(available: Velocity): Velocity {
+                    if (heightPx <= peekPx || heightPx >= openPx) return Velocity.Zero
+                    settle(available.y)
+                    return available
+                }
+            }
+        }
+
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.6f))
+                .windowInsetsPadding(
+                    WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
+                ),
+        ) {
+            if (sheet) {
+                val open = shown > peekPx
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .draggable(
+                            orientation = Orientation.Vertical,
+                            state = rememberDraggableState { d -> moveBy(d) },
+                            onDragStopped = { v -> settle(v) },
+                        )
+                        .clickable(onClickLabel = if (open) "Show less" else "Show more") {
+                            settle(if (open) Float.MAX_VALUE else -Float.MAX_VALUE)
+                        }
+                        .padding(top = 8.dp, bottom = 4.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        Modifier
+                            .size(width = 32.dp, height = 4.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.5f)),
+                    )
+                }
+            }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .then(if (sheet) Modifier.height(with(density) { shown.toDp() }) else Modifier)
+                    .nestedScroll(nested)
+                    .verticalScroll(scroll, enabled = sheet),
+            ) {
+                Text(
+                    caption,
+                    color = Color.White,
+                    style = style,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = with(density) { topPx.toDp() }, bottom = 12.dp)
+                        .onSizeChanged { textPx = it.height },
+                )
+            }
+        }
+    }
+}
+
+/** Lines of a long caption shown before it is dragged up. */
+private const val PEEK_LINES = 3
+
+/** Space above the first line, under the handle. */
+private val CaptionTop = 2.dp
 
 /**
  * Round, translucent, white on black: legible over any image, and it is always

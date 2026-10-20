@@ -442,3 +442,28 @@ th, td { border: 1px solid rgba(127, 127, 127, 0.5); padding: 3px 7px; }
 .flag.unconfirmed { font-style: italic; }
 .message:has(.flag.unconfirmed) .text { opacity: 0.75; }
 .message:has(.flag.pending) .text { opacity: 0.6; }
+
+/*
+ * An embedded image's hover text, shown while held (app.js `showTip`). Dark
+ * grey and white like the system's own tooltips, rather than from the scheme:
+ * it floats over whatever is underneath, and has to read on all 44 of them.
+ */
+.img-tip {
+  position: absolute;
+  z-index: 10;
+  box-sizing: border-box;
+  /* app.js narrows this to the screen's width as well, in px: `vw` is as
+     suspect here as `vh` (see `.text img`). */
+  max-width: 22em;
+  padding: 0.45em 0.7em;
+  border-radius: 6px;
+  background: rgba(40, 40, 40, 0.95);
+  color: #fff;
+  font-size: 0.93em;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+/* Held for its text, so not picked up and dragged. */
+.text a:has(> img) { -webkit-user-drag: none; }

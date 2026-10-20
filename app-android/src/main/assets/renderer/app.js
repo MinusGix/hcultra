@@ -88,11 +88,17 @@
     return imgHostWhitelist.indexOf(hostOf(link)) !== -1 || underPrefix(link);
   }
 
+  // An embedded image's link carries its hover text as the site writes it:
+  // the markdown title, `![alt](url "title")`, or failing that the alt text.
+  // A phone has no hover, so holding the image shows it (see `showTip`), and
+  // the viewer a tap opens shows it as a caption.
   md.renderer.rules.image = function (tokens, idx, options) {
     var src = esc(tokens[idx].src);
     if (allowImages && imageAllowed(tokens[idx].src)) {
       var alt = tokens[idx].alt ? esc(Remarkable.utils.replaceEntities(Remarkable.utils.unescapeMd(tokens[idx].alt))) : '';
-      return '<a href="' + src + '" data-ext="1"><img src="' + src + '" alt="' + alt + '" referrerpolicy="no-referrer"></a>';
+      var title = tokens[idx].title ? esc(Remarkable.utils.replaceEntities(tokens[idx].title)) : alt;
+      return '<a href="' + src + '" data-ext="1"' + (title ? ' title="' + title + '"' : '') + '>' +
+        '<img src="' + src + '" alt="' + alt + '" referrerpolicy="no-referrer" draggable="false"></a>';
     }
     return '<a href="' + src + '" data-ext="1">' + esc(Remarkable.utils.replaceEntities(tokens[idx].src)) + '</a>';
   };
@@ -683,6 +689,13 @@
 
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;
+    // A held image's text is put away by the next tap, and that tap does
+    // nothing else: it was aimed at the bubble, not at what lies under it.
+    if (tip) {
+      e.preventDefault();
+      hideTip();
+      return;
+    }
     var act = e.target.closest('.msg-actions button');
     if (act) {
       e.preventDefault();
@@ -713,7 +726,7 @@
       if (a.hasAttribute('data-chan')) post('onChannelTap', a.getAttribute('data-chan'));
       // An embedded image opens in the viewer, which has its own way out to
       // the original; a link that merely points at one is still a link.
-      else if (a.querySelector('img')) post('onImageTap', a.getAttribute('href'));
+      else if (a.querySelector('img')) imageTap(a.getAttribute('href'), a.getAttribute('title') || '');
       else if (a.getAttribute('href')) post('onLinkTap', a.getAttribute('href'));
       return;
     }
@@ -778,6 +791,68 @@
     }));
   });
 
+  /*
+   * Holding an embedded image shows its hover text, in a bubble beside the
+   * finger: the site shows it on hover, and a phone has none. Beside the finger
+   * rather than the image, because a tall image can fill the screen, leaving
+   * neither of its edges in view to hang the bubble from. It is placed in the
+   * document, so it scrolls with the image it belongs to; the next tap
+   * anywhere, or a channel switch, puts it away. An image with no text keeps
+   * whatever a long-press would have done.
+   *
+   * Blink starts a long-press's selection before it sends `contextmenu`, so,
+   * as with a nick above, the selection is stopped where it starts.
+   */
+  var tip = null;
+
+  function imageLinkOf(target) {
+    var el = target && target.nodeType === 3 ? target.parentNode : target;
+    var a = el && el.closest ? el.closest('a[data-ext]') : null;
+    return a && a.querySelector('img') ? a : null;
+  }
+
+  function hideTip() {
+    if (tip && tip.parentNode) tip.parentNode.removeChild(tip);
+    tip = null;
+  }
+
+  function showTip(text, x, y) {
+    hideTip();
+    tip = document.createElement('div');
+    tip.className = 'img-tip';
+    tip.textContent = text;
+    tip.style.maxWidth = 'min(22em, ' + Math.max(0, window.innerWidth - 16) + 'px)';
+    document.body.appendChild(tip);
+    var w = tip.offsetWidth, h = tip.offsetHeight, gap = 28;
+    // Above the finger, where the hand does not cover it; below if that would
+    // run off the top of the screen.
+    var top = y - gap - h;
+    if (top < 8) top = Math.min(y + gap, window.innerHeight - h - 8);
+    var left = Math.max(8, Math.min(x - w / 2, window.innerWidth - w - 8));
+    tip.style.top = (Math.max(8, top) + window.scrollY) + 'px';
+    tip.style.left = (left + window.scrollX) + 'px';
+  }
+
+  document.addEventListener('selectstart', function (e) {
+    var a = imageLinkOf(e.target);
+    if (a && a.getAttribute('title')) e.preventDefault();
+  });
+
+  document.addEventListener('contextmenu', function (e) {
+    var a = imageLinkOf(e.target);
+    var text = a && a.getAttribute('title');
+    if (!text) return;
+    e.preventDefault();
+    showTip(text, e.clientX, e.clientY);
+  });
+
+  // Two arguments, so not through post(); the same guard.
+  function imageTap(url, title) {
+    if (window.HcBridge && window.HcBridge.onImageTap) {
+      try { window.HcBridge.onImageTap(url, title); } catch (e) {}
+    }
+  }
+
   function setHref(id, href) {
     var el = document.getElementById(id);
     if (el && el.getAttribute('href') !== href) el.setAttribute('href', href);
@@ -805,6 +880,7 @@
       // Selection is for the message in front of you; a channel coming back
       // should not be holding one from whenever you last looked at it.
       deselect();
+      hideTip();
       var previous = channels[current];
       if (previous) {
         // Read before hiding: once it is hidden the document collapses to the

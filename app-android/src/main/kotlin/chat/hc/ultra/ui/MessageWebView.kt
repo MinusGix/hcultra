@@ -70,8 +70,11 @@ data class RendererCallbacks(
     val onNickTap: (String) -> Unit = {},
     /** A held nick: everything else about them, and when the message was sent. */
     val onNickHold: (NickHold) -> Unit = {},
-    /** A tapped embedded image, by its URL: show it full screen. */
-    val onImageTap: (String) -> Unit = {},
+    /**
+     * A tapped embedded image, by its URL, and its hover text (the markdown
+     * title, or else the alt text; empty if neither): show it full screen.
+     */
+    val onImageTap: (url: String, title: String) -> Unit = { _, _ -> },
     /** A message's whole text, to go into the composer. */
     val onCompose: (String) -> Unit = {},
     /**
@@ -103,8 +106,8 @@ private class Bridge(
 
     /** Main thread for the same reason as [onNickTap]: it opens a dialog. */
     @JavascriptInterface
-    fun onImageTap(url: String) {
-        Handler(Looper.getMainLooper()).post { callbacks.onImageTap(url) }
+    fun onImageTap(url: String, title: String) {
+        Handler(Looper.getMainLooper()).post { callbacks.onImageTap(url, title) }
     }
 
     /**
