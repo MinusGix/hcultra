@@ -112,6 +112,12 @@ class SessionManager(
      * the service; see [forgetServer] for what a change costs.
      */
     private val dialectFor: (server: String) -> Dialect = { Dialect.Auto },
+    /**
+     * Whether a server's slash commands are ours to run; see [ClientCommands].
+     * Known per instance rather than set by the user: it is a fact about which
+     * server is running there.
+     */
+    private val clientCommands: (server: String) -> Boolean = { Servers.known(it)?.clientCommands == true },
 ) {
     /**
      * One per server, shared by every socket to it: the server scores rate
@@ -126,6 +132,9 @@ class SessionManager(
      * its atomic update: sessions report from their own threads.
      */
     private val detected = MutableStateFlow<Map<String, Dialect>>(emptyMap())
+
+    /** Expression ignores, per server, for those with [clientCommands]. */
+    private val filters = HashMap<String, ClientCommands.Filters>()
 
     private val sessions = LinkedHashMap<ChannelKey, ChannelSession>()
     private val buffers = LinkedHashMap<ChannelKey, ChannelBuffer>()
@@ -358,6 +367,13 @@ class SessionManager(
         val session = sessions[key] ?: return
         val buffer = buffers[key] ?: return
 
+        if (clientCommands(key.server)) {
+            ClientCommands.parse(text, key.channel)?.let { action ->
+                runClientCommand(key, session, buffer, action)
+                return
+            }
+        }
+
         // Slash commands are handled server-side and may produce an emote, an
         // info, a warn, or nothing at all — so there is no echo to reconcile
         // against and an optimistic bubble would hang at "sending…" forever.
@@ -375,6 +391,39 @@ class SessionManager(
                 buffer.markFailed(customId)
                 publish(key)
             }
+    }
+
+    /** What the site's own client would have done with a command; see [ClientCommands]. */
+    private suspend fun runClientCommand(
+        key: ChannelKey,
+        session: ChannelSession,
+        buffer: ChannelBuffer,
+        action: ClientCommands.Action,
+    ) {
+        val showIgnored = {
+            val f = filters.getOrPut(key.server) { ClientCommands.Filters() }
+            ClientCommands.ignoreListText(_ignored.value.nicks, f.always, f.first)
+        }
+        val note = when (action) {
+            is ClientCommands.Action.Send -> {
+                runCatching { session.send(action.frame) }
+                null
+            }
+            is ClientCommands.Action.Ignore -> { setIgnored(action.nick, true); showIgnored() }
+            is ClientCommands.Action.Unignore -> { setIgnored(action.nick, false); showIgnored() }
+            ClientCommands.Action.ShowIgnored -> showIgnored()
+            ClientCommands.Action.ClearIgnored -> {
+                _ignored.update { it.copy(nicks = emptySet()) }
+                "Ignore list cleared"
+            }
+            is ClientCommands.Action.IgnoreExpression -> {
+                filters.getOrPut(key.server) { ClientCommands.Filters() }.add(action.pattern, action.firstOnly)
+                showIgnored()
+            }
+            is ClientCommands.Action.Notice -> action.text
+        } ?: return
+        buffer.add(ChatMessage(0, MessageKind.Info, text = note, at = now()))
+        publish(key)
     }
 
     /**
@@ -467,6 +516,12 @@ class SessionManager(
 
         when (event) {
             is SessionEvent.Message -> {
+                // Not buffered at all, as the site never shows them: these are
+                // walls of spam, and the buffer is all the history there is.
+                if (clientCommands(channel.server) && event.frame.userid != session.userid &&
+                    filters.getOrPut(channel.server) { ClientCommands.Filters() }
+                        .hides(channel.channel, event.frame.nick, event.frame.text)
+                ) return
                 val msg = buffer.applyChat(event.frame, session.userid, receivedAt = now())
                 if (!msg.isMine && !isIgnored(msg.nick, msg.trip)) {
                     if (channel != activeChannel) {
