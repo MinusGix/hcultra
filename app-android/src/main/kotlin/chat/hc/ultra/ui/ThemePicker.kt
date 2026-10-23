@@ -1015,7 +1015,7 @@ private fun ServerSetting(servers: List<ServerEntry>, onChanged: (List<ServerEnt
             value = input,
             onValueChange = { input = it },
             singleLine = true,
-            label = { Text("Add a server") },
+            label = { Text("Add a server, or paste a link to one") },
             isError = input.isNotBlank() && (result is Servers.Result.Invalid || duplicate),
             supportingText = {
                 when {
@@ -1032,14 +1032,14 @@ private fun ServerSetting(servers: List<ServerEntry>, onChanged: (List<ServerEnt
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(
                 onClick = {
-                    valid?.let { onChanged(servers + ServerEntry(it.url)) }
+                    valid?.let { onChanged(servers + ServerEntry(it.url, Servers.known(it.url)?.dialect ?: Dialect.Auto)) }
                     input = ""
                 },
                 enabled = valid != null && !duplicate,
             ) { Text("Add") }
-            if (servers.none { it.url == Servers.DEFAULT_URL }) {
-                TextButton(onClick = { onChanged(servers + ServerEntry(Servers.DEFAULT_URL)) }) {
-                    Text("Add hack.chat")
+            Servers.KNOWN.filter { known -> servers.none { it.url == known.url } }.forEach { known ->
+                TextButton(onClick = { onChanged(servers + ServerEntry(known.url, known.dialect)) }) {
+                    Text("Add ${known.name}")
                 }
             }
         }

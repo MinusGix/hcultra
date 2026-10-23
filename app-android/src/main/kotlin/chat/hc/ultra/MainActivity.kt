@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.KeyboardActions
@@ -95,6 +96,7 @@ import chat.hc.core.protocol.User
 import chat.hc.core.session.Challenge
 import chat.hc.core.session.ChannelKey
 import chat.hc.core.session.ChannelUi
+import chat.hc.core.session.Dialect
 import chat.hc.ultra.data.ChannelHistory
 import chat.hc.ultra.data.ChannelIdentity
 import chat.hc.core.session.Ignore
@@ -116,6 +118,7 @@ import chat.hc.ultra.ui.MessageWebView
 import chat.hc.ultra.ui.NotifyPrefs
 import chat.hc.ultra.ui.RendererCallbacks
 import chat.hc.ultra.ui.SchemeAssets
+import chat.hc.ultra.ui.ServerEntry
 import chat.hc.ultra.ui.ServerPrefs
 import chat.hc.ultra.ui.ThemePrefs
 import chat.hc.ultra.ui.resolve
@@ -162,6 +165,12 @@ class MainActivity : ComponentActivity() {
      */
     private val showChannel = MutableStateFlow<ChannelKey?>(null)
 
+    /**
+     * A link to a channel the app was opened with, from the browser or
+     * another app, held until the join form can take it.
+     */
+    private val openLink = MutableStateFlow<Servers.Link?>(null)
+
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val svc = (binder as HcService.LocalBinder).service
@@ -202,6 +211,7 @@ class MainActivity : ComponentActivity() {
         }
 
         showChannel.value = intent.channelKey()
+        openLink.value = intent.channelLink()
 
         val themePrefs = ThemePrefs(this)
         val notifyPrefs = NotifyPrefs(this)
@@ -243,6 +253,27 @@ class MainActivity : ComponentActivity() {
             // "Resume last" are per server, since a trip is: the same password
             // gives a different one on each.
             var joinServer by remember { mutableStateOf(serverPrefs.lastUsed) }
+
+            // A known server is added the first time something leads to it, as
+            // it would have been from settings, speaking what it is known to.
+            val addServer: (String) -> Unit = { url ->
+                if (servers.none { it.url == url }) {
+                    val updated = servers + ServerEntry(url, Servers.known(url)?.dialect ?: Dialect.Auto)
+                    servers = updated
+                    serverPrefs.servers = updated
+                }
+            }
+            // Into the join form rather than straight in: who to be there is
+            // still the user's to say.
+            val followLink: (Servers.Link) -> Unit = { link ->
+                addServer(link.server)
+                pendingChannel = ChannelKey(link.server, link.channel ?: link.instance.defaultChannel.orEmpty())
+            }
+            val linked by openLink.collectAsStateWithLifecycle()
+            LaunchedEffect(linked) {
+                linked?.let(followLink)
+                openLink.value = null
+            }
 
             val scheme = remember(schemeName) { allSchemes.resolve(schemeName) }
 
@@ -413,6 +444,7 @@ class MainActivity : ComponentActivity() {
                         onSetIgnored = { nick, ignore -> service?.sessions?.setIgnored(nick, ignore) },
                         onSetTripIgnored = { trip, ignore -> service?.sessions?.setTripIgnored(trip, ignore) },
                         servers = servers.map { it.url },
+                        onAddServer = addServer,
                         joinServer = joinServer,
                         onJoinServer = { joinServer = it },
                         onJoin = { channel, nick, pass -> startJoin(channel, nick, pass) },
@@ -434,7 +466,12 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         rendererCallbacks = RendererCallbacks(
-                            onLinkTap = { url -> openExternal(url) },
+                            // A channel link to a known server, even another
+                            // one, joins there; anything else is a web page.
+                            onLinkTap = { url ->
+                                Servers.link(url)?.takeIf { it.channel != null }?.let(followLink)
+                                    ?: openExternal(url)
+                            },
                             // A link names a channel on the server it was
                             // said on, which is the one being read.
                             onChannelTap = { channel ->
@@ -525,7 +562,15 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         intent.channelKey()?.let { showChannel.value = it }
+        intent.channelLink()?.let { openLink.value = it }
     }
+
+    /**
+     * A link to a channel on a known server, opened from the browser or any
+     * other app; see the manifest for which.
+     */
+    private fun Intent.channelLink(): Servers.Link? =
+        data?.takeIf { action == Intent.ACTION_VIEW }?.toString()?.let(Servers::link)
 
     private fun startJoin(channel: ChannelKey, nick: String, pass: String?) {
         // Remembered per server, since a trip is derived from a server-side salt
@@ -684,6 +729,8 @@ private fun AppScreen(
     onSetTripIgnored: (trip: String, ignore: Boolean) -> Unit,
     /** Every server the user has added, by URL; the join form picks among them. */
     servers: List<String>,
+    /** Adds a server, by URL, if it is not there already. */
+    onAddServer: (String) -> Unit,
     /** The server the join form is on; [recent] and [lastSession] are its. */
     joinServer: String,
     onJoinServer: (String) -> Unit,
@@ -879,6 +926,7 @@ private fun AppScreen(
             servers = servers,
             server = joinServer,
             onServer = onJoinServer,
+            onAddServer = onAddServer,
             initialChannel = pendingChannel?.channel.orEmpty(),
             recent = recent,
             // Nothing to resume if it is already open — the button would join
@@ -991,7 +1039,8 @@ private fun AppScreen(
                         onMention = { mention(h.nick) },
                         // `/whisper` rather than `/w`: servers from 2019 know
                         // only the long form, and today's knows both.
-                        onWhisper = { drafts[channel] = fieldValue("/whisper ${h.nick} ") },
+                        onWhisper = if (!Servers.hasWhispers(channel.server)) null
+                        else ({ drafts[channel] = fieldValue("/whisper ${h.nick} ") }),
                         onInvite = { online?.let { onInvite(channel, it) } },
                         onCopy = { text -> copyToClipboard(context, text) },
                         onToggleIgnore = { toggleIgnore(h.nick) },
@@ -1035,12 +1084,13 @@ private fun AppScreen(
                             // the destination appears.
                             openRoster = null
                         },
-                        onWhisper = { nick ->
+                        onWhisper = if (!Servers.hasWhispers(active.server)) null
+                        else ({ nick ->
                             // The server's /whisper strips a leading @, so this
                             // works whether or not the nick was mentioned first.
                             drafts[active.key] = fieldValue("/whisper $nick ")
                             openRoster = null
-                        },
+                        }),
                         onMention = { nick -> mention(nick) },
                         modifier = Modifier.padding(horizontal = 12.dp),
                     )
@@ -1280,6 +1330,7 @@ private fun JoinSheet(
     servers: List<String>,
     server: String,
     onServer: (String) -> Unit,
+    onAddServer: (String) -> Unit,
     initialChannel: String = "",
     recent: List<ChannelIdentity>,
     lastSession: List<ChannelIdentity>,
@@ -1306,6 +1357,18 @@ private fun JoinSheet(
     // It also protects the field from `recent` reloading underneath it, which
     // happens whenever a channel elsewhere reconnects.
     var nickPinned by remember { mutableStateOf(false) }
+    // The server's usual channel, while it is what the field holds: switching
+    // to a server with one fills it in, and switching away takes it back out,
+    // but nothing typed is ever replaced.
+    var defaulted by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(server) {
+        val usual = Servers.known(server)?.defaultChannel
+        if (channelInput.isBlank() || channelInput == defaulted) {
+            channelInput = usual.orEmpty()
+            defaulted = usual
+        }
+    }
 
     LaunchedEffect(channelInput, recent) {
         if (nickPinned) return@LaunchedEffect
@@ -1326,7 +1389,26 @@ private fun JoinSheet(
             onServer = onServer,
             channel = channelInput,
             nick = nickInput,
-            onChannel = { channelInput = it },
+            onChannel = { text ->
+                // A pasted link to the web client says where as well as which.
+                // Only one that names a channel: this field is also typed into,
+                // and "hack.chat", or a link typed as far as its page, would
+                // otherwise switch servers and swallow the text mid-word.
+                val link = Servers.link(text)?.takeIf { it.channel != null }
+                if (link != null) {
+                    onAddServer(link.server)
+                    onServer(link.server)
+                    channelInput = link.channel.orEmpty()
+                    defaulted = null
+                } else {
+                    // `?support`, as the site writes a channel, is `support`.
+                    channelInput = text.removePrefix("?")
+                }
+            },
+            onAddServer = { url ->
+                onAddServer(url)
+                onServer(url)
+            },
             onNick = { nickInput = it; nickPinned = true },
             recent = recent,
             lastSession = lastSession,
@@ -1390,6 +1472,8 @@ private fun JoinBody(
     servers: List<String>,
     server: String,
     onServer: (String) -> Unit,
+    /** Adds a known server and switches to it. */
+    onAddServer: (String) -> Unit,
     channel: String,
     nick: String,
     onChannel: (String) -> Unit,
@@ -1406,8 +1490,10 @@ private fun JoinBody(
     ) {
         // First, because everything under it is that server's: what you
         // resume, who you have been, and where the channel will be joined.
-        // Not shown with only one, which is what most people have.
-        if (servers.size > 1) {
+        // Known servers not yet added are offered after the rest, one tap from
+        // being added and picked; with nothing to choose, there is no row.
+        val addable = Servers.KNOWN.filter { it.url !in servers }
+        if (servers.size > 1 || addable.isNotEmpty()) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -1426,6 +1512,19 @@ private fun JoinBody(
                                 else MaterialTheme.colorScheme.surfaceVariant
                             )
                             .clickable { onServer(url) }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                    )
+                }
+                addable.forEach { instance ->
+                    Text(
+                        text = "+ " + instance.name,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
+                            .clickable { onAddServer(instance.url) }
+                            .semantics { contentDescription = "Add ${instance.name}" }
                             .padding(horizontal = 12.dp, vertical = 7.dp),
                     )
                 }
@@ -1453,7 +1552,7 @@ private fun JoinBody(
         OutlinedTextField(
             value = channel,
             onValueChange = onChannel,
-            label = { Text("Channel") },
+            label = { Text("Channel, or a link to one") },
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
