@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
@@ -47,13 +48,15 @@ import chat.hc.core.session.ChannelKey
 import chat.hc.core.session.ChannelUi
 import chat.hc.core.session.Servers
 import chat.hc.core.session.SessionState
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** How many tabs the strip tries to show at once before it gives up and scrolls. */
 private const val VisibleTabs = 3
 private val TabGap = 6.dp
-/** Below this a tab is a dot and two letters, which names nothing. Scroll instead. */
-private val MinTab = 56.dp
+/** Below this a name is "?" and an ellipsis, which names nothing. Scroll instead. */
+private val MinLabel = 28.dp
 
 /**
  * Tab strip over the joined channels.
@@ -155,7 +158,23 @@ private fun TabStrip(
         val viewport = constraints.maxWidth
         val density = LocalDensity.current
         val gap = with(density) { TabGap.roundToPx() }
-        val floor = with(density) { MinTab.roundToPx() }
+        val floor = with(density) { MinLabel.roundToPx() }
+        // Each tab's name on its own, so the trimming can come out of the
+        // names alone. Trimming whole tabs took it from the widest tab, and
+        // the widest is often the selected one only because it carries the
+        // count and close: a short name beside them was cut to "?…".
+        val measurer = rememberTextMeasurer()
+        val nameStyle = MaterialTheme.typography.bodyMedium
+        val serverStyle = MaterialTheme.typography.labelSmall
+        val labels = remember(channels, active, showServer, nameStyle, serverStyle) {
+            channels.map { ui ->
+                val weight = if (ui.key == active) FontWeight.Bold else FontWeight.Normal
+                val name = measurer.measure("?${ui.channel}", nameStyle.copy(fontWeight = weight), maxLines = 1).size.width
+                val server = if (showServer) measurer.measure(Servers.label(ui.server), serverStyle, maxLines = 1).size.width else 0
+                maxOf(name, server)
+            }
+        }
+        val selected = channels.indexOfFirst { it.key == active }
 
         Layout(
             content = {
@@ -176,7 +195,7 @@ private fun TabStrip(
             modifier = Modifier.horizontalScroll(scroll),
         ) { measurables, constraints ->
             val natural = measurables.map { it.maxIntrinsicWidth(constraints.maxHeight) }
-            val widths = fitTabWidths(natural, viewport, gap, floor)
+            val widths = fitTabWidths(natural, labels, selected, viewport, gap, floor)
             val placeables = measurables.mapIndexed { i, m ->
                 m.measure(Constraints(maxWidth = widths[i], maxHeight = constraints.maxHeight))
             }
@@ -193,17 +212,25 @@ private fun TabStrip(
         // of channels changes, though: following every relayout would snap the
         // strip back each time an unread badge appeared while you were
         // scrolling through it.
+        //
+        // Followed for a moment rather than once, because the first layout
+        // after a change is not the last: a new tab is not measured yet, and
+        // the selected name turning bold changes the caps, so a single scroll
+        // landed a few dp short and left the close button under the fade.
         LaunchedEffect(active, channels.size) {
             val index = channels.indexOfFirst { it.key == active }
             if (index < 0) return@LaunchedEffect
-            // A tab that has just been joined is not measured yet.
-            val span = snapshotFlow { spans }.first { it.size == channels.size }[index]
-            val target = when {
-                span.first < scroll.value -> span.first
-                span.last + 1 > scroll.value + viewport -> span.last + 1 - viewport
-                else -> return@LaunchedEffect
+            withTimeoutOrNull(1_000) {
+                snapshotFlow { spans }.filter { it.size == channels.size }.collectLatest { now ->
+                    val span = now[index]
+                    val target = when {
+                        span.first < scroll.value -> span.first
+                        span.last + 1 > scroll.value + viewport -> span.last + 1 - viewport
+                        else -> return@collectLatest
+                    }
+                    scroll.animateScrollTo(target)
+                }
             }
-            scroll.animateScrollTo(target)
         }
 
         val edges by remember(channels) {
@@ -218,27 +245,44 @@ private fun TabStrip(
 }
 
 /**
- * Widths for tabs whose natural widths are [natural], in a strip [viewport]
- * wide.
+ * Widths for tabs whose natural widths are [natural], of which [labels] is the
+ * name, in a strip [viewport] wide.
  *
- * All of them at natural width if that fits. Otherwise the widest are trimmed
- * to a common cap — names ellipsize, and the start of a channel name is usually
- * enough to tell it apart — chosen so that every tab fits when there are no
- * more than [VisibleTabs], and so that about [VisibleTabs] are on screen at a
- * time when there are more. Never below [floor].
+ * All of them at natural width if that fits. Otherwise the longest names are
+ * trimmed to a common cap — they ellipsize, and the start of a channel name is
+ * usually enough to tell it apart — chosen so that every tab fits when there
+ * are no more than [VisibleTabs], and so that about [VisibleTabs] are on screen
+ * at a time when there are more. No name is trimmed below [floor].
  */
-internal fun fitTabWidths(natural: List<Int>, viewport: Int, gap: Int, floor: Int): List<Int> {
+internal fun fitTabWidths(
+    natural: List<Int>,
+    labels: List<Int>,
+    selected: Int,
+    viewport: Int,
+    gap: Int,
+    floor: Int,
+): List<Int> {
     val n = natural.size
     if (n == 0 || natural.sum() + gap * (n - 1) <= viewport) return natural
-    val shown = minOf(n, VisibleTabs)
-    val shareOfShown = (viewport - gap * (shown - 1)) / shown
-    val cap = maxOf(waterLevel(natural, viewport - gap * (n - 1)), shareOfShown, floor)
-    return natural.map { minOf(it, cap) }
+    val chrome = natural.indices.map { natural[it] - labels[it] }
+    fun levelFor(tabs: List<Int>) =
+        waterLevel(tabs.map { labels[it] }, viewport - gap * (tabs.size - 1) - tabs.sumOf { chrome[it] })
+    val everyTab = levelFor(natural.indices.toList())
+    // With more than fit, size for the selected tab and the bulkiest others,
+    // so any three side by side fit, whichever the strip is scrolled to.
+    val shown = if (n <= VisibleTabs) everyTab else levelFor(
+        listOfNotNull(selected.takeIf { it >= 0 }) +
+            natural.indices.filter { it != selected }.sortedByDescending { chrome[it] }
+                .take(VisibleTabs - if (selected >= 0) 1 else 0),
+    )
+    val cap = maxOf(everyTab, shown, floor)
+    return natural.indices.map { chrome[it] + minOf(labels[it], cap) }
 }
 
 /** The largest cap c such that the sum of min(width, c) is within [budget]. */
 private fun waterLevel(widths: List<Int>, budget: Int): Int {
     var left = budget
+    if (widths.isEmpty()) return 0
     val sorted = widths.sorted()
     sorted.forEachIndexed { i, w ->
         val remaining = sorted.size - i
