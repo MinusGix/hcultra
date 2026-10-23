@@ -1391,11 +1391,14 @@ private fun JoinSheet(
             nick = nickInput,
             onChannel = { text ->
                 // A pasted link to the web client says where as well as which.
-                val link = Servers.link(text)
+                // Only one that names a channel: this field is also typed into,
+                // and "hack.chat", or a link typed as far as its page, would
+                // otherwise switch servers and swallow the text mid-word.
+                val link = Servers.link(text)?.takeIf { it.channel != null }
                 if (link != null) {
                     onAddServer(link.server)
                     onServer(link.server)
-                    channelInput = link.channel ?: link.instance.defaultChannel.orEmpty()
+                    channelInput = link.channel.orEmpty()
                     defaulted = null
                 } else {
                     // `?support`, as the site writes a channel, is `support`.
