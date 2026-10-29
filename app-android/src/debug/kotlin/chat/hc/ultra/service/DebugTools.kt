@@ -24,6 +24,8 @@ import kotlinx.coroutines.launch
  *     adb shell am broadcast -n $R -a chat.hc.ultra.DEBUG_FLOOD --es channel test --ei count 200 --ei interval 300
  *     # stop a flood early
  *     adb shell am broadcast -n $R -a chat.hc.ultra.DEBUG_STOP
+ *     # print the channel's transcript
+ *     adb shell am broadcast -n $R -a chat.hc.ultra.DEBUG_DUMP --es channel test
  *
  * Results go to logcat under `HcDebug`.
  */
@@ -77,6 +79,13 @@ internal object DebugTools {
                 }
             }
             "chat.hc.ultra.DEBUG_STOP" -> flood?.cancel()
+            // What the channel holds, line by line, without drawing it: for
+            // checking a transcript where the WebView cannot be watched.
+            "chat.hc.ultra.DEBUG_DUMP" -> {
+                val messages = channel?.let { sessions.channels.value[it]?.messages }
+                if (messages == null) Log.i(TAG, "no open channel ?$name")
+                else messages.forEach { Log.i(TAG, "dump ?$name ${it.kind} ${it.nick}: ${it.text}") }
+            }
         }
     }
 
