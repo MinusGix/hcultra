@@ -61,11 +61,11 @@ data class ChatMessage(
 /**
  * Per-channel scrollback.
  *
- * Ephemeral by default: a bounded in-memory ring, owned by the foreground
- * service, never written to disk unless the user opts into persistence. This is
- * what lets the UI be destroyed and recreated — rotation, backgrounding,
- * notification tap — without losing the conversation, while still honouring
- * hack.chat's no-logs norm across app restarts.
+ * A bounded in-memory ring, owned by the foreground service. This is what
+ * lets the UI be destroyed and recreated — rotation, backgrounding,
+ * notification tap — without losing the conversation. Outliving the service
+ * is the [chat.hc.core.session.TranscriptStore]'s job, and only where the user
+ * leaves it on: hack.chat's habit is to keep no logs.
  */
 class ChannelBuffer(capacity: Int = HistoryLimit.DEFAULT_LINES) {
     private val messages = ArrayDeque<ChatMessage>()

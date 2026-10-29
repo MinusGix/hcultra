@@ -2,6 +2,7 @@ package chat.hc.core.session
 
 import chat.hc.core.protocol.Inbound
 import chat.hc.core.protocol.User
+import chat.hc.core.store.ChatMessage
 
 /**
  * A channel on a server: what every tab, buffer and socket is keyed by.
@@ -83,6 +84,53 @@ class InMemoryMotdStore : MotdStore {
     private val motds = mutableMapOf<String, String>()
     override suspend fun load(server: String): String? = motds[server]
     override suspend fun save(server: String, text: String) { motds[server] = text }
+}
+
+/**
+ * A channel's scrollback, kept for when the process that held it is gone.
+ *
+ * hack.chat keeps no history, so the buffer is the only copy of what was said.
+ * An outage that leaves the service running keeps it anyway; this is for the
+ * ones that do not — the notification's Disconnect, or Android reclaiming the
+ * process — after which the channel would otherwise come back empty.
+ *
+ * [SavedTranscript.lastSeen] is when the channel was last known connected,
+ * which is where "you were disconnected for…" counts from. It moves far more
+ * often than the messages do, so it is saved on its own by [seen].
+ */
+interface TranscriptStore {
+    suspend fun load(key: ChannelKey): SavedTranscript?
+    suspend fun save(key: ChannelKey, messages: List<ChatMessage>, lastSeen: Long)
+    suspend fun seen(key: ChannelKey, lastSeen: Long)
+    suspend fun delete(key: ChannelKey)
+}
+
+data class SavedTranscript(
+    val messages: List<ChatMessage>,
+    val lastSeen: Long,
+)
+
+/** Keeps nothing: the scrollback lives and dies with the [SessionManager]. */
+object NoTranscriptStore : TranscriptStore {
+    override suspend fun load(key: ChannelKey): SavedTranscript? = null
+    override suspend fun save(key: ChannelKey, messages: List<ChatMessage>, lastSeen: Long) = Unit
+    override suspend fun seen(key: ChannelKey, lastSeen: Long) = Unit
+    override suspend fun delete(key: ChannelKey) = Unit
+}
+
+/** In-memory store, for tests: survives one manager to be read by the next. */
+class InMemoryTranscriptStore : TranscriptStore {
+    val saved = mutableMapOf<ChannelKey, SavedTranscript>()
+    override suspend fun load(key: ChannelKey): SavedTranscript? = saved[key]
+    override suspend fun save(key: ChannelKey, messages: List<ChatMessage>, lastSeen: Long) {
+        saved[key] = SavedTranscript(messages, lastSeen)
+    }
+    override suspend fun seen(key: ChannelKey, lastSeen: Long) {
+        saved[key]?.let { saved[key] = it.copy(lastSeen = lastSeen) }
+    }
+    override suspend fun delete(key: ChannelKey) {
+        saved.remove(key)
+    }
 }
 
 sealed interface SessionState {

@@ -13,6 +13,7 @@ import chat.hc.core.session.ModAction
 import chat.hc.core.session.SessionManager
 import chat.hc.ultra.data.KeystoreTokenStore
 import chat.hc.ultra.data.MotdPrefs
+import chat.hc.ultra.data.TranscriptFiles
 import chat.hc.ultra.data.TranscriptImages
 import chat.hc.ultra.ui.NotifyPrefs
 import chat.hc.ultra.ui.ServerPrefs
@@ -43,6 +44,10 @@ class HcService : Service() {
     lateinit var sessions: SessionManager
         private set
     private lateinit var notifications: ChatNotifications
+
+    /** Where the scrollback goes to outlive us; see [ThemePrefs.keepHistory]. */
+    lateinit var transcripts: TranscriptFiles
+        private set
 
     /**
      * Whether an Activity is bound and on screen.
@@ -83,11 +88,13 @@ class HcService : Service() {
         // SharedPreferences read is cheaper than the wiring to observe one.
         val display = ThemePrefs(this)
         val servers = ServerPrefs(this)
+        transcripts = TranscriptFiles(this) { display.keepHistory }
         sessions = SessionManager(
             scope = scope,
             transport = net.transport,
             tokenStore = KeystoreTokenStore(this),
             motdStore = MotdPrefs(this),
+            transcriptStore = transcripts,
             showJoinLeave = { display.joinLeave },
             historyLimit = { display.historyLimit },
             now = { System.currentTimeMillis() },
@@ -132,6 +139,18 @@ class HcService : Service() {
             while (true) {
                 delay(HISTORY_SWEEP_MILLIS)
                 sessions.enforceHistory()
+            }
+        }
+
+        // The scrollback, for whichever process opens these channels next.
+        // Android gives no warning before reclaiming a service, so this is
+        // the most that can be lost: the last few seconds of conversation,
+        // and that much accuracy in "disconnected for".
+        scope.launch {
+            while (true) {
+                delay(TRANSCRIPT_SAVE_MILLIS)
+                runCatching { sessions.saveTranscripts() }
+                    .onFailure { Log.w(TAG, "could not save transcripts", it) }
             }
         }
 
@@ -281,6 +300,7 @@ class HcService : Service() {
 
         private const val HISTORY_SWEEP_MILLIS = 5 * 60 * 1000L
         private const val IMAGE_SWEEP_MILLIS = 60 * 1000L
+        private const val TRANSCRIPT_SAVE_MILLIS = 20 * 1000L
 
         /** Puts [key] on an intent, as [channelKey] reads it back. */
         fun Intent.putChannel(key: ChannelKey): Intent =
