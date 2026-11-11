@@ -50,7 +50,8 @@ fun NickSheet(
     trip: String?,
     tripIgnored: Boolean,
     onMention: () -> Unit,
-    onWhisper: () -> Unit,
+    /** Null on a server with no whispers. */
+    onWhisper: (() -> Unit)?,
     onInvite: () -> Unit,
     onCopy: (String) -> Unit,
     onToggleIgnore: () -> Unit,
@@ -84,7 +85,7 @@ fun NickSheet(
 
             if (!isSelf) Item("Mention", then(onMention))
             if (!isSelf && online != null) {
-                Item("Whisper", then(onWhisper))
+                onWhisper?.let { Item("Whisper", then(it)) }
                 // Says where, for the reason the roster's item does.
                 Item("Invite to a new channel", then(onInvite))
             }

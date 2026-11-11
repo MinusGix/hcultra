@@ -53,7 +53,8 @@ import chat.hc.core.session.ModAction
 fun UserList(
     users: List<User>,
     onMention: (String) -> Unit,
-    onWhisper: (String) -> Unit,
+    /** Null on a server with no whispers. */
+    onWhisper: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
     onInvite: (User) -> Unit = {},
     /** Actions this user may take against a target; empty for ordinary users. */
@@ -107,7 +108,7 @@ fun UserList(
                 UserRow(
                     user = user,
                     onClick = { onMention(user.nick) },
-                    onWhisper = { onWhisper(user.nick) },
+                    onWhisper = onWhisper?.let { whisper -> { whisper(user.nick) } },
                     onInvite = { onInvite(user) },
                     ignored = isIgnored(user),
                     onToggleIgnore = { onToggleIgnore(user) },
@@ -165,7 +166,7 @@ private fun describe(action: ModAction, nick: String): String = when (action) {
 private fun UserRow(
     user: User,
     onClick: () -> Unit,
-    onWhisper: () -> Unit,
+    onWhisper: (() -> Unit)?,
     onInvite: () -> Unit,
     ignored: Boolean,
     onToggleIgnore: () -> Unit,
@@ -242,13 +243,15 @@ private fun UserRow(
         }
 
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            DropdownMenuItem(
-                text = { Text("Whisper") },
-                onClick = {
-                    menuOpen = false
-                    onWhisper()
-                },
-            )
+            onWhisper?.let { whisper ->
+                DropdownMenuItem(
+                    text = { Text("Whisper") },
+                    onClick = {
+                        menuOpen = false
+                        whisper()
+                    },
+                )
+            }
             // Says where, because "Invite" alone does not: the server invents a
             // fresh channel for the two of you rather than pointing at this one,
             // and somebody expecting the latter would be surprised by the line

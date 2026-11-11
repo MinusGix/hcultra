@@ -220,4 +220,78 @@ class LegacyAdapterTest {
         ).map(FrameCodec::decode)
         frames.forEach { assertEquals(listOf(it), a.adapt(it)) }
     }
+
+    // Frames below are verbatim from hack.chat c066818 (July 2018), which the
+    // trollegle chatbox runs, captured from a local copy.
+
+    /** 2018 parses no commands, so `/me` arrives as a chat; its client shows an action. */
+    @Test
+    fun a2018MeIsAnEmote() {
+        val emote = assertIs<Inbound.Emote>(
+            asAlice().one("""{"cmd":"chat","nick":"bob","text":"/me waves","trip":"+4dQoN","time":5}""")
+        )
+        assertEquals("bob", emote.nick)
+        assertEquals(LegacyAdapter.idFor("bob"), emote.userid)
+        assertEquals("@bob waves", emote.text)
+        assertEquals("+4dQoN", emote.trip)
+        // Only the command itself, not a chat that mentions it.
+        assertIs<Inbound.Chat>(asAlice().one("""{"cmd":"chat","nick":"bob","text":"/meh","time":5}"""))
+    }
+
+    @Test
+    fun a2018InviteIsAnInviteBothWays() {
+        val received = assertIs<Inbound.Invite>(
+            asAlice().one("""{"cmd":"info","invite":"1q65h7bi","text":"bob invited you to ?1q65h7bi","time":6}""")
+        )
+        assertEquals(LegacyAdapter.idFor("bob"), received.from)
+        assertEquals(LegacyAdapter.idFor("alice"), received.to)
+        assertEquals("1q65h7bi", received.inviteChannel)
+
+        val sent = assertIs<Inbound.Invite>(
+            asAlice().one("""{"cmd":"info","text":"You invited bob to ?1q65h7bi","time":6}""")
+        )
+        assertEquals(LegacyAdapter.idFor("alice"), sent.from)
+        assertEquals(LegacyAdapter.idFor("bob"), sent.to)
+        assertEquals("1q65h7bi", sent.inviteChannel)
+
+        // Any other notice is left alone.
+        assertIs<Inbound.Info>(asAlice().one("""{"cmd":"info","text":"alice is now alice2","time":6}"""))
+    }
+
+    /**
+     * `changenick` is the old nick leaving and the new one arriving, sent to
+     * us as to everyone. Ours becomes a rename under the id we had, so what we
+     * say afterwards is still ours.
+     */
+    @Test
+    fun ourOwn2018NickChangeKeepsOurId() {
+        val a = asAlice()
+        assertEquals(emptyList(), a.read("""{"cmd":"onlineRemove","nick":"alice","time":7}"""))
+        val update = assertIs<Inbound.UpdateUser>(
+            a.one("""{"cmd":"onlineAdd","nick":"alice2","trip":"null","hash":"6rwwWYb8gaCWXtj","time":7}""")
+        )
+        assertEquals("alice2", update.nick)
+        assertEquals(LegacyAdapter.idFor("alice"), update.userid)
+        assertNull(update.trip)
+        assertIs<Inbound.Info>(a.one("""{"cmd":"info","text":"alice is now alice2","time":7}"""))
+
+        val chat = assertIs<Inbound.Chat>(a.one("""{"cmd":"chat","nick":"alice2","text":"hi","time":8}"""))
+        assertEquals(LegacyAdapter.idFor("alice"), chat.userid)
+
+        // Someone else taking the old nick is someone else.
+        val add = assertIs<Inbound.OnlineAdd>(a.one("""{"cmd":"onlineAdd","nick":"alice","trip":"null","time":9}"""))
+        assertTrue(add.userid != update.userid, "the old nick's next holder is not us")
+        assertTrue(add.userid < 0)
+        val theirs = assertIs<Inbound.Chat>(a.one("""{"cmd":"chat","nick":"alice","text":"me again","time":9}"""))
+        assertEquals(add.userid, theirs.userid)
+    }
+
+    /** Somebody else's nick change stays a leave and a join. */
+    @Test
+    fun someoneElses2018NickChangeIsALeaveAndAJoin() {
+        val a = asAlice()
+        assertIs<Inbound.OnlineRemove>(a.one("""{"cmd":"onlineRemove","nick":"bob","time":7}"""))
+        val add = assertIs<Inbound.OnlineAdd>(a.one("""{"cmd":"onlineAdd","nick":"bob2","trip":"null","time":7}"""))
+        assertEquals(LegacyAdapter.idFor("bob2"), add.userid)
+    }
 }

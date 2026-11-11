@@ -68,7 +68,12 @@ the background.
 - **Whispers, invites, the user list, and moderation** — kick, ban, muzzle —
   from a long-press on anyone in the roster, with each action offered only when
   the server would actually accept it.
-- **Point it at another server** if you run your own hack.chat.
+- **Point it at another server** if you run your own hack.chat, or several at
+  once — including ones still running the 2018–2019 protocol. The
+  [trollegle chatbox](https://bellawhiskey.ca/trollegle/chatbox/?support) is
+  built in: tap **+ trollegle** on the join screen, or paste a link to any of
+  its channels, and its own client's slash commands (`/nick`, `/ignore`,
+  `/ignoreexpr`, …) work as they do there.
 
 ### Not there yet
 

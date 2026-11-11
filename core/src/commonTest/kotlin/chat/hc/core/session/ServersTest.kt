@@ -91,4 +91,62 @@ class ServersTest {
         assertEquals("localhost:6060", Servers.label(valid("localhost:6060")))
         assertEquals("old.example", Servers.label("ws://old.example"))
     }
+
+    /** A link to the web client is what gets shared, and the socket is elsewhere. */
+    @Test
+    fun aTrollegleLinkNamesItsServerAndChannel() {
+        val link = Servers.link("https://bellawhiskey.ca/trollegle/chatbox/?support")!!
+        assertEquals(Servers.TROLLEGLE, link.instance)
+        assertEquals("wss://bellawhiskey.ca/trollegle/chatbox-ws/", link.server)
+        assertEquals("support", link.channel)
+        assertNull(link.nick)
+        // However much of it survived being copied.
+        for (input in listOf(
+            "bellawhiskey.ca/trollegle/chatbox/?support",
+            "http://bellawhiskey.ca/trollegle/chatbox?support",
+            " https://bellawhiskey.ca/trollegle/chatbox/index.html?support ",
+        )) assertEquals("support", Servers.link(input)?.channel, input)
+    }
+
+    @Test
+    fun aLinkMayNameNoChannelOrANick() {
+        assertNull(Servers.link("https://bellawhiskey.ca/trollegle/chatbox/")!!.channel)
+        val link = Servers.link("https://hack.chat/?programming#bob#secret")!!
+        assertEquals(Servers.DEFAULT_URL, link.server)
+        assertEquals("programming", link.channel)
+        // The page joins as everything after the first `#`, password included.
+        assertEquals("bob#secret", link.nick)
+    }
+
+    @Test
+    fun onlyKnownPagesAreLinks() {
+        for (input in listOf(
+            "support", "?support", "https://example.com/?support",
+            "https://bellawhiskey.ca/?support", "https://bellawhiskey.ca/trollegle/?support",
+            "wss://bellawhiskey.ca/trollegle/chatbox-ws/", "ws://hack.chat",
+            "https://hack.chat/ ?x",
+        )) assertNull(Servers.link(input), input)
+    }
+
+    /** Pasting the page into "Add a server" adds the server behind it. */
+    @Test
+    fun aPageAddressNormalizesToItsSocket() {
+        assertEquals(Servers.TROLLEGLE.url, valid("https://bellawhiskey.ca/trollegle/chatbox/?support"))
+        assertEquals(Servers.TROLLEGLE.url, valid(Servers.TROLLEGLE.url))
+    }
+
+    @Test
+    fun knownServersAreLabelledByName() {
+        assertEquals("trollegle", Servers.label(Servers.TROLLEGLE.url))
+        assertEquals("hack.chat", Servers.label(Servers.DEFAULT_URL))
+        assertEquals("localhost:6060", Servers.label("ws://localhost:6060/chat-ws"))
+    }
+
+    @Test
+    fun trollegleIsV1AndDefaultsToSupport() {
+        assertEquals(Dialect.V1, Servers.known(Servers.TROLLEGLE.url)?.dialect)
+        assertEquals("support", Servers.TROLLEGLE.defaultChannel)
+        assertTrue(Servers.TROLLEGLE.clientCommands)
+        assertTrue(!Servers.HACK_CHAT.clientCommands)
+    }
 }

@@ -42,6 +42,30 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!--
+              Links to a channel on a known server's web client (Servers.KNOWN),
+              which open the join form there. Unverified, so Android 12+ leaves
+              them to the browser until "Open supported links" is turned on in
+              the app's settings; before that, and from a chooser, they work.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="hack.chat" />
+                <data android:path="/" />
+            </intent-filter>
+            <!-- Separately: <data> in one filter combine, host with every path. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="bellawhiskey.ca" />
+                <data android:pathPrefix="/trollegle/chatbox" />
+            </intent-filter>
         </activity>
 
         <!--

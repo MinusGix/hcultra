@@ -19,6 +19,12 @@ package chat.hc.core.protocol
  * | warn               | no `id` on 2019, so only the prose says what it is  |
  * | `trip`             | the string `"null"` for none on `onlineAdd`         |
  *
+ * And a server from 2018 (the trollegle chatbox runs one) is older still. It
+ * parses no slash commands at all, so `/me waves` is broadcast as a chat and
+ * left to clients to show as an emote; an invite is an `info` with only an
+ * `invite` key and prose; and `changenick` reaches everyone, the renamed
+ * included, as the old nick leaving and the new one arriving.
+ *
  * Everything is filled in only where it is missing, so a frame that is
  * already v2-shaped passes through untouched: which dialect a socket speaks is
  * not always known until its `onlineSet`, and this has to be safe either way.
@@ -44,18 +50,38 @@ class LegacyAdapter {
     /** The level each nick is known to hold, so a promotion is reported once. */
     private val levels = HashMap<String, Int>()
 
+    /**
+     * Set when our own nick has just left: on a server without userids that
+     * only happens as the first half of a `changenick`, and the `onlineAdd`
+     * right after it is us under the new name.
+     */
+    private var renamedFrom: String? = null
+
     fun adapt(frame: Inbound): List<Inbound> = when (frame) {
         is Inbound.OnlineSet -> listOf(onlineSet(frame))
 
         is Inbound.OnlineAdd -> {
-            val add = if (frame.userid != 0L) frame
-            else frame.copy(userid = idOf(frame.nick), trip = realTrip(frame.trip))
-            ids[add.nick] = add.userid
-            listOf(add)
+            val old = renamedFrom
+            renamedFrom = null
+            if (old != null && frame.userid == 0L) listOf(renamed(old, frame))
+            else {
+                val add = if (frame.userid != 0L) frame
+                else frame.copy(userid = idOf(frame.nick), trip = realTrip(frame.trip))
+                ids[add.nick] = add.userid
+                listOf(add)
+            }
         }
 
-        is Inbound.OnlineRemove ->
-            listOf(if (frame.userid != 0L) frame else frame.copy(userid = idOf(frame.nick)))
+        is Inbound.OnlineRemove -> when {
+            frame.userid != 0L -> listOf(frame)
+            // Held back rather than passed on: leaving is not what happened,
+            // and our own roster entry going away would take `isme` with it.
+            me != null && frame.nick == me -> {
+                renamedFrom = frame.nick
+                emptyList()
+            }
+            else -> listOf(frame.copy(userid = idOf(frame.nick)))
+        }
 
         is Inbound.Chat -> chat(frame)
 
@@ -67,6 +93,29 @@ class LegacyAdapter {
         is Inbound.Warn -> listOf(if (frame.id != null) frame else frame.copy(id = idForWarning(frame.text)))
 
         else -> listOf(frame)
+    }
+
+    /**
+     * Our own `changenick`, as a rename under the userid we already had. A
+     * nick is the only identity such a server has, so this is the one place
+     * the derived id and the nick part: keeping the id is what keeps our
+     * messages ours, and our roster entry `isme`, after the change.
+     */
+    private fun renamed(old: String, add: Inbound.OnlineAdd): Inbound {
+        val id = idOf(old)
+        // Whoever takes the old nick next is somebody else.
+        ids.remove(old)
+        levels.remove(old)?.let { levels[add.nick] = it }
+        ids[add.nick] = id
+        me = add.nick
+        return Inbound.UpdateUser(
+            nick = add.nick,
+            userid = id,
+            trip = realTrip(add.trip),
+            hash = add.hash,
+            channel = add.channel,
+            time = add.time,
+        )
     }
 
     private fun onlineSet(frame: Inbound.OnlineSet): Inbound.OnlineSet {
@@ -96,6 +145,19 @@ class LegacyAdapter {
      */
     private fun chat(frame: Inbound.Chat): List<Inbound> {
         if (frame.userid != 0L || frame.nick.isEmpty()) return listOf(frame)
+        if (frame.text.startsWith(ME)) {
+            // What the 2018 web client does with it: an action, by that nick.
+            return listOf(
+                Inbound.Emote(
+                    nick = frame.nick,
+                    userid = idOf(frame.nick),
+                    text = "@${frame.nick} ${frame.text.removePrefix(ME)}",
+                    channel = frame.channel,
+                    trip = realTrip(frame.trip),
+                    time = frame.time,
+                )
+            )
+        }
         val level = when {
             frame.level != 0 -> frame.level
             frame.admin -> Levels.ADMIN
@@ -157,34 +219,53 @@ class LegacyAdapter {
             }
         }
 
-        "invite" -> {
-            val destination = frame.inviteChannel ?: frame.invite
-            val from = frame.from.orEmpty()
-            when {
-                destination == null -> frame
-                from.isNotEmpty() -> Inbound.Invite(
-                    from = idOf(from),
-                    to = myId(),
-                    inviteChannel = destination,
-                    channel = frame.channel,
-                    time = frame.time,
-                )
-                else -> INVITED.find(frame.text)?.let { m ->
-                    Inbound.Invite(
-                        from = myId(),
-                        to = idOf(m.groupValues[1]),
-                        inviteChannel = destination,
-                        channel = frame.channel,
-                        time = frame.time,
-                    )
-                } ?: frame
-            }
-        }
+        "invite" -> invite(frame)
+
+        // 2018 marks an invite only by the `invite` key, and only on the one
+        // sent to the invitee; the inviter's copy is prose alone.
+        null -> if (frame.invite != null || INVITED.containsMatchIn(frame.text)) invite(frame) else frame
 
         else -> frame
     }
 
-    private fun idOf(nick: String): Long = ids[nick] ?: idFor(nick)
+    private fun invite(frame: Inbound.Info): Inbound {
+        val destination = frame.inviteChannel ?: frame.invite
+            ?: INVITED.find(frame.text)?.let { frame.text.substring(it.range.last + 1) }
+            ?: return frame
+        val from = frame.from ?: INVITED_BY.find(frame.text)?.groupValues?.get(1).orEmpty()
+        if (from.isNotEmpty()) {
+            return Inbound.Invite(
+                from = idOf(from),
+                to = myId(),
+                inviteChannel = destination,
+                channel = frame.channel,
+                time = frame.time,
+            )
+        }
+        // Our own, echoed: the invitee is named only in the prose.
+        return INVITED.find(frame.text)?.let { m ->
+            Inbound.Invite(
+                from = myId(),
+                to = idOf(m.groupValues[1]),
+                inviteChannel = destination,
+                channel = frame.channel,
+                time = frame.time,
+            )
+        } ?: frame
+    }
+
+    private fun idOf(nick: String): Long = ids[nick] ?: derive(nick)
+
+    /**
+     * [idFor], unless someone already holds that id under another nick —
+     * which only a rename makes possible: after ours, the old nick's id is
+     * still ours, and whoever takes the nick next must not inherit it.
+     */
+    private fun derive(nick: String): Long {
+        var id = idFor(nick)
+        while (ids.any { (held, heldId) -> heldId == id && !held.equals(nick, ignoreCase = true) }) id -= 1
+        return id
+    }
 
     private fun myId(): Long = me?.let(::idOf) ?: 0L
 
@@ -198,6 +279,10 @@ class LegacyAdapter {
 
         private val WHISPERED = Regex("""You whispered to @(\S+): (.*)""", RegexOption.DOT_MATCHES_ALL)
         private val INVITED = Regex("""^You invited (\S+) to \?""")
+        private val INVITED_BY = Regex("""^(\S+) invited you to \?""")
+
+        /** How a 2018 client tells an action from a chat; see [chat]. */
+        private const val ME = "/me "
 
         /** `onlineAdd` spells a missing trip as the string "null". */
         private fun realTrip(trip: String?): String? = trip?.takeUnless { it.isEmpty() || it == "null" }
