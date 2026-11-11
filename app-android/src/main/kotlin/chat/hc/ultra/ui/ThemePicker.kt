@@ -119,6 +119,8 @@ fun ThemeSheet(
     /** Days kept per channel, or null for no age limit. */
     historyDays: Int?,
     onHistoryChanged: (lines: Int, days: Int?) -> Unit,
+    keepHistory: Boolean,
+    onKeepHistoryChanged: (Boolean) -> Unit,
     translate: Boolean,
     onTranslateChanged: (Boolean) -> Unit,
     /** One of [GoogleTranslate.LANGUAGES], or null for the phone's language. */
@@ -210,6 +212,16 @@ fun ThemeSheet(
             )
             IgnoreSetting(ignoreMode, onIgnoreModeChanged, ignoreFunText, onIgnoreFunTextChanged)
             HistorySetting(historyLines, historyDays, onHistoryChanged)
+            ToggleRow(
+                title = "Keep history after disconnecting",
+                // The cost named plainly: this is the one thing that puts the
+                // conversation on disk, against hack.chat's no-logs habit.
+                subtitle = "Saved on this phone, encrypted, so a channel reopened after " +
+                    "Disconnect or after Android closes the app shows what was said before. " +
+                    "Closing a channel's tab deletes its copy. Off, history is in memory only.",
+                checked = keepHistory,
+                onChanged = onKeepHistoryChanged,
+            )
             ToggleRow(
                 title = "Show images in the transcript",
                 // The honest cost, since that is what the choice is about: an
@@ -933,9 +945,9 @@ private fun HistorySetting(lines: Int, days: Int?, onChanged: (Int, Int?) -> Uni
     Column(Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("History kept per channel", style = MaterialTheme.typography.bodyMedium)
         Text(
-            "In memory only, and gone when the app is closed. Whichever limit is reached " +
-                "first applies. Only the newest few hundred lines are drawn until you scroll " +
-                "up, so a long history does not slow the transcript down.",
+            "Whichever limit is reached first applies. Only the newest few hundred lines " +
+                "are drawn until you scroll up, so a long history does not slow the " +
+                "transcript down.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -48,7 +48,8 @@ data class ChannelUi(
  * This lives in the Android foreground service, not in the UI: the service is
  * the source of truth, and an Activity that is destroyed and recreated
  * re-reads state from here rather than reconnecting. That is what makes
- * backgrounding and returning feel seamless while history stays in memory only.
+ * backgrounding and returning feel seamless; [TranscriptStore] covers the
+ * service itself going away.
  *
  * One socket per channel, by choice since the 2026-10 server update (a v2
  * socket may now join several); see [ChannelSession].
@@ -68,6 +69,13 @@ class SessionManager(
      * would be empty exactly when it is needed — on a fresh launch.
      */
     private val motdStore: MotdStore = InMemoryMotdStore(),
+    /**
+     * Where each channel's scrollback is kept for a process that outlives this
+     * one — see [TranscriptStore]. Nothing by default: written to only by
+     * [saveTranscripts] and [stopAll], read back by [join] into a channel
+     * that has no buffer yet, and dropped when the channel is left.
+     */
+    private val transcriptStore: TranscriptStore = NoTranscriptStore,
     /**
      * How much of each channel to keep. A supplier, like [showJoinLeave], since
      * it is a user setting that changes while this manager lives in the
@@ -133,6 +141,17 @@ class SessionManager(
     /** Pending [beginLeave] grace periods. Presence here means "closing". */
     private val closeTimers = LinkedHashMap<ChannelKey, Job>()
     private val lock = Mutex()
+
+    /**
+     * When each channel that is down went down, for the "disconnected for"
+     * line its next resume writes. The first drop of an outage, not the
+     * latest: every backoff attempt reports one. Flows for their atomic update,
+     * as [detected] is: events arrive from each session's own collector.
+     */
+    private val downSince = MutableStateFlow<Map<ChannelKey, Long>>(emptyMap())
+
+    /** Channels whose scrollback changed since [saveTranscripts] last wrote it. */
+    private val unsaved = MutableStateFlow<Set<ChannelKey>>(emptySet())
 
     private val _channels = MutableStateFlow<Map<ChannelKey, ChannelUi>>(emptyMap())
     val channels: StateFlow<Map<ChannelKey, ChannelUi>> = _channels.asStateFlow()
@@ -250,7 +269,11 @@ class SessionManager(
                 onDialect = { found -> detected.update { it + (server to found) } },
             )
             sessions[key] = session
-            buffers.getOrPut(key) { ChannelBuffer(historyLimit().maxLines) }
+            if (key !in buffers) {
+                val buffer = ChannelBuffer(historyLimit().maxLines)
+                buffers[key] = buffer
+                restoreTranscript(key, buffer)
+            }
             _channels.update { it + (key to (it[key] ?: ChannelUi(key))) }
             publish(key)
 
@@ -338,10 +361,62 @@ class SessionManager(
         jobs.remove(key)?.cancel()
         buffers.remove(key)
         _channels.update { it - key }
+        // Leaving is the user saying they are done with it; the copy goes too.
+        downSince.update { it - key }
+        unsaved.update { it - key }
+        transcriptStore.delete(key)
+    }
+
+    /**
+     * Fills a channel's new buffer with what an earlier process kept of it, and
+     * starts its outage clock from when that process last saw it connected.
+     *
+     * A message still waiting for its echo when that process died will never
+     * get one, so it comes back unconfirmed rather than spinning forever.
+     */
+    private suspend fun restoreTranscript(key: ChannelKey, buffer: ChannelBuffer) {
+        val saved = transcriptStore.load(key) ?: return
+        if (saved.messages.isEmpty()) return
+        saved.messages.forEach { m ->
+            buffer.add(if (m.delivery == Delivery.Sending) m.copy(delivery = Delivery.Unconfirmed) else m)
+        }
+        downSince.update { it + (key to saved.lastSeen) }
+    }
+
+    /**
+     * Writes every channel's scrollback to the [TranscriptStore]: in full where
+     * it changed, and otherwise only that the channel is still here, so that a
+     * process killed without warning is counted as gone from about when it
+     * died rather than from its last message. Called on a timer by the service,
+     * and with [everything] when saving has just been switched on and nothing
+     * is on disk to touch.
+     */
+    suspend fun saveTranscripts(everything: Boolean = false) {
+        lock.withLock {
+            val changed = unsaved.value
+            unsaved.update { it - changed }
+            val at = now()
+            buffers.forEach { (key, buffer) ->
+                val seen = downSince.value[key] ?: at
+                if (everything || key in changed) transcriptStore.save(key, buffer.snapshot(), seen)
+                else transcriptStore.seen(key, seen)
+            }
+        }
     }
 
     suspend fun stopAll() {
         lock.withLock {
+            // Kept for whoever opens these channels next: stopping is not
+            // leaving, and the server cannot give back what was said.
+            // A channel waiting out its close is already left as far as the
+            // user is concerned, so it is dropped as a leave would drop it.
+            val at = now()
+            buffers.forEach { (key, buffer) ->
+                if (key in closeTimers) transcriptStore.delete(key)
+                else transcriptStore.save(key, buffer.snapshot(), downSince.value[key] ?: at)
+            }
+            downSince.value = emptyMap()
+            unsaved.value = emptySet()
             closeTimers.values.forEach { it.cancel() }
             sessions.values.forEach { it.stop() }
             jobs.values.forEach { it.cancel() }
@@ -569,7 +644,14 @@ class SessionManager(
             // A cold resume is peer-visible; a silent one is not. Worth noting in
             // the transcript so a reader can tell why join/leave noise appeared.
             is SessionEvent.Resumed -> {
-                if (!event.silent && event.restored) {
+                // Said whenever there was an outage to measure, silent or not:
+                // peers may not have noticed, but anything said meanwhile was
+                // missed all the same.
+                val since = downSince.value[channel]
+                downSince.update { it - channel }
+                if (since != null) {
+                    buffer.add(ChatMessage(0, MessageKind.Info, text = Downtime.notice(now() - since), at = now()))
+                } else if (!event.silent && event.restored) {
                     buffer.add(ChatMessage(0, MessageKind.Info, text = "Reconnected.", at = now()))
                 }
                 // Mirrors client.js#onlineSet: the site answers "who is here"
@@ -605,6 +687,7 @@ class SessionManager(
             // Disconnected event on every backoff attempt, which otherwise fills
             // the transcript with identical lines.
             is SessionEvent.Disconnected -> {
+                downSince.update { if (channel in it) it else it + (channel to now()) }
                 // Anything still waiting for an echo will never get one.
                 buffer.markAllPendingUnconfirmed()
                 val last = buffer.snapshot().lastOrNull()
@@ -719,6 +802,7 @@ class SessionManager(
     private fun publish(channel: ChannelKey) {
         val buffer = buffers[channel] ?: return
         buffer.enforce(historyLimit(), now())
+        unsaved.update { it + channel }
         mutate(channel) { it.copy(messages = buffer.snapshot()) }
     }
 

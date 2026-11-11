@@ -276,6 +276,16 @@ class ThemePrefs(context: Context) {
         get() = prefs.getInt(KEY_HISTORY_DAYS, 0).takeIf { it > 0 }
         set(value) = prefs.edit().putInt(KEY_HISTORY_DAYS, value?.coerceAtLeast(1) ?: 0).apply()
 
+    /**
+     * Whether each open channel's history is kept on the phone, encrypted, so
+     * that it survives the service stopping — the notification's Disconnect,
+     * or Android reclaiming it — and is there again when the channel reopens.
+     * Closing a channel's tab deletes its copy either way.
+     */
+    var keepHistory: Boolean
+        get() = prefs.getBoolean(KEY_KEEP_HISTORY, true)
+        set(value) = prefs.edit().putBoolean(KEY_KEEP_HISTORY, value).apply()
+
     /** The two history settings as the service applies them. */
     val historyLimit: HistoryLimit
         get() = HistoryLimit(historyLines, historyDays?.let { it * HistoryLimit.DAY_MILLIS })
@@ -321,5 +331,6 @@ class ThemePrefs(context: Context) {
         const val KEY_IGNORE_TEXT = "ignore_fun_text"
         const val KEY_HISTORY_LINES = "history_lines"
         const val KEY_HISTORY_DAYS = "history_days"
+        const val KEY_KEEP_HISTORY = "keep_history"
     }
 }

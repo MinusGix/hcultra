@@ -85,6 +85,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import chat.hc.ultra.data.ImageSources
+import chat.hc.ultra.data.TranscriptFiles
 import chat.hc.ultra.data.TranslatePrefs
 import chat.hc.ultra.data.TranslateResult
 import chat.hc.ultra.data.Translator
@@ -228,6 +229,7 @@ class MainActivity : ComponentActivity() {
             var ignoreFunText by remember { mutableStateOf(themePrefs.ignoreFunText) }
             var historyLines by remember { mutableStateOf(themePrefs.historyLines) }
             var historyDays by remember { mutableStateOf(themePrefs.historyDays) }
+            var keepHistory by remember { mutableStateOf(themePrefs.keepHistory) }
             var notifyMentions by remember { mutableStateOf(notifyPrefs.mentions) }
             var notifyWhispers by remember { mutableStateOf(notifyPrefs.whispers) }
             var notifyInvites by remember { mutableStateOf(notifyPrefs.invites) }
@@ -371,6 +373,12 @@ class MainActivity : ComponentActivity() {
                                 historyLines = themePrefs.historyLines
                                 historyDays = themePrefs.historyDays
                                 startEnforceHistory()
+                            },
+                            keepHistory = keepHistory,
+                            onKeepHistoryChanged = {
+                                themePrefs.keepHistory = it
+                                keepHistory = it
+                                setKeepHistory(it)
                             },
                             translate = translate,
                             onTranslateChanged = {
@@ -589,6 +597,23 @@ class MainActivity : ComponentActivity() {
     private fun startEnforceHistory() {
         val svc = service ?: return
         lifecycleScope.launch { svc.sessions.enforceHistory() }
+    }
+
+    /**
+     * Acts on the "Keep history" switch at once rather than at the next save:
+     * on, every open channel is written now, since one that is quiet would
+     * otherwise have nothing on disk until somebody spoke; off, every copy goes.
+     * The pref is already written, so the service's own saves stop with it.
+     */
+    private fun setKeepHistory(keep: Boolean) {
+        val svc = service
+        lifecycleScope.launch {
+            when {
+                keep -> svc?.sessions?.saveTranscripts(everything = true)
+                svc != null -> svc.transcripts.clearAll()
+                else -> TranscriptFiles(this@MainActivity) { false }.clearAll()
+            }
+        }
     }
 
     private fun startAnswer(channel: ChannelKey, text: String) {
