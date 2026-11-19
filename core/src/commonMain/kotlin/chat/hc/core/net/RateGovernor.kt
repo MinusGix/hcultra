@@ -82,6 +82,18 @@ class RateGovernor(
         stamp = t
     }
 
+    /**
+     * Record that the server says we are at its threshold: a RATELIMIT or
+     * BLOCKED warn means its score has reached it, whatever ours says. Raised
+     * to the ceiling rather than by a guessed amount, so the next frame waits
+     * as long as the server will make it, and no longer.
+     */
+    suspend fun saturate() = mutex.withLock {
+        val t = now()
+        score = maxOf(projected(t), ceiling)
+        stamp = t
+    }
+
     /** Command weights, from the server command modules. */
     object Cost {
         /**
@@ -94,6 +106,9 @@ class RateGovernor(
         const val JOIN = 3.0
         const val HELP = 2.0
         const val INVITE = 2.0
+
+        /** changenick.js, on both the 2018 server and today's. */
+        const val CHANGE_NICK = 6.0
 
         /**
          * `session` is currently free due to a bug in session.js (it calls

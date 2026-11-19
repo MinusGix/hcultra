@@ -1,5 +1,7 @@
 package chat.hc.core.session
 
+import chat.hc.core.net.RateGovernor
+
 /**
  * Server endpoint handling.
  *
@@ -43,7 +45,26 @@ object Servers {
         val clientCommands: Boolean = false,
         /** Whether it has whispers at all; offering one where it has none would post it to the room. */
         val whispers: Boolean = true,
+        /** Its rate limiter, where it is not the one in the code it runs; see [RateLimits]. */
+        val limits: RateLimits = RateLimits(),
+        /** How soon to try again after a failed connection. */
+        val backoff: Backoff = Backoff(),
     )
+
+    /**
+     * A server's rate limiter, in the units of [RateGovernor.Cost]: one point
+     * per frame, three more for a join, and so on.
+     *
+     * hack.chat's code says a threshold of 25 and a half-life of 30 s, in
+     * 2018 and today, but what a server runs need not be what its code says.
+     */
+    data class RateLimits(
+        /** Kept under: [RateGovernor] refuses to let the score reach it. */
+        val ceiling: Double = 25.0,
+        val halflifeMillis: Long = 30_000,
+    ) {
+        fun governor(): RateGovernor = RateGovernor(halflifeMillis = halflifeMillis, ceiling = ceiling)
+    }
 
     val HACK_CHAT = Instance(
         name = "hack.chat",
@@ -56,6 +77,18 @@ object Servers {
      * Trollegle's "support group" chatbox, for when Omegle wasn't working:
      * hack.chat as of July 2018 (commit c066818, by its front page), so v1, no
      * whispers, no emotes, and every slash command handled by its own client.
+     *
+     * Its rate limiter is not c066818's. Measured on 2026-11-19 with no-op
+     * `ping` frames (one point each there): a join and eight pings in under a
+     * second were enough to be blocked, and after the block it let through 6,
+     * 9 and 11 more after waiting 15, 30 and 60 s. That is a threshold near 11
+     * and a half-life near 15 s; c066818 lets through 22 at first, and 8, 13 and
+     * 20 after the same waits. A third join in a row is refused there, where
+     * c066818 refuses the seventh. So the ceiling is 10, under the measured
+     * threshold for slack, and the half-life 16 s, a little slower than
+     * measured, so that our model never decays faster than the server's.
+     *
+     * Retries start at 2 s rather than 1: a join is over a third of its budget.
      */
     val TROLLEGLE = Instance(
         name = "trollegle",
@@ -65,6 +98,8 @@ object Servers {
         defaultChannel = "support",
         clientCommands = true,
         whispers = false,
+        limits = RateLimits(ceiling = 10.0, halflifeMillis = 16_000),
+        backoff = Backoff(baseMillis = 2_000),
     )
 
     val KNOWN: List<Instance> = listOf(HACK_CHAT, TROLLEGLE)

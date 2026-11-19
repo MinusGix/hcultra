@@ -199,6 +199,7 @@ class LegacyAdapterTest {
         val a = LegacyAdapter()
         fun id(text: String) = assertIs<Inbound.Warn>(a.one("""{"cmd":"warn","text":"$text"}""")).id
         assertEquals(ErrorId.BLOCKED, id("You are being rate-limited or blocked."))
+        assertEquals(ErrorId.BLOCKED, id("Your IP is being rate-limited or blocked."))
         assertEquals(ErrorId.RATELIMIT, id("You are joining channels too fast. Wait a moment and try again."))
         assertEquals(ErrorId.JOIN_NAME_TAKEN, id("Nickname taken"))
         assertEquals(ErrorId.JOIN_INVALID_NICK, id("Nickname must consist of up to 24 letters, numbers, and underscores"))

@@ -13,6 +13,7 @@ import chat.hc.core.protocol.Outbound
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
@@ -31,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -93,6 +95,14 @@ class ChannelSession(
      * `join` sent a little early.
      */
     private val probeMillis: Long = 4_000,
+    /**
+     * Whether a socket of ours from before this session may still be in the
+     * channel: an earlier process, or an earlier session in this one, was
+     * connected here recently enough that the server may not have noticed it
+     * go. Lets a first join treat "Nickname taken" as our own ghost, as a
+     * reconnect does; see [awaitAdmission].
+     */
+    private val mayHaveGhost: Boolean = false,
 ) {
     private val _state = MutableStateFlow<SessionState>(SessionState.Idle)
     val state: StateFlow<SessionState> = _state.asStateFlow()
@@ -114,6 +124,15 @@ class ChannelSession(
 
     /** Whether the last attempt failed on our own ghost; set by [supervise]. */
     private var lastFailureWasGhost = false
+
+    /**
+     * The nick to take back once our ghost lets go of it, while a v1
+     * connection is in under a stand-in ([standInNick]). Null otherwise.
+     */
+    private var reclaim: String? = null
+
+    /** Where to run the `changenick` that takes the nick back; the supervisor's. */
+    private var scope: CoroutineScope? = null
     val roster get() = presence.roster
 
     /** Our own userid, learned at join and stable across restores. */
@@ -156,6 +175,7 @@ class ChannelSession(
     fun start(scope: CoroutineScope) {
         if (supervisor != null) return
         stopped = false
+        this.scope = scope
         supervisor = scope.launch { supervise(this) }
     }
 
@@ -273,6 +293,33 @@ class ChannelSession(
         pump(fresh)
     }
 
+    /**
+     * Moves a v1 connection onto the network the device has just switched to,
+     * while the one it is on still works.
+     *
+     * The case this is for: wifi comes back while we are on mobile data. The
+     * phone keeps the old network up for a little while and then tears it
+     * down, killing our socket without a word reaching the server, which then
+     * keeps our nick for as long as TCP takes to give up — a quarter of an
+     * hour. Closing first, while the goodbye can still arrive, frees the nick
+     * at once. There is no make-before-break on v1 (no token, and a second
+     * join under our nick is refused), so this is break-before-make; peers see
+     * the same leave and join a drop would have shown them, minutes sooner.
+     *
+     * The reconnect skips the backoff: [pump] ends only once the server has
+     * answered the close, so the nick is already free.
+     */
+    suspend fun moveToNewNetwork() {
+        if (!legacy) return
+        val old = current ?: return
+        if (!old.isOpen) return
+        reconnectAtOnce = true
+        old.close()
+    }
+
+    /** Set by [moveToNewNetwork]: the coming disconnect was ours, so skip the backoff. */
+    private var reconnectAtOnce = false
+
     private suspend fun supervise(scope: CoroutineScope) {
         var attempt = 0
         while (scope.isActive && !stopped) {
@@ -287,9 +334,27 @@ class ChannelSession(
                 emit(SessionEvent.Resumed(channel, live.restored, silent = expectSilentResume))
                 expectSilentResume = false
                 flushDeferred(live)
+                reclaim?.let { nick ->
+                    emit(
+                        SessionEvent.Notice(
+                            channel,
+                            Inbound.Info(
+                                text = "The server still has your last connection here as $nick, so you " +
+                                    "joined as ${presence.roster.firstOrNull { it.isme }?.nick ?: "a stand-in"}. " +
+                                    "You will be renamed back to $nick when the server lets it go.",
+                            ),
+                        )
+                    )
+                    // Gone already: it left between our join and its onlineSet.
+                    if (presence.roster.none { it.nick.equals(nick, ignoreCase = true) }) takeBack()
+                }
                 pump(live)
                 emit(SessionEvent.Disconnected(channel, null))
             } catch (c: CancellationException) {
+                // Cancelled while live (the service going away): say goodbye.
+                // A socket left open here outlives us in the HTTP client and
+                // keeps our nick on a server with no session to resume.
+                withContext(NonCancellable) { current?.close() }
                 throw c
             } catch (e: FatalSessionException) {
                 _state.value = SessionState.Failed(e.message ?: "fatal")
@@ -303,8 +368,14 @@ class ChannelSession(
             }
 
             current = null
+            reclaim = null
             if (stopped) break
 
+            if (reconnectAtOnce) {
+                reconnectAtOnce = false
+                attempt = 0
+                continue
+            }
             attempt += 1
             val wait = backoff.delayFor(attempt)
             if (lastFailureWasGhost) ghostWaitedMillis += wait
@@ -444,7 +515,9 @@ class ChannelSession(
             awaitToken(frames, deferred)
             return LiveConnection(opened, frames, restored = false, deferred = deferred.toList())
         } catch (c: CancellationException) {
-            conn?.close()
+            // Without NonCancellable the close frame is refused before it is
+            // sent, and the server keeps the socket.
+            withContext(NonCancellable) { conn?.close() }
             throw c
         } catch (e: Throwable) {
             conn?.close()
@@ -475,9 +548,29 @@ class ChannelSession(
      * it has no `pass` field. Today's server reads either, but a v2 socket
      * keeps the field it has always been sent.
      */
-    private fun joinFrame(): Outbound.Join =
-        if (legacy) Outbound.Join(channel, credentials.nick + (credentials.pass?.let { "#$it" } ?: ""))
-        else Outbound.Join(channel, credentials.nick, credentials.pass)
+    private fun joinFrame(nick: String = credentials.nick): Outbound.Join =
+        if (legacy) Outbound.Join(channel, nick + (credentials.pass?.let { "#$it" } ?: ""))
+        else Outbound.Join(channel, nick, credentials.pass)
+
+    /**
+     * Asks for our nick back once the ghost holding it has gone. Not awaited
+     * from [dispatch]: the governor may make it wait, and frames must keep
+     * flowing meanwhile. Whatever the server says — the rename, or "Nickname
+     * taken" if someone else got there first — arrives as ordinary frames.
+     */
+    private fun takeBack() {
+        val nick = reclaim ?: return
+        reclaim = null
+        scope?.launch {
+            try {
+                send(Outbound.ChangeNick(channel, nick))
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: Exception) {
+                // Dropped before it could go; the next connection joins as [nick] anyway.
+            }
+        }
+    }
 
     /**
      * The token trails onlineSet and the MOTD. Missing it is not fatal — we
@@ -520,6 +613,9 @@ class ChannelSession(
         // Whether the answer in flight came from memory rather than the user.
         var answeredForUser = false
         var offeredPassword: String? = null
+        // Stand-ins tried so far for a nick our own ghost still holds.
+        var standIns = 0
+        reclaim = null
 
         while (true) {
             val reply = awaitFrame(frames, "onlineSet", deferred) {
@@ -553,8 +649,24 @@ class ChannelSession(
                     // channels, and the cold join that follows checks nick
                     // collisions without excluding our own userid — so a
                     // reconnect collides with the socket we just lost until the
-                    // server reaps it. A first join has no ghost: that clash is real.
-                    if (reply.id == ErrorId.JOIN_NAME_TAKEN && everLive && ghostWaitedMillis < GHOST_WINDOW_MILLIS) {
+                    // server reaps it. A first join has no ghost, so that clash
+                    // is real, unless we were here moments ago ([mayHaveGhost]).
+                    val ghostLikely = (everLive || (legacy && mayHaveGhost)) && ghostWaitedMillis < GHOST_WINDOW_MILLIS
+                    if (reply.id == ErrorId.JOIN_NAME_TAKEN && ghostLikely) {
+                        // A v1 server has nothing to resume and never drops a
+                        // socket that stops answering pings, so the ghost lasts
+                        // until TCP gives up on it: a quarter of an hour. Rather
+                        // than sit that out, come in under a stand-in and take
+                        // the nick back when it leaves. A failed join leaves the
+                        // socket outside any channel, so it can try again here.
+                        if (legacy && standIns < MAX_STAND_INS) {
+                            standIns += 1
+                            reclaim = credentials.nick
+                            governor.spend(RateGovernor.Cost.JOIN)
+                            conn.send(FrameCodec.encode(joinFrame(standInNick(credentials.nick, standIns))))
+                            continue
+                        }
+                        reclaim = null
                         throw GhostNickException()
                     }
                     if (!reply.isWrongAnswer()) {
@@ -696,6 +808,7 @@ class ChannelSession(
             }
 
             is Inbound.OnlineRemove -> {
+                if (reclaim?.equals(frame.nick, ignoreCase = true) == true) takeBack()
                 presence.remove(frame.userid)
                 emit(SessionEvent.UserLeft(channel, frame.userid, frame.nick))
                 emit(SessionEvent.RosterChanged(channel, presence.roster))
@@ -722,8 +835,10 @@ class ChannelSession(
             is Inbound.Info -> emit(SessionEvent.Notice(channel, frame))
 
             is Inbound.Warn -> {
-                // Our local rate model was optimistic; resync before we make it worse.
-                if (frame.isRateLimited()) governor.penalize(RateGovernor.Cost.JOIN)
+                // Our local rate model was optimistic. Either warning means the
+                // server's score has reached its threshold, so that is where
+                // ours goes, rather than a guess at what it was short by.
+                if (frame.isRateLimited()) governor.saturate()
                 emit(SessionEvent.Warning(channel, frame))
             }
 
@@ -788,6 +903,7 @@ class ChannelSession(
         is Outbound.Whisper -> RateGovernor.Cost.chat(frame.text)
         is Outbound.Join -> RateGovernor.Cost.JOIN
         is Outbound.Invite -> RateGovernor.Cost.INVITE
+        is Outbound.ChangeNick -> RateGovernor.Cost.CHANGE_NICK
         is Outbound.Session -> RateGovernor.Cost.SESSION
         else -> RateGovernor.Cost.DEFAULT
     }
@@ -816,7 +932,23 @@ private fun Inbound.Warn.isWrongAnswer(): Boolean =
  * about 15½ minutes at Linux's default `tcp_retries2`. Past this, the nick is
  * someone else's.
  */
-private const val GHOST_WINDOW_MILLIS = 16 * 60_000L
+internal const val GHOST_WINDOW_MILLIS = 16 * 60_000L
+
+/**
+ * How many stand-in nicks to try when our ghost holds ours. Each is a join,
+ * and the trollegle chatbox turns a third join away when they come quickly.
+ */
+private const val MAX_STAND_INS = 2
+
+/**
+ * `alice` → `alice_`, then `alice__`: the IRC habit, so it reads as the same
+ * person. Trimmed from the end of the nick when the 24-character limit
+ * (join.js's `^[a-zA-Z0-9_]{1,24}$`) leaves no room.
+ */
+internal fun standInNick(nick: String, n: Int): String {
+    val suffix = "_".repeat(n)
+    return nick.take(24 - suffix.length) + suffix
+}
 
 /** What `frisk(socket, 7)` charges for a wrong captcha or password. */
 private const val WRONG_ANSWER_COST = 7.0

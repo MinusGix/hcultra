@@ -149,4 +149,11 @@ class ServersTest {
         assertTrue(Servers.TROLLEGLE.clientCommands)
         assertTrue(!Servers.HACK_CHAT.clientCommands)
     }
+
+    @Test
+    fun trollegleHasItsOwnRateLimits() {
+        assertEquals(10.0, Servers.TROLLEGLE.limits.ceiling)
+        assertEquals(16_000L, Servers.TROLLEGLE.limits.halflifeMillis)
+        assertEquals(25.0, Servers.HACK_CHAT.limits.ceiling)
+    }
 }

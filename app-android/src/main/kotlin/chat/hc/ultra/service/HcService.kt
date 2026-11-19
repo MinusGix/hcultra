@@ -2,6 +2,8 @@ package chat.hc.ultra.service
 
 import android.app.Service
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Binder
 import android.os.IBinder
 import android.util.Log
@@ -44,6 +46,23 @@ class HcService : Service() {
     lateinit var sessions: SessionManager
         private set
     private lateinit var notifications: ChatNotifications
+
+    /**
+     * Tells the sessions when the default network changes, so that a server
+     * with no session to resume hears our goodbye on the old network before
+     * the phone drops it; see [SessionManager.networkChanged].
+     */
+    private val networkWatch = object : ConnectivityManager.NetworkCallback() {
+        /** The default network as last reported; null until the first report. */
+        private var current: Network? = null
+
+        override fun onAvailable(network: Network) {
+            val previous = current
+            current = network
+            // The first call only reports the network we started on.
+            if (previous != null && previous != network) scope.launch { sessions.networkChanged() }
+        }
+    }
 
     /** Where the scrollback goes to outlive us; see [ThemePrefs.keepHistory]. */
     lateinit var transcripts: TranscriptFiles
@@ -108,6 +127,8 @@ class HcService : Service() {
         notifications = ChatNotifications(this)
         // Debug builds only: lets adb fill a channel with synthetic history.
         DebugTools.attach(sessions, scope)
+        runCatching { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkWatch) }
+            .onFailure { Log.w(TAG, "no network callback", it) }
 
         // The notification is the app's background presence: it shows which
         // channels are connected and how much is unread, and carries the
@@ -280,6 +301,7 @@ class HcService : Service() {
         notifications.clearAllAlerts()
         // And the history with them, so every picture it showed.
         TranscriptImages.clear()
+        runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkWatch) }
         scope.launch { sessions.stopAll() }
         net.close()
         scope.cancel()
