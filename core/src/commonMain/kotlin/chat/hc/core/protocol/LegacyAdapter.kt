@@ -293,7 +293,9 @@ class LegacyAdapter {
          * and back off, and a refused join must be told from a held one.
          */
         private fun idForWarning(text: String): Int? = when {
-            text.startsWith("You are being rate-limited or blocked") -> ErrorId.BLOCKED
+            // 2019 says "You are", 2018 (the trollegle chatbox) "Your IP is".
+            text.startsWith("You are being rate-limited or blocked") ||
+                text.startsWith("Your IP is being rate-limited or blocked") -> ErrorId.BLOCKED
             text.contains("too fast") || text.startsWith("You are sending too much text") -> ErrorId.RATELIMIT
             text == "Nickname taken" -> ErrorId.JOIN_NAME_TAKEN
             text.startsWith("Nickname must consist") || text == "You are not the admin, liar!" -> ErrorId.JOIN_INVALID_NICK

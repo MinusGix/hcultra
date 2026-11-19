@@ -99,4 +99,34 @@ class RateGovernorTest {
     fun malformedCostIsRecognisedAsDangerous() {
         assertTrue(RateGovernor.Cost.MALFORMED * 2 > 25.0)
     }
+
+    /** A RATELIMIT or BLOCKED warn means the server is at its threshold, whatever we thought. */
+    @Test
+    fun aWarnPutsTheScoreAtTheCeiling() = runTest {
+        val clock = Clock()
+        var slept = 0L
+        val g = RateGovernor(halflifeMillis = 30_000, ceiling = 25.0, now = clock::now, sleep = { slept += it; clock.t += it })
+        g.spend(RateGovernor.Cost.JOIN)
+        g.saturate()
+        assertEquals(25.0, g.projected(), 0.001)
+        g.spend(RateGovernor.Cost.JOIN)
+        // Down from 25 to under 21: log2(25/21) half-lives.
+        assertTrue(slept in 7_000..8_000, "slept $slept")
+    }
+
+    /**
+     * The trollegle chatbox refuses a third join in a row (measured; see
+     * Servers.TROLLEGLE). Its governor must hold the third back, where the
+     * stock one lets six through.
+     */
+    @Test
+    fun trollegleHoldsBackTheThirdJoin() = runTest {
+        val clock = Clock()
+        var slept = 0L
+        val g = RateGovernor(halflifeMillis = 16_000, ceiling = 10.0, now = clock::now, sleep = { slept += it; clock.t += it })
+        repeat(2) { g.spend(RateGovernor.Cost.JOIN) }
+        assertEquals(0L, slept)
+        g.spend(RateGovernor.Cost.JOIN)
+        assertTrue(slept > 0, "the third join went straight out")
+    }
 }

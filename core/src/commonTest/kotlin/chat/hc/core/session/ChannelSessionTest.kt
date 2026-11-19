@@ -486,13 +486,16 @@ class ChannelSessionTest {
         val seen = mutableListOf<SessionEvent>()
         val collector = this.launchCollect(s, seen)
         s.start(this)
+        // Reconnected after one backoff; waiting out the 10 s handshake
+        // timeout first would put this well past it. (The join on it then
+        // waits for the governor, which the warn put at the server's threshold.)
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(2, transport.connections.size, "retried only after the handshake timeout")
         advanceUntilIdle()
 
         assertEquals(SessionState.Live(restored = false), s.state.value)
         assertEquals(2, transport.connections.size)
-        // One backoff plus the post-join token grace; waiting out the 10 s
-        // handshake timeout first would put this well past it.
-        assertTrue(currentTime < 10_000, "retried only after ${currentTime}ms")
         assertTrue(
             seen.any { it is SessionEvent.Warning && it.frame.id == 11 },
             "the rate-limit warn was swallowed",
@@ -527,11 +530,13 @@ class ChannelSessionTest {
         val seen = mutableListOf<SessionEvent>()
         val collector = this.launchCollect(s, seen)
         s.start(this)
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(2, transport.connections.size, "retried only after the handshake timeout")
         advanceUntilIdle()
 
         assertEquals(SessionState.Live(restored = false), s.state.value)
         assertEquals(2, transport.connections.size)
-        assertTrue(currentTime < 10_000, "retried only after ${currentTime}ms")
         assertTrue(seen.any { it is SessionEvent.Warning && it.frame.id == 987654323 }, "the block was swallowed")
         collector.cancel()
         s.stop()

@@ -267,22 +267,27 @@ class SessionManager(
             }
 
             val server = key.server
-            val session = ChannelSession(
-                channel = key.channel,
-                credentials = credentials,
-                url = server,
-                transport = transport,
-                governor = governors.getOrPut(server) { RateGovernor() },
-                tokenStore = tokenStore,
-                dialect = { dialectOf(server) },
-                onDialect = { found -> detected.update { it + (server to found) } },
-            )
-            sessions[key] = session
             if (key !in buffers) {
                 val buffer = ChannelBuffer(historyLimit().maxLines)
                 buffers[key] = buffer
                 restoreTranscript(key, buffer)
             }
+            val instance = Servers.known(server)
+            val session = ChannelSession(
+                channel = key.channel,
+                credentials = credentials,
+                url = server,
+                transport = transport,
+                governor = governors.getOrPut(server) { instance?.limits?.governor() ?: RateGovernor() },
+                tokenStore = tokenStore,
+                backoff = instance?.backoff ?: Backoff(),
+                dialect = { dialectOf(server) },
+                onDialect = { found -> detected.update { it + (server to found) } },
+                // Connected here a moment ago, by the outage clock: the socket
+                // that was may not have been noticed gone yet.
+                mayHaveGhost = downSince.value[key]?.let { now() - it < GHOST_WINDOW_MILLIS } == true,
+            )
+            sessions[key] = session
             _channels.update { it + (key to (it[key] ?: ChannelUi(key))) }
             publish(key)
 
@@ -411,6 +416,16 @@ class SessionManager(
                 else transcriptStore.seen(key, seen)
             }
         }
+    }
+
+    /**
+     * The device's default network changed. Connections to servers with
+     * nothing to resume move over now, while the old network can still carry
+     * their goodbye; see [ChannelSession.moveToNewNetwork].
+     */
+    suspend fun networkChanged() {
+        val live = lock.withLock { sessions.values.toList() }
+        live.forEach { it.moveToNewNetwork() }
     }
 
     suspend fun stopAll() {
